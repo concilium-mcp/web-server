@@ -122,3 +122,16 @@ async def test_related_endpoint(editor):
     note_id = tree["notes"][0]["id"]
     rel = (await editor.get(f"/dash/api/notes/{note_id}/related")).json()
     assert set(rel) == {"document", "links", "backlinks", "semantic"}
+
+
+async def test_insights_endpoint(editor, viewer):
+    data = (await viewer.get("/dash/api/insights", params={"days": 7})).json()
+    assert data["days"] == 7 and len(data["activity"]) == 7  # um ponto por dia, com zeros
+    assert data["totals"]["documents"] >= 1 and "pending_links" in data["totals"]
+    today = data["activity"][-1]
+    assert today["edits"] >= 1 and today["created"] >= 1  # o módulo criou/editou notas hoje
+    assert any(c["name"] == "nt-comercial" for c in data["by_collection"])
+    assert any(c["actor"] == "dash:nt-editora" for c in data["contributors"])
+    assert {"documents", "with_tags", "with_links", "stale"} <= set(data["health"])
+    assert data["created"]["current"] >= 1 and len(data["recent"]) >= 1
+    assert (await viewer.get("/dash/api/insights", params={"days": 0})).status_code == 422
