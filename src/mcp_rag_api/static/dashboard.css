@@ -2529,3 +2529,8 @@ textarea.input {
 .toastui-editor-dark .ProseMirror .placeholder {
   color: var(--text-dim);
 }
+
+/* jargão técnico (chunks, top-k, score) só para admin; o resto do time vê a versão simples */
+body:not([data-role="admin"]) .tech {
+  display: none !important;
+}

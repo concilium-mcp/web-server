@@ -219,7 +219,7 @@ function searchTemplate() {
           <form class="composer" id="search-form">
             ${icon("search", 18)}
             <input type="text" id="s-query" placeholder="Pergunte algo ou busque um termo…" autocomplete="off" required />
-            <label class="composer-k" title="Quantos trechos trazer">Top-k
+            <label class="composer-k tech" title="Quantos trechos trazer">Top-k
               <select id="s-k">${[3, 5, 8, 10].map((k) => `<option ${k === state.searchK ? "selected" : ""}>${k}</option>`).join("")}</select>
             </label>
             <button class="composer-send" type="submit" title="Buscar (Enter)">${icon("search", 16)}</button>
@@ -322,13 +322,13 @@ async function renderSearchResults() {
         <div class="result-title">
           <span class="title">${escHtml(r.title)}</span>
           <span class="chip"><span class="dot" style="background:${colorFor(r.collection)}"></span>${escHtml(r.collection)}</span>
-          <span class="chip subtle">chunk #${r.chunk_index}</span>
+          <span class="chip subtle tech">chunk #${r.chunk_index}</span>
         </div>
         <p class="snippet">${highlightTerms(snippet, state.lastSearch)}</p>
         <div class="result-meta">
           <span class="relbar" title="Relevância relativa ao 1º resultado"><span style="width:${rel}%"></span></span>
-          <span>${sim > 0 ? `semântica ${sim}%` : "só full-text"}</span>
-          <span class="mono">score ${Number(r.score).toFixed(4)}</span>
+          <span class="tech">${sim > 0 ? `semântica ${sim}%` : "só full-text"}</span>
+          <span class="mono tech">score ${Number(r.score).toFixed(4)}</span>
         </div>
       </div>
     </button>`;
@@ -388,6 +388,7 @@ function navForRole() {
 
 function renderShell() {
   const app = document.getElementById("app");
+  document.body.dataset.role = state.user?.role || "";
   app.innerHTML = `
     <div class="app">
       <aside class="sidebar">
@@ -2087,7 +2088,7 @@ function graphTemplate() {
         <div class="stats" id="stats">
           ${STATS.map(
             ([key, label, iconName]) => `
-            <div class="stat" data-stat="${key}">
+            <div class="stat ${key === "chunks" ? "tech" : ""}" data-stat="${key}">
               <span class="stat-label">${icon(iconName, 14)}${label}</span>
               <span class="stat-num">–</span>
             </div>`,
@@ -2098,10 +2099,10 @@ function graphTemplate() {
           <div class="field">${icon("sliders-horizontal")}<label for="f-sim">Similaridade ≥ <span id="f-sim-val" class="mono">${state.minSimilarity.toFixed(2)}</span></label>
             <input type="range" id="f-sim" min="0" max="0.95" step="0.05" value="${state.minSimilarity}" />
           </div>
-          <div class="field"><label for="f-k">Top-k</label>
+          <div class="field tech"><label for="f-k">Top-k</label>
             <select id="f-k">${[1, 2, 3, 5, 8, 12, 20].map((k) => `<option ${k === state.k ? "selected" : ""}>${k}</option>`).join("")}</select>
           </div>
-          <div class="seg" id="f-level">
+          <div class="seg tech" id="f-level">
             <button data-level="documents" class="${state.level === "documents" ? "active" : ""}">Documentos</button>
             <button data-level="chunks" class="${state.level === "chunks" ? "active" : ""}">Chunks</button>
           </div>
