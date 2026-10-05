@@ -17,10 +17,15 @@ class Settings(BaseSettings):
     public_url: str = "http://localhost:8000"
     migrations_dir: Path = PROJECT_ROOT / "migrations"
 
-    embedding_provider: Literal["voyage", "openai", "local", "fake"] = "voyage"
+    embedding_provider: Literal["voyage", "openai", "huggingface", "local", "fake"] = "voyage"
     embedding_model: str = ""
     voyage_api_key: str = ""
     openai_api_key: str = ""
+    hf_api_key: str = ""
+    # huggingface: URL do endpoint feature-extraction (vazio = derivada do EMBEDDING_MODEL)
+    embedding_api_url: str = ""
+    # textos por requisição ao provedor (0 = padrão de cada provedor)
+    embedding_batch_size: int = 0
 
     chunk_words: int = 450
     chunk_overlap_words: int = 60

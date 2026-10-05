@@ -83,6 +83,52 @@ class OpenAIProvider(EmbeddingProvider):
         return [d["embedding"] for d in data]
 
 
+class HuggingFaceProvider(EmbeddingProvider):
+    """Hugging Face Inference API (pipeline feature-extraction).
+
+    Padrão BAAI/bge-m3: 1024 dims, bom em PT-BR — o mesmo modelo do provider "local", sem baixar ~2 GB.
+    Repete em 429/503 (limite de taxa / modelo "acordando" no plano gratuito).
+    """
+
+    batch_size = 32
+    retries = 4
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        api_url: str = "",
+        batch_size: int = 0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        if not api_key:
+            raise RuntimeError("HF_API_KEY não configurada")
+        self.model = model or "BAAI/bge-m3"
+        self.url = api_url or (
+            f"https://router.huggingface.co/hf-inference/models/{self.model}/pipeline/feature-extraction"
+        )
+        if batch_size:
+            self.batch_size = batch_size
+        self.client = httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {api_key}", "X-Wait-For-Model": "true"},
+            timeout=120,
+            transport=transport,
+        )
+
+    async def _embed_batch(self, texts: list[str], input_type: InputType) -> list[list[float]]:
+        for attempt in range(self.retries):
+            resp = await self.client.post(self.url, json={"inputs": texts})
+            if resp.status_code in (429, 503) and attempt < self.retries - 1:
+                await asyncio.sleep(2**attempt)
+                continue
+            resp.raise_for_status()
+            break
+        vectors = resp.json()
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            raise ValueError("Resposta inesperada do Hugging Face: esperado um vetor por texto.")
+        return vectors
+
+
 class LocalProvider(EmbeddingProvider):
     batch_size = 16
 
@@ -124,6 +170,8 @@ def get_embedder() -> EmbeddingProvider:
             return VoyageProvider(s.voyage_api_key, s.embedding_model)
         case "openai":
             return OpenAIProvider(s.openai_api_key, s.embedding_model)
+        case "huggingface":
+            return HuggingFaceProvider(s.hf_api_key, s.embedding_model, s.embedding_api_url, s.embedding_batch_size)
         case "local":
             return LocalProvider(s.embedding_model)
         case "fake":

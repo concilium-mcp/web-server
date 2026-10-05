@@ -131,3 +131,25 @@ async def test_proposals_autonomy_and_protected_fields():
     await agents.archive_agent(ADMIN, "financeiro", "teste")
     with pytest.raises(PermissionDenied):
         await principal_for(created["api_key"])
+
+
+async def test_reindex_recomputes_chunks_and_centroids():
+    from mcp_rag_api.core.reindex import reindex_all
+
+    await documents.create_collection(ADMIN, "reindexacao")
+    doc = await documents.add_document(ADMIN, "reindexacao", "Reindex", "zulu yankee xray whiskey victor", force=True)
+    doc_id = doc["document_id"]
+    # simula vetores de outro modelo: zera o centroide e apaga os chunks
+    await db.pool().execute("UPDATE documents SET centroid = NULL WHERE id = $1::uuid", doc_id)
+    await db.pool().execute("DELETE FROM chunks WHERE document_id = $1::uuid", doc_id)
+
+    lines = []
+    result = await reindex_all(progress=lines.append)
+    assert result["documents"] >= 1 and any("Reindex" in line for line in lines)
+    row = await db.pool().fetchrow(
+        "SELECT d.centroid IS NOT NULL AS has_centroid, "
+        "(SELECT count(*) FROM chunks c WHERE c.document_id = d.id) AS n "
+        "FROM documents d WHERE d.id = $1::uuid",
+        doc_id,
+    )
+    assert row["has_centroid"] and row["n"] >= 1
