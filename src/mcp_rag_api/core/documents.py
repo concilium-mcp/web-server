@@ -339,6 +339,56 @@ async def archive_document(p: Principal, document_id: str, reason: str) -> dict:
     return {"archived": True, "document_id": document_id}
 
 
+async def move_document(p: Principal, document_id: str, collection: str) -> dict:
+    """Move o documento para outra coleção (mesmo conteúdo e versão; fica registrado no audit)."""
+    p.require("write")
+    p.require_collection(collection)
+    async with pool().acquire() as conn:
+        doc = await _load_doc(conn, p, document_id)
+        if doc["status"] != "active":
+            raise KBError("Documento arquivado não pode ser movido.")
+        if doc["collection"] == collection:
+            return {"moved": False, "document_id": document_id, "collection": collection}
+        cid = await _collection_id(conn, collection)
+        async with conn.transaction():
+            try:
+                await conn.execute(
+                    "UPDATE documents SET collection_id = $2, updated_by = $3, updated_at = now() WHERE id = $1",
+                    parse_uuid(document_id),
+                    cid,
+                    p.actor,
+                )
+            except asyncpg.UniqueViolationError as e:
+                raise KBError(f"Já existe um documento com o mesmo external_id em '{collection}'.") from e
+            await audit(conn, p.actor, "document.move", document_id, source=doc["collection"], destination=collection)
+    return {"moved": True, "document_id": document_id, "collection": collection}
+
+
+async def get_document_version(p: Principal, document_id: str, version: int) -> dict:
+    """Conteúdo de uma versão antiga (para comparar ou restaurar)."""
+    p.require("read")
+    async with pool().acquire() as conn:
+        await _load_doc(conn, p, document_id)
+        row = await conn.fetchrow(
+            "SELECT version, title, content, tags, metadata, changed_by, change_note, created_at "
+            "FROM document_versions WHERE document_id = $1 AND version = $2",
+            parse_uuid(document_id),
+            version,
+        )
+    if row is None:
+        raise NotFound(f"Versão {version} do documento {document_id} não encontrada.")
+    return record(row)  # type: ignore[return-value]
+
+
+async def restore_document_version(p: Principal, document_id: str, version: int) -> dict:
+    """Volta título, conteúdo e tags de uma versão antiga — como uma versão NOVA (o histórico não é apagado)."""
+    old = await get_document_version(p, document_id, version)
+    result = await update_document(
+        p, document_id, f"restaurada a v{version}", content=old["content"], title=old["title"], tags=old["tags"]
+    )
+    return {**result, "restored_from": version}
+
+
 async def document_history(p: Principal, document_id: str) -> list[dict]:
     p.require("read")
     async with pool().acquire() as conn:
