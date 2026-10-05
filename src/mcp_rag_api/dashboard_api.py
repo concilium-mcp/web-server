@@ -563,6 +563,100 @@ async def get_stats(_user: DashUser = Depends(current_user)) -> dict:
     return records([row])[0]
 
 
+@router.get("/insights")
+async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
+    """Tela Painel: indicadores, atividade no período e saúde da base — uma consulta só por bloco.
+
+    O período (últimos `days` dias) vale para atividade, contribuidores e o delta de notas criadas
+    (comparado com o período anterior de mesmo tamanho).
+    """
+    async with pool().acquire() as conn:
+        totals = await conn.fetchrow(
+            """
+            SELECT (SELECT count(*) FROM documents WHERE status = 'active') AS documents,
+                   (SELECT count(*) FROM documents WHERE status = 'archived') AS archived,
+                   (SELECT count(*) FROM collections) AS collections,
+                   (SELECT count(*) FROM chunks c JOIN documents d ON d.id = c.document_id
+                     WHERE d.status = 'active') AS chunks,
+                   (SELECT count(*) FROM agents WHERE status = 'active') AS agents,
+                   (SELECT count(*) FROM agent_memories) AS memories,
+                   (SELECT count(*) FROM agent_versions WHERE status = 'proposed') AS proposals,
+                   (SELECT count(*) FROM api_keys WHERE revoked_at IS NULL) AS active_keys,
+                   (SELECT count(*) FROM dash_users WHERE disabled_at IS NULL) AS users,
+                   (SELECT count(*) FROM document_links l
+                      JOIN documents s ON s.id = l.source_id AND s.status = 'active'
+                      JOIN documents t ON t.id = l.target_id AND t.status = 'active') AS links,
+                   (SELECT count(*) FROM document_links WHERE target_id IS NULL) AS pending_links
+            """
+        )
+        created = await conn.fetchrow(
+            """
+            SELECT count(*) FILTER (WHERE created_at >= now() - make_interval(days => $1)) AS current,
+                   count(*) FILTER (WHERE created_at <  now() - make_interval(days => $1)
+                                      AND created_at >= now() - make_interval(days => $1 * 2)) AS previous
+            FROM documents WHERE status = 'active'
+            """,
+            days,
+        )
+        # uma linha por dia do período, inclusive os sem edição (zeros explícitos para o gráfico)
+        edits = await conn.fetch(
+            """
+            SELECT d::date AS day,
+                   (SELECT count(*) FROM document_versions v WHERE v.created_at::date = d::date) AS edits,
+                   (SELECT count(*) FROM document_versions v
+                     WHERE v.created_at::date = d::date AND v.version = 1) AS created
+            FROM generate_series(current_date - ($1 - 1), current_date, interval '1 day') AS d
+            ORDER BY day
+            """,
+            days,
+        )
+        by_collection = await conn.fetch(
+            """
+            SELECT c.name, count(d.id) FILTER (WHERE d.status = 'active') AS documents
+            FROM collections c LEFT JOIN documents d ON d.collection_id = c.id
+            GROUP BY c.name ORDER BY documents DESC, c.name
+            """
+        )
+        contributors = await conn.fetch(
+            """
+            SELECT coalesce(changed_by, '—') AS actor, count(*) AS edits
+            FROM document_versions
+            WHERE created_at >= now() - make_interval(days => $1)
+            GROUP BY 1 ORDER BY edits DESC, actor LIMIT 8
+            """,
+            days,
+        )
+        health = await conn.fetchrow(
+            """
+            SELECT count(*) AS documents,
+                   count(*) FILTER (WHERE cardinality(d.tags) > 0) AS with_tags,
+                   count(*) FILTER (WHERE EXISTS (
+                       SELECT 1 FROM document_links l
+                       WHERE (l.source_id = d.id AND l.target_id IS NOT NULL) OR l.target_id = d.id
+                   )) AS with_links,
+                   count(*) FILTER (WHERE d.updated_at < now() - interval '90 days') AS stale
+            FROM documents d WHERE d.status = 'active'
+            """
+        )
+        recent = await conn.fetch(
+            """
+            SELECT d.id, d.title, c.name AS collection, d.version, d.updated_at, d.updated_by
+            FROM documents d JOIN collections c ON c.id = d.collection_id
+            WHERE d.status = 'active' ORDER BY d.updated_at DESC LIMIT 8
+            """
+        )
+    return {
+        "days": days,
+        "totals": records([totals])[0],
+        "created": records([created])[0],
+        "activity": records(edits),
+        "by_collection": records(by_collection),
+        "contributors": records(contributors),
+        "health": records([health])[0],
+        "recent": records(recent),
+    }
+
+
 class SearchTestIn(BaseModel):
     query: str
     collections: list[str] | None = None

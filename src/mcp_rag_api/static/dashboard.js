@@ -176,6 +176,8 @@ const PALETTE = ["#e8b26a", "#7fb4ca", "#a9c181", "#d08770", "#b48ead", "#ebcb8b
 const state = {
   user: null,
   screen: "notes",
+  insightsDays: 30, // período do Painel (7 | 30 | 90)
+  insights: null,
   level: "documents",
   collection: "",
   minSimilarity: 0.5, // calibrado para bge-m3: docs relacionados ficam ~0.5–0.7
@@ -378,6 +380,7 @@ function renderLogin() {
 
 const NAV = [
   { id: "notes", label: "Notas", iconName: "notebook-pen" },
+  { id: "painel", label: "Painel", iconName: "layout-dashboard" },
   { id: "search", label: "Busca", iconName: "search" },
   { id: "graph", label: "Grafo", iconName: "network" },
 ];
@@ -442,7 +445,7 @@ function renderUserFooter() {
     </div>
     <button class="user-trigger" id="user-trigger" aria-haspopup="menu" aria-expanded="false">
       <span class="avatar">${escHtml(u.username.slice(0, 1).toUpperCase())}</span>
-      <span class="who" title="${escHtml(u.username)}">${escHtml(u.username)} <span class="muted">· ${(ROLE_LABELS[u.role] || "Leitor").toLowerCase()}</span></span>
+      <span class="who" title="${escHtml(u.username)}">${escHtml(u.username)} <span class="muted">· ${{ admin: "admin", editor: "editor" }[u.role] || "leitor"}</span></span>
       ${icon("chevrons-up-down", 14)}
     </button>`;
   loadIcons(footer);
@@ -526,13 +529,16 @@ async function renderScreen() {
   const main = document.getElementById("main");
   closePanel();
   destroyGraph();
+  hideTip();
   if (state.screen === "notes") {
     await renderNotesScreen(main, notes.openId);
+  } else if (state.screen === "painel") {
+    await renderPainel(main);
   } else if (state.screen === "graph") {
     main.innerHTML = graphTemplate();
     bindGraphControls();
     await loadIcons(main);
-    await Promise.all([loadStats(), loadGraph()]);
+    await loadGraph();
   } else if (state.screen === "search") {
     main.innerHTML = searchTemplate();
     await loadIcons(main);
@@ -2065,17 +2071,426 @@ async function openVersionPreview(version) {
   setOpen(true);
 }
 
+/* ---------------------------------------------------------------- tela: painel (indicadores e gráficos) */
+
+// Gráficos em SVG feito à mão (sem lib): uma série por gráfico, um tom só (--viz-accent, validado
+// contra a superfície escura), barras <= 24px com ponta arredondada de 4px, grade hairline sólida,
+// tooltip por marca e alternância "Tabela" em todo gráfico (o tooltip nunca é o único caminho).
+
+const PERIODS = [7, 30, 90];
+const nf = new Intl.NumberFormat("pt-BR");
+const nfCompact = new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 });
+const fmtDay = (iso, opts = { day: "numeric", month: "short" }) =>
+  new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", opts).replace(".", "");
+const actorName = (a) => (a || "—").replace(/^dash:/, "");
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs = {}) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+// eixo "limpo": 0 / 2 / 4… até cobrir o máximo, com no máximo ~4 divisões
+function niceTicks(max) {
+  if (max <= 0) return [0, 1];
+  const raw = max / 4;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * pow).find((s) => s >= raw);
+  const ticks = [];
+  for (let v = 0; v <= max + step * 0.001; v += step) ticks.push(Math.round(v * 1000) / 1000);
+  if (ticks[ticks.length - 1] < max) ticks.push(ticks[ticks.length - 1] + step);
+  return ticks;
+}
+
+// coluna com ponta superior arredondada (4px) e base reta
+function columnPath(x, y, w, h, r = 4) {
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h} V${y + r} Q${x},${y} ${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h} Z`;
+}
+
+// barra horizontal com ponta direita arredondada (4px) e base reta à esquerda
+function barPath(x, y, w, h, r = 4) {
+  r = Math.min(r, h / 2, w);
+  return `M${x},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h - r} Q${x + w},${y + h} ${x + w - r},${y + h} H${x} Z`;
+}
+
+/* ---------- tooltip único (conteúdo sempre via textContent: rótulos vêm do banco) */
+
+function vizTip() {
+  let tip = document.getElementById("viz-tip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "viz-tip";
+    tip.className = "viz-tip hidden";
+    tip.setAttribute("role", "status");
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function showTip(evt, value, label) {
+  const tip = vizTip();
+  tip.replaceChildren();
+  const strong = document.createElement("strong");
+  strong.textContent = value;
+  const small = document.createElement("span");
+  small.textContent = label;
+  tip.append(strong, small);
+  tip.classList.remove("hidden");
+  const r = evt.target.getBoundingClientRect?.() || { left: evt.clientX, top: evt.clientY, width: 0 };
+  const x = evt.clientX ?? r.left + r.width / 2;
+  const y = evt.clientY ?? r.top;
+  tip.style.left = `${Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, x - tip.offsetWidth / 2))}px`;
+  tip.style.top = `${Math.max(8, y - tip.offsetHeight - 12)}px`;
+}
+
+function hideTip() {
+  document.getElementById("viz-tip")?.classList.add("hidden");
+}
+
+function bindTip(el, value, label) {
+  el.setAttribute("tabindex", "0");
+  el.setAttribute("aria-label", `${label}: ${value}`);
+  el.addEventListener("pointermove", (e) => showTip(e, value, label));
+  el.addEventListener("pointerleave", hideTip);
+  el.addEventListener("focus", (e) => {
+    const r = e.target.getBoundingClientRect();
+    showTip({ target: e.target, clientX: r.left + r.width / 2, clientY: r.top }, value, label);
+  });
+  el.addEventListener("blur", hideTip);
+}
+
+/* ---------- gráficos */
+
+// Colunas por dia (série única). points: [{label, value, tip}]
+function drawColumns(box, points, { valueName }) {
+  box.replaceChildren();
+  const W = Math.max(280, box.clientWidth);
+  const H = 200;
+  const pad = { top: 18, right: 8, bottom: 26, left: 34 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+  const max = Math.max(...points.map((p) => p.value), 0);
+  const ticks = niceTicks(max);
+  const top = ticks[ticks.length - 1];
+  const slot = plotW / points.length;
+  const barW = Math.max(2, Math.min(24, slot - 2)); // 2px de superfície entre colunas vizinhas
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img" });
+
+  for (const t of ticks) {
+    const y = pad.top + plotH - (t / top) * plotH;
+    svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: y, y2: y, class: t === 0 ? "viz-axis" : "viz-gridline" }));
+    const label = svgEl("text", { x: pad.left - 8, y: y + 4, class: "viz-tick", "text-anchor": "end" });
+    label.textContent = nf.format(t);
+    svg.append(label);
+  }
+  // rótulos do eixo X esparsos: ~6 ao longo do período
+  const every = Math.max(1, Math.ceil(points.length / 6));
+  const maxIdx = points.findIndex((p) => p.value === max && max > 0);
+  points.forEach((p, i) => {
+    const x = pad.left + i * slot + (slot - barW) / 2;
+    const h = top ? (p.value / top) * plotH : 0;
+    const y = pad.top + plotH - h;
+    // área de hover = a fatia inteira do dia (maior que a marca)
+    const hit = svgEl("rect", { x: pad.left + i * slot, y: pad.top, width: slot, height: plotH, class: "viz-hit" });
+    const g = svgEl("g", { class: "viz-col" });
+    if (p.value > 0) g.append(svgEl("path", { d: columnPath(x, y, barW, h), class: "viz-mark" }));
+    g.append(hit);
+    bindTip(g, `${nf.format(p.value)} ${valueName(p.value)}`, p.tip);
+    svg.append(g);
+    if (i % every === 0 || i === points.length - 1) {
+      const lx = svgEl("text", { x: x + barW / 2, y: H - 8, class: "viz-tick", "text-anchor": "middle" });
+      lx.textContent = p.label;
+      svg.append(lx);
+    }
+    if (i === maxIdx) {
+      // rótulo direto só no pico (nunca um número em cada coluna)
+      const lv = svgEl("text", { x: x + barW / 2, y: y - 6, class: "viz-value", "text-anchor": "middle" });
+      lv.textContent = nf.format(p.value);
+      svg.append(lv);
+    }
+  });
+  box.append(svg);
+}
+
+// Barras horizontais (série única). rows: [{label, value, dot?, tip?}]
+function drawBars(box, rows, { valueName, empty }) {
+  box.replaceChildren();
+  if (!rows.length || rows.every((r) => !r.value)) {
+    box.innerHTML = `<div class="viz-empty">${escHtml(empty)}</div>`;
+    return;
+  }
+  const W = Math.max(260, box.clientWidth);
+  const rowH = 30;
+  const barH = 12;
+  const labelW = Math.min(150, Math.round(W * 0.38));
+  const valueW = 44;
+  const plotW = W - labelW - valueW - 8;
+  const max = Math.max(...rows.map((r) => r.value));
+  const H = rows.length * rowH;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img" });
+  svg.append(svgEl("line", { x1: labelW, x2: labelW, y1: 0, y2: H, class: "viz-axis" }));
+  rows.forEach((r, i) => {
+    const cy = i * rowH + rowH / 2;
+    const w = max ? Math.max(r.value ? 3 : 0, (r.value / max) * plotW) : 0;
+    let tx = 0;
+    if (r.dot) {
+      svg.append(svgEl("circle", { cx: 5, cy, r: 4, fill: r.dot }));
+      tx = 16;
+    }
+    const label = svgEl("text", { x: tx, y: cy + 4, class: "viz-label" });
+    const maxChars = Math.floor((labelW - tx - 8) / 7);
+    label.textContent = r.label.length > maxChars ? `${r.label.slice(0, maxChars - 1)}…` : r.label;
+    svg.append(label);
+    const g = svgEl("g", { class: "viz-col" });
+    if (w > 0) g.append(svgEl("path", { d: barPath(labelW + 1, cy - barH / 2, w, barH), class: "viz-mark" }));
+    g.append(svgEl("rect", { x: 0, y: i * rowH, width: W, height: rowH, class: "viz-hit" }));
+    bindTip(g, `${nf.format(r.value)} ${valueName(r.value)}`, r.tip || r.label);
+    svg.append(g);
+    const v = svgEl("text", { x: labelW + 1 + w + 6, y: cy + 4, class: "viz-value" });
+    v.textContent = nf.format(r.value);
+    svg.append(v);
+  });
+  box.append(svg);
+}
+
+function sparkline(values) {
+  const W = 96;
+  const H = 28;
+  const max = Math.max(...values, 1);
+  const step = values.length > 1 ? W / (values.length - 1) : W;
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(H - 3 - (v / max) * (H - 6)).toFixed(1)}`);
+  const last = pts[pts.length - 1].split(",");
+  return `<svg class="sparkline" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">
+    <polyline points="${pts.join(" ")}" />
+    <circle cx="${last[0]}" cy="${last[1]}" r="3" /></svg>`;
+}
+
+function meter(label, value, total, hint) {
+  const pct = total ? Math.round((value / total) * 100) : 0;
+  return `
+    <div class="meter">
+      <div class="meter-head"><span>${escHtml(label)}</span><strong>${pct}%</strong></div>
+      <div class="meter-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${escHtml(label)}">
+        <span style="width:${pct}%"></span>
+      </div>
+      <div class="meter-foot muted">${nf.format(value)} de ${nf.format(total)} ${escHtml(hint)}</div>
+    </div>`;
+}
+
+/* ---------- tela */
+
+function chartCard(id, title, subtitle, { wide = false } = {}) {
+  return `
+    <section class="viz-card ${wide ? "wide" : ""}" id="${id}">
+      <header class="viz-card-head">
+        <div class="grow"><h2>${title}</h2>${subtitle ? `<span class="muted">${subtitle}</span>` : ""}</div>
+        <button class="btn sm ghost" type="button" data-table-toggle="${id}" title="Ver os dados em tabela">${icon("table-2", 13)}<span>Tabela</span></button>
+      </header>
+      <div class="viz-body"></div>
+      <div class="viz-table hidden"></div>
+    </section>`;
+}
+
+function dataTable(head, rows) {
+  return `<table class="dt"><thead><tr>${head.map((h, i) => `<th class="${i ? "num" : ""}">${escHtml(h)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? "num" : ""}">${escHtml(String(c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function painelTemplate() {
+  const days = state.insightsDays;
+  return `
+    <section class="page painel-page">
+      <header class="page-header">
+        <h1>${icon("layout-dashboard", 18)} Painel</h1>
+        <span class="sub">Como a base de conhecimento está crescendo e sendo usada</span>
+      </header>
+      <div class="painel-col" id="painel">
+        <div class="painel-filters">
+          <div class="seg" id="period-seg" role="radiogroup" aria-label="Período">
+            ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${d === days}" data-days="${d}" class="${d === days ? "active" : ""}">${d} dias</button>`).join("")}
+          </div>
+          <span class="muted" id="painel-updated"></span>
+        </div>
+        <div class="kpis" id="kpis"></div>
+        <div class="viz-grid">
+          ${chartCard("viz-activity", "Atividade", `Edições por dia nos últimos ${days} dias`, { wide: true })}
+          ${chartCard("viz-collections", "Notas por pasta", "Notas ativas em cada pasta")}
+          ${chartCard("viz-contributors", "Quem mais edita", `Edições nos últimos ${days} dias`)}
+          <section class="viz-card" id="viz-health">
+            <header class="viz-card-head"><div class="grow"><h2>Saúde da base</h2><span class="muted">O que deixa as notas mais úteis para o time e os agentes</span></div></header>
+            <div class="viz-body"></div>
+          </section>
+          <section class="viz-card" id="viz-recent">
+            <header class="viz-card-head"><div class="grow"><h2>Atualizadas recentemente</h2><span class="muted">Clique para abrir a nota</span></div></header>
+            <div class="viz-body"></div>
+          </section>
+        </div>
+      </div>
+    </section>`;
+}
+
+async function renderPainel(main) {
+  main.innerHTML = painelTemplate();
+  await loadIcons(main);
+  main.querySelector("#period-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-days]");
+    if (!b || Number(b.dataset.days) === state.insightsDays) return;
+    state.insightsDays = Number(b.dataset.days);
+    main.querySelectorAll("#period-seg button").forEach((x) => {
+      x.classList.toggle("active", x === b);
+      x.setAttribute("aria-checked", String(x === b));
+    });
+    loadInsights();
+  });
+  main.querySelector("#painel").addEventListener("click", (e) => {
+    const t = e.target.closest("[data-table-toggle]");
+    if (t) {
+      const card = document.getElementById(t.dataset.tableToggle);
+      const showTable = card.querySelector(".viz-table").classList.toggle("hidden") === false;
+      card.querySelector(".viz-body").classList.toggle("hidden", showTable);
+      t.classList.toggle("active", showTable);
+      t.querySelector("span").textContent = showTable ? "Gráfico" : "Tabela";
+      return;
+    }
+    const open = e.target.closest("[data-open-note]");
+    if (open) goTo("notes", open.dataset.openNote);
+  });
+  await loadInsights();
+}
+
+async function loadInsights() {
+  const root = document.getElementById("painel");
+  if (!root) return;
+  root.classList.add("loading"); // recarga mantém o quadro anterior, só esmaecido
+  let data;
+  try {
+    data = await api.get("/insights", { days: state.insightsDays });
+  } catch (err) {
+    root.classList.remove("loading");
+    await uiError("Não foi possível carregar o painel", err);
+    return;
+  }
+  if (!document.getElementById("painel")) return;
+  state.insights = data;
+  root.classList.remove("loading");
+  document.getElementById("painel-updated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  root.querySelector("#viz-activity .muted").textContent = `Edições por dia nos últimos ${data.days} dias`;
+  root.querySelector("#viz-contributors .muted").textContent = `Edições nos últimos ${data.days} dias`;
+  renderKpis(data);
+  renderPainelCharts();
+  renderHealth(data);
+  renderRecent(data);
+}
+
+function renderKpis(d) {
+  const t = d.totals;
+  const edits = d.activity.reduce((s, p) => s + p.edits, 0);
+  const delta = d.created.current - d.created.previous;
+  const deltaText =
+    d.created.current === 0 && d.created.previous === 0
+      ? `nenhuma nova em ${d.days} dias`
+      : `${delta > 0 ? "+" : ""}${nf.format(delta)} vs. ${d.days} dias anteriores`;
+  const tiles = [
+    { label: "Notas", value: t.documents, sub: `${nf.format(d.created.current)} ${d.created.current === 1 ? "nova" : "novas"} · ${deltaText}`, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
+    { label: `Edições (${d.days} dias)`, value: edits, spark: d.activity.map((p) => p.edits) },
+    { label: "Pastas", value: t.collections },
+    { label: "Conexões", value: t.links, sub: t.pending_links ? `${nf.format(t.pending_links)} pendente(s)` : "links explícitos entre notas" },
+    { label: "Agents ativos", value: t.agents, sub: `${nf.format(t.memories)} memória(s)` },
+    { label: "Chaves ativas", value: t.active_keys, sub: t.proposals ? `${nf.format(t.proposals)} proposta(s) pendente(s)` : "" },
+    { label: "Trechos indexados", value: t.chunks, tech: true },
+  ];
+  document.getElementById("kpis").innerHTML = tiles
+    .map(
+      (k) => `
+      <div class="kpi ${k.tech ? "tech" : ""}">
+        <span class="kpi-label">${escHtml(k.label)}</span>
+        <div class="kpi-row">
+          <span class="kpi-value" title="${nf.format(k.value)}">${k.value >= 10000 ? nfCompact.format(k.value) : nf.format(k.value)}</span>
+          ${k.spark ? sparkline(k.spark) : ""}
+        </div>
+        ${k.sub ? `<span class="kpi-sub ${k.trend || ""}">${k.trend === "up" ? "▲ " : k.trend === "down" ? "▼ " : ""}${escHtml(k.sub)}</span>` : ""}
+      </div>`,
+    )
+    .join("");
+}
+
+// redesenha só os gráficos (usado também no resize)
+function renderPainelCharts() {
+  const d = state.insights;
+  if (!d || !document.getElementById("painel")) return;
+  const activity = d.activity.map((p) => ({
+    label: fmtDay(p.day),
+    value: p.edits,
+    tip: `${fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" })}${p.created ? ` · ${p.created} nota(s) nova(s)` : ""}`,
+  }));
+  const card = (id) => document.querySelector(`#${id}`);
+  drawColumns(card("viz-activity").querySelector(".viz-body"), activity, { valueName: (v) => (v === 1 ? "edição" : "edições") });
+  card("viz-activity").querySelector(".viz-table").innerHTML = dataTable(
+    ["Dia", "Edições", "Notas novas"],
+    d.activity.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), p.edits, p.created]),
+  );
+
+  drawBars(
+    card("viz-collections").querySelector(".viz-body"),
+    d.by_collection.map((c) => ({ label: c.name, value: c.documents, dot: colorFor(c.name) })),
+    { valueName: (v) => (v === 1 ? "nota" : "notas"), empty: "Nenhuma pasta ainda." },
+  );
+  card("viz-collections").querySelector(".viz-table").innerHTML = dataTable(
+    ["Pasta", "Notas"],
+    d.by_collection.map((c) => [c.name, c.documents]),
+  );
+
+  drawBars(
+    card("viz-contributors").querySelector(".viz-body"),
+    d.contributors.map((c) => ({ label: actorName(c.actor), value: c.edits })),
+    { valueName: (v) => (v === 1 ? "edição" : "edições"), empty: `Ninguém editou nos últimos ${d.days} dias.` },
+  );
+  card("viz-contributors").querySelector(".viz-table").innerHTML = dataTable(
+    ["Quem", "Edições"],
+    d.contributors.map((c) => [actorName(c.actor), c.edits]),
+  );
+}
+
+function renderHealth(d) {
+  const h = d.health;
+  const t = d.totals;
+  document.querySelector("#viz-health .viz-body").innerHTML = `
+    <div class="meters">
+      ${meter("Notas com tags", h.with_tags, h.documents, "notas têm ao menos uma tag")}
+      ${meter("Notas conectadas", h.with_links, h.documents, "notas têm link ou backlink")}
+      ${meter("Notas atualizadas nos últimos 90 dias", h.documents - h.stale, h.documents, "notas foram editadas há menos de 90 dias")}
+    </div>
+    <div class="health-facts">
+      <span>${icon("archive", 13)} ${nf.format(t.archived)} arquivada(s)</span>
+      <span>${icon("link", 13)} ${nf.format(t.pending_links)} link(s) pendente(s)</span>
+      <span>${icon("users", 13)} ${nf.format(t.users)} pessoa(s) com acesso</span>
+    </div>`;
+  loadIcons(document.querySelector("#viz-health"));
+}
+
+function renderRecent(d) {
+  const box = document.querySelector("#viz-recent .viz-body");
+  box.innerHTML =
+    d.recent
+      .map(
+        (n) => `
+      <button class="recent-row" type="button" data-open-note="${n.id}">
+        <span class="dot" style="background:${colorFor(n.collection)}"></span>
+        <span class="grow"><span class="recent-title">${escHtml(n.title)}</span>
+          <span class="muted">${escHtml(n.collection)} · v${n.version} · ${escHtml(actorName(n.updated_by))}</span></span>
+        <span class="muted recent-when">${fmtAgo(n.updated_at)}</span>
+      </button>`,
+      )
+      .join("") || `<div class="viz-empty">Nenhuma nota ainda.</div>`;
+}
+
+const onPainelResize = debounce(() => state.screen === "painel" && renderPainelCharts(), 150);
+window.addEventListener("resize", onPainelResize);
+
 /* ---------------------------------------------------------------- tela: grafo */
 
-const STATS = [
-  ["documents", "Documentos", "file-text"],
-  ["chunks", "Chunks", "activity"],
-  ["collections", "Collections", "folder"],
-  ["agents", "Agents", "bot"],
-  ["memories", "Memórias", "history"],
-  ["proposals", "Propostas", "git-pull-request-arrow"],
-  ["active_keys", "Chaves ativas", "key-round"],
-];
 
 function graphTemplate() {
   return `
@@ -2085,15 +2500,6 @@ function graphTemplate() {
           <h1>${icon("network", 18)} Grafo da base</h1>
           <span class="sub" id="graph-sub"></span>
         </header>
-        <div class="stats" id="stats">
-          ${STATS.map(
-            ([key, label, iconName]) => `
-            <div class="stat ${key === "chunks" ? "tech" : ""}" data-stat="${key}">
-              <span class="stat-label">${icon(iconName, 14)}${label}</span>
-              <span class="stat-num">–</span>
-            </div>`,
-          ).join("")}
-        </div>
         <div class="toolbar">
           <div class="field">${icon("folder")}<label for="f-collection">Collection</label><select id="f-collection"><option value="">Todas</option></select></div>
           <div class="field">${icon("sliders-horizontal")}<label for="f-sim">Similaridade ≥ <span id="f-sim-val" class="mono">${state.minSimilarity.toFixed(2)}</span></label>
@@ -2127,20 +2533,6 @@ function graphTemplate() {
       </section>
       <aside class="panel hidden" id="panel"></aside>
     </div>`;
-}
-
-async function loadStats() {
-  const box = document.getElementById("stats");
-  if (!box) return;
-  let s = {};
-  try {
-    s = await api.get("/stats");
-  } catch {
-    // mantém "–" nos cards
-  }
-  for (const el of box.querySelectorAll("[data-stat]")) {
-    el.querySelector(".stat-num").textContent = s[el.dataset.stat] ?? "–";
-  }
 }
 
 function debounce(fn, ms) {
@@ -2179,11 +2571,8 @@ function bindGraphControls() {
     state.highlightDocs = null;
     loadGraph();
   });
-  // sincronizar: recarrega grafo + stats do servidor e reenquadra (o ícone gira até terminar)
-  main.querySelector("#zoom-fit").addEventListener("click", () => {
-    loadStats();
-    loadGraph();
-  });
+  // sincronizar: recarrega o grafo do servidor e reenquadra (o ícone gira até terminar)
+  main.querySelector("#zoom-fit").addEventListener("click", () => loadGraph());
 
   // legenda: hover destaca a coleção no grafo, clique filtra (ou volta para todas)
   const legend = main.querySelector("#graph-legend");
