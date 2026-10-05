@@ -1296,7 +1296,7 @@ function graphTemplate() {
           <div class="legend hidden" id="graph-legend"></div>
           <div class="graph-hint hidden" id="graph-hint">Clique num nó para ver o documento · arraste para mover · role para zoom</div>
           <div class="graph-zoom hidden" id="graph-zoom">
-            <button class="icon-btn" id="zoom-fit" title="Enquadrar tudo">${icon("refresh-cw")}</button>
+            <button class="icon-btn" id="zoom-fit" title="Sincronizar e enquadrar">${icon("refresh-cw")}</button>
           </div>
         </div>
       </section>
@@ -1353,7 +1353,11 @@ function bindGraphControls() {
     state.highlightDocs = null;
     loadGraph();
   });
-  main.querySelector("#zoom-fit").addEventListener("click", fitGraph);
+  // sincronizar: recarrega grafo + stats do servidor e reenquadra (o ícone gira até terminar)
+  main.querySelector("#zoom-fit").addEventListener("click", () => {
+    loadStats();
+    loadGraph();
+  });
 
   // legenda: hover destaca a coleção no grafo, clique filtra (ou volta para todas)
   const legend = main.querySelector("#graph-legend");
@@ -1377,8 +1381,36 @@ function bindGraphControls() {
 
 let graphRequest = 0;
 
+// Animação do botão de sincronizar: gira enquanto carrega/assenta/enquadra o grafo.
+// Ao parar, completa a volta em andamento para o ícone não "pular".
+const SYNC_TURN_MS = 700;
+let syncSince = 0;
+let syncTimer = null;
+let syncSafety = null;
+
+function setGraphSyncing(on) {
+  const btn = document.getElementById("zoom-fit");
+  if (!btn) return;
+  clearTimeout(syncTimer);
+  clearTimeout(syncSafety);
+  if (on) {
+    if (!btn.classList.contains("syncing")) syncSince = performance.now();
+    btn.classList.add("syncing");
+    btn.setAttribute("aria-busy", "true");
+    // segurança: nunca girar para sempre se a simulação não sinalizar o fim
+    syncSafety = setTimeout(() => setGraphSyncing(false), 10000);
+    return;
+  }
+  const rest = SYNC_TURN_MS - ((performance.now() - syncSince) % SYNC_TURN_MS);
+  syncTimer = setTimeout(() => {
+    btn.classList.remove("syncing");
+    btn.removeAttribute("aria-busy");
+  }, rest);
+}
+
 async function loadGraph() {
   const req = ++graphRequest;
+  setGraphSyncing(true);
   let data;
   try {
     data = await api.get("/graph", {
@@ -1412,6 +1444,7 @@ function destroyGraph() {
 }
 
 function graphMessage(msg) {
+  setGraphSyncing(false);
   destroyGraph();
   const canvas = document.getElementById("graph-canvas");
   if (canvas) canvas.innerHTML = "";
@@ -1456,6 +1489,7 @@ function fitGraph() {
   const toCenter = g.centerAt();
   g.zoom(fromZoom, 0).centerAt(fromCenter.x, fromCenter.y, 0);
   g.centerAt(toCenter.x, toCenter.y, 400).zoom(toZoom, 400);
+  setTimeout(() => setGraphSyncing(false), 400);
 }
 
 function createGraph(el) {

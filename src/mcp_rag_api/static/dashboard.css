@@ -1872,3 +1872,24 @@ textarea.input {
     grid-template-columns: 1fr;
   }
 }
+
+/* botão de sincronizar do grafo: gira enquanto sincroniza */
+#zoom-fit.syncing {
+  color: var(--accent);
+}
+
+#zoom-fit.syncing svg {
+  animation: sync-spin 0.7s linear infinite;
+}
+
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #zoom-fit.syncing svg {
+    animation-duration: 2.4s;
+  }
+}
