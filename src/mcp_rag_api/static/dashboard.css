@@ -2567,8 +2567,68 @@ body:not([data-role="admin"]) .tech {
 .painel-filters {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   font-size: 12.5px;
+}
+
+.filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+/* seletor de período: pílulas num trilho, sem o contorno branco padrão do navegador */
+.period-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--viz-surface);
+}
+
+.period-seg button {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 14px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.period-seg button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.period-seg button.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.period-seg button:focus {
+  outline: none;
+}
+
+.period-seg button:focus-visible {
+  box-shadow: 0 0 0 2px var(--viz-surface), 0 0 0 4px rgba(217, 119, 87, 0.7);
+}
+
+.painel-updated {
+  font-size: 12px;
+}
+
+.painel-refresh.spinning svg {
+  animation: sync-spin 0.7s linear infinite;
+}
+
+.painel-refresh.spinning {
+  color: var(--accent);
 }
 
 .kpis {
@@ -2588,8 +2648,23 @@ body:not([data-role="admin"]) .tech {
 }
 
 .kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
   color: var(--text-dim);
+}
+
+.kpi-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .kpi-row {
