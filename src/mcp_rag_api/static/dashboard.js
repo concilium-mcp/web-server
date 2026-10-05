@@ -429,7 +429,6 @@ function renderUserFooter() {
       </div>
       <div class="menu-sep"></div>
       ${item('data-goto="keys"', "key-round", "Chaves API")}
-      ${item('data-goto="agents"', "bot", "Agents")}
       ${isAdmin ? item('data-goto="users"', "users", "Gerenciar usuários") : ""}
       <div class="menu-sep"></div>
       ${item('data-href="/docs"', "book-open", "Documentação da API", icon("external-link", 14))}
