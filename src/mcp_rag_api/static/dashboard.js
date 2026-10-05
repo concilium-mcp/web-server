@@ -373,7 +373,6 @@ function renderLogin() {
 const NAV = [
   { id: "graph", label: "Grafo da base", iconName: "network" },
   { id: "search", label: "Busca RAG", iconName: "search" },
-  { id: "keys", label: "Chaves API", iconName: "key-round" },
   { id: "agents", label: "Agents", iconName: "bot" },
 ];
 
@@ -429,7 +428,9 @@ function renderUserFooter() {
         <span class="muted">${roleLabel}</span>
       </div>
       <div class="menu-sep"></div>
-      ${isAdmin ? `${item('data-goto="users"', "users", "Gerenciar usuários")}<div class="menu-sep"></div>` : ""}
+      ${item('data-goto="keys"', "key-round", "Chaves API")}
+      ${isAdmin ? item('data-goto="users"', "users", "Gerenciar usuários") : ""}
+      <div class="menu-sep"></div>
       ${item('data-href="/docs"', "book-open", "Documentação da API", icon("external-link", 14))}
       <div class="menu-item static">${icon("activity")}<span class="grow">Status do servidor</span><span class="status" id="server-status"><span class="status-dot"></span>…</span></div>
       <div class="menu-sep"></div>
