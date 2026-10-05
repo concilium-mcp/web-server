@@ -85,7 +85,7 @@ router = APIRouter(
 @router.get("/graph")
 async def get_graph(
     collection: str | None = None,
-    min_similarity: float = Query(default=0.7, ge=0.0, lt=1.0),
+    min_similarity: float = Query(default=0.5, ge=0.0, lt=1.0),
     k: int = Query(default=5, ge=1, le=20),
     level: Literal["documents", "chunks"] = "documents",
 ) -> dict:

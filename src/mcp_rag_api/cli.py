@@ -66,6 +66,16 @@ async def _cleanup() -> dict:
         await db.close_pool()
 
 
+async def _reindex() -> dict:
+    from .core.reindex import reindex_all
+
+    await db.init_pool()
+    try:
+        return await reindex_all(progress=print)
+    finally:
+        await db.close_pool()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mcp-rag-api")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -91,6 +101,7 @@ def main() -> None:
     sync.add_argument("--out", type=Path, default=Path(".claude/agents"))
 
     sub.add_parser("cleanup", help="Remove memórias expiradas")
+    sub.add_parser("reindex", help="Recalcula todos os embeddings com o provedor atual (após trocar de provedor)")
 
     args = parser.parse_args()
     match args.cmd:
@@ -122,6 +133,9 @@ def main() -> None:
                 print("escrito:", path)
         case "cleanup":
             print(asyncio.run(_cleanup()))
+        case "reindex":
+            result = asyncio.run(_reindex())
+            print(f"Reindexado: {result['documents']} documento(s), {result['memories']} memória(s).")
 
 
 if __name__ == "__main__":
