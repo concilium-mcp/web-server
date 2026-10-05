@@ -175,7 +175,7 @@ const PALETTE = ["#e8b26a", "#7fb4ca", "#a9c181", "#d08770", "#b48ead", "#ebcb8b
 
 const state = {
   user: null,
-  screen: "notes",
+  screen: "painel", // tela inicial ao entrar
   insightsDays: 30, // período do Painel (7 | 30 | 90)
   insights: null,
   level: "documents",
@@ -3214,7 +3214,11 @@ new MutationObserver(() => enhancePasswordFields()).observe(document.body, { chi
     return;
   }
   const deep = location.hash.match(/^#\/notas\/([0-9a-f-]{36})$/);
-  if (deep) notes.openId = deep[1];
+  if (deep) {
+    // link direto para uma nota abre a nota, não o Painel
+    state.screen = "notes";
+    notes.openId = deep[1];
+  }
   renderShell();
   await renderScreen();
   await loadIcons(document);
