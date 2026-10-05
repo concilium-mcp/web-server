@@ -1328,7 +1328,8 @@ select option {
   padding-top: 4px;
 }
 
-.table {
+/* "data-table" (não "table"): o Toast UI usa a classe .table no botão de tabela da toolbar */
+.data-table {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-sidebar);
@@ -2129,4 +2130,407 @@ textarea.input {
 /* com aviso na tela (sem conexões / modo conectar), a dica de uso sai para não sobrepor */
 .graph-notice:not(.hidden) ~ .graph-hint {
   display: none;
+}
+
+/* ---------------------------------------------------------------- tela: notas (plan-web-02) */
+
+.notes-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.notes-tree {
+  width: 270px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar);
+}
+
+.notes-tree-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 12px 10px;
+}
+
+.notes-filter input {
+  width: 100%;
+}
+
+.notes-tree-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.notes-tree-actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.notes-tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 16px;
+}
+
+.tree-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-folder-head:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tree-folder-head .count {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.tree-chevron {
+  display: inline-flex;
+  color: var(--text-dim);
+  transform: rotate(90deg);
+  transition: transform 0.12s;
+}
+
+.tree-folder.collapsed .tree-chevron {
+  transform: none;
+}
+
+.tree-folder.collapsed .tree-notes {
+  display: none;
+}
+
+.tree-notes {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 6px 22px;
+}
+
+.tree-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-note .grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-note:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.tree-note.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tree-empty {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.note-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 22px 16px;
+  gap: 8px;
+}
+
+.note-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.note-title {
+  flex: 1 1 320px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 600 22px/1.3 var(--font);
+  padding: 4px 0;
+}
+
+.note-title::placeholder {
+  color: var(--text-dim);
+}
+
+.note-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.note-actions .btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.save-state {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+
+.save-state.dirty {
+  color: var(--accent);
+}
+
+.save-state.saving {
+  color: var(--text-dim);
+}
+
+.save-state.error {
+  color: var(--danger);
+}
+
+.note-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.tag-input {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip button {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tag-chip button:hover {
+  color: var(--danger);
+}
+
+.tag-input input {
+  width: 120px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.note-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.notes-empty {
+  margin: auto;
+}
+
+.template-pick {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.note-side {
+  width: 300px;
+  flex: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  overflow-y: auto;
+  padding: 16px 14px;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.side-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex: 1;
+  font-size: 14px;
+}
+
+.note-side .links-label {
+  margin-top: 12px;
+}
+
+.side-item,
+.side-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-item:hover,
+.side-version:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.side-item.pending {
+  color: var(--text-dim);
+  font-style: italic;
+  cursor: default;
+}
+
+.side-version {
+  align-items: flex-start;
+}
+
+.side-version .grow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.side-version .idx {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  padding-top: 1px;
+}
+
+.side-version.current .idx {
+  color: var(--accent);
+}
+
+.side-version .muted {
+  font-size: 11.5px;
+}
+
+.version-viewer {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 4px 4px 0;
+}
+
+/* Toast UI (tema escuro) com a paleta da dash */
+.toastui-editor-dark.toastui-editor-defaultUI,
+.toastui-editor-dark .toastui-editor-defaultUI {
+  border-color: var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+}
+
+.toastui-editor-dark .toastui-editor-toolbar,
+.toastui-editor-dark .toastui-editor-defaultUI-toolbar {
+  background-color: var(--bg-sidebar);
+  border-bottom-color: var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.toastui-editor-dark .toastui-editor-main,
+.toastui-editor-dark .toastui-editor-ww-container,
+.toastui-editor-dark .toastui-editor-md-container,
+.toastui-editor-dark .ProseMirror {
+  background-color: var(--bg);
+}
+
+.toastui-editor-dark .toastui-editor-contents,
+.toastui-editor-dark .toastui-editor-contents p,
+.toastui-editor-dark .ProseMirror {
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.toastui-editor-dark .toastui-editor-contents h1,
+.toastui-editor-dark .toastui-editor-contents h2,
+.toastui-editor-dark .toastui-editor-contents h3 {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+
+.toastui-editor-dark .toastui-editor-mode-switch {
+  background-color: var(--bg-sidebar);
+  border-top-color: var(--border);
+}
+
+.toastui-editor-dark .toastui-editor-mode-switch .tab-item.active {
+  background-color: var(--bg);
+  color: var(--accent);
+}
+
+.toastui-editor-dark.toastui-editor-contents a,
+.toastui-editor-dark .toastui-editor-contents a {
+  color: var(--accent);
+}
+
+.toastui-editor-contents .placeholder,
+.toastui-editor-dark .ProseMirror .placeholder {
+  color: var(--text-dim);
+}
+
+/* jargão técnico (chunks, top-k, score) só para admin; o resto do time vê a versão simples */
+body:not([data-role="admin"]) .tech {
+  display: none !important;
 }

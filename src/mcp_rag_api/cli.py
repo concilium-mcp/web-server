@@ -104,7 +104,7 @@ def main() -> None:
 
     user = sub.add_parser("create-user", help="Cria um usuário da dashboard (primeiro admin: --role admin)")
     user.add_argument("--username", required=True)
-    user.add_argument("--role", choices=["admin", "viewer"], default="viewer")
+    user.add_argument("--role", choices=["admin", "editor", "viewer"], default="viewer")
     user.add_argument("--password", help="Se omitido, pede interativamente (sem eco)")
 
     sync = sub.add_parser("sync-agents", help="Gera .claude/agents/<slug>.md a partir do banco")

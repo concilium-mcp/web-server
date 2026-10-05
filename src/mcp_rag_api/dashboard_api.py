@@ -34,6 +34,12 @@ async def require_admin(user: DashUser = Depends(current_user)) -> DashUser:
     return user
 
 
+async def require_editor(user: DashUser = Depends(current_user)) -> DashUser:
+    if not user.can_edit:
+        raise HTTPException(status_code=403, detail="Seu papel é de leitura: peça a um admin o papel de editor.")
+    return user
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -99,6 +105,146 @@ def _reader(user: DashUser) -> Principal:
 
 def _admin(user: DashUser) -> Principal:
     return Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+
+
+def _writer(user: DashUser) -> Principal:
+    return Principal(actor=f"dash:{user.username}", scopes=frozenset({"write"}))
+
+
+# ---------------------------------------------------------------- notas (plan-web-02): documents pela dash
+
+_DASH_CHANGE_NOTE = "edição pela dashboard"
+
+
+def _who(actor: str | None) -> str:
+    """Autor legível: "dash:maria" -> "maria", "key:kb_sk_x" -> "uma integração"."""
+    if not actor:
+        return "outra pessoa"
+    if actor.startswith("dash:"):
+        return actor.removeprefix("dash:")
+    return "um agente/integração"
+
+
+@router.get("/notes/tree")
+async def notes_tree() -> dict:
+    """Árvore leve da tela Notas: todas as coleções (inclusive vazias) e os documentos ativos, sem conteúdo."""
+    collections = await pool().fetch(
+        """
+        SELECT c.name, c.description, count(d.id) FILTER (WHERE d.status = 'active') AS documents
+        FROM collections c LEFT JOIN documents d ON d.collection_id = c.id
+        GROUP BY c.id ORDER BY c.name
+        """
+    )
+    notes = await pool().fetch(
+        """
+        SELECT d.id, d.title, c.name AS collection, d.tags, d.version, d.updated_at, d.updated_by
+        FROM documents d JOIN collections c ON c.id = d.collection_id
+        WHERE d.status = 'active'
+        ORDER BY c.name, lower(d.title)
+        """
+    )
+    return {"collections": records(collections), "notes": records(notes)}
+
+
+@router.get("/notes/{document_id}")
+async def get_note(document_id: str, user: DashUser = Depends(current_user)) -> dict:
+    return await documents.get_document(_reader(user), document_id)
+
+
+class NoteIn(BaseModel):
+    collection: str
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    tags: list[str] = []
+    force: bool = False
+
+
+@router.post("/notes")
+async def create_note(body: NoteIn, user: DashUser = Depends(require_editor)) -> dict:
+    """Cria a nota. Se houver conteúdo muito parecido, devolve created=false + similar_document (a UI
+    pergunta e repete com force=true)."""
+    return await documents.add_document(
+        _writer(user), body.collection, body.title, body.content, tags=body.tags, force=body.force
+    )
+
+
+class NotePatch(BaseModel):
+    base_version: int  # versão que o editor abriu: trava otimista contra edição simultânea
+    title: str | None = None
+    content: str | None = None
+    tags: list[str] | None = None
+    change_note: str | None = None
+
+
+@router.patch("/notes/{document_id}")
+async def update_note(document_id: str, body: NotePatch, user: DashUser = Depends(require_editor)) -> dict:
+    p = _writer(user)
+    current = await documents.get_document(p, document_id)
+    if current["version"] != body.base_version:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"A nota foi salva por {_who(current['updated_by'])} enquanto você editava.",
+                "current_version": current["version"],
+            },
+        )
+    return await documents.update_document(
+        p,
+        document_id,
+        (body.change_note or "").strip() or _DASH_CHANGE_NOTE,
+        content=body.content,
+        title=body.title,
+        tags=body.tags,
+    )
+
+
+class MoveIn(BaseModel):
+    collection: str
+
+
+@router.post("/notes/{document_id}/move")
+async def move_note(document_id: str, body: MoveIn, user: DashUser = Depends(require_editor)) -> dict:
+    return await documents.move_document(_writer(user), document_id, body.collection)
+
+
+class ArchiveIn(BaseModel):
+    reason: str = "arquivada pela dashboard"
+
+
+@router.post("/notes/{document_id}/archive")
+async def archive_note(document_id: str, body: ArchiveIn, user: DashUser = Depends(require_editor)) -> dict:
+    return await documents.archive_document(_writer(user), document_id, body.reason)
+
+
+@router.get("/notes/{document_id}/related")
+async def note_related(document_id: str, user: DashUser = Depends(current_user)) -> dict:
+    """Painel "Conexões" da nota: links, backlinks e vizinhos semânticos."""
+    return await links.get_related(_reader(user), document_id, 6)
+
+
+@router.get("/notes/{document_id}/versions")
+async def note_versions(document_id: str, user: DashUser = Depends(current_user)) -> list[dict]:
+    return await documents.document_history(_reader(user), document_id)
+
+
+@router.get("/notes/{document_id}/versions/{version}")
+async def note_version(document_id: str, version: int, user: DashUser = Depends(current_user)) -> dict:
+    return await documents.get_document_version(_reader(user), document_id, version)
+
+
+@router.post("/notes/{document_id}/restore/{version}")
+async def restore_note(document_id: str, version: int, user: DashUser = Depends(require_editor)) -> dict:
+    return await documents.restore_document_version(_writer(user), document_id, version)
+
+
+class CollectionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str | None = None
+
+
+@router.post("/collections")
+async def create_collection(body: CollectionIn, user: DashUser = Depends(require_editor)) -> dict:
+    return await documents.create_collection(_writer(user), body.name, body.description)
 
 
 @router.get("/documents/titles")
@@ -325,7 +471,7 @@ async def list_users(_admin: DashUser = Depends(require_admin)) -> list[dict]:
 class DashUserIn(BaseModel):
     username: str
     password: str
-    role: Literal["admin", "viewer"] = "viewer"
+    role: Literal["admin", "editor", "viewer"] = "viewer"
 
 
 @router.post("/users")
@@ -337,7 +483,7 @@ async def create_dash_user(body: DashUserIn, admin: DashUser = Depends(require_a
 
 
 class DashUserPatch(BaseModel):
-    role: Literal["admin", "viewer"] | None = None
+    role: Literal["admin", "editor", "viewer"] | None = None
     disabled: bool | None = None
     password: str | None = None
 

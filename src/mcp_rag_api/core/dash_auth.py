@@ -19,17 +19,23 @@ from ..security import KBError
 PBKDF2_ITERATIONS = 210_000  # recomendação OWASP para PBKDF2-HMAC-SHA256
 SESSION_TTL = timedelta(days=7)
 SESSION_COOKIE = "dash_session"
+ROLES = ("admin", "editor", "viewer")
 
 
 @dataclass(frozen=True)
 class DashUser:
     id: str
     username: str
-    role: str  # "admin" | "viewer"
+    role: str  # "admin" | "editor" | "viewer"
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    @property
+    def can_edit(self) -> bool:
+        """Cria/edita/arquiva notas: editor e admin."""
+        return self.role in ("admin", "editor")
 
 
 def hash_password(password: str) -> str:
@@ -57,8 +63,8 @@ async def create_user(username: str, password: str, role: str = "viewer") -> dic
         raise KBError("Username é obrigatório.")
     if len(password) < 8:
         raise KBError("A senha deve ter ao menos 8 caracteres.")
-    if role not in ("admin", "viewer"):
-        raise KBError("Role inválida: use 'admin' ou 'viewer'.")
+    if role not in ROLES:
+        raise KBError("Role inválida: use 'admin', 'editor' ou 'viewer'.")
     try:
         user_id = await pool().fetchval(
             "INSERT INTO dash_users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id",
