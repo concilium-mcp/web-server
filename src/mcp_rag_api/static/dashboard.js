@@ -158,6 +158,9 @@ const uiConfirm = (opts) => uiDialog({ cancelLabel: "Cancelar", ...opts });
 const uiAlert = (title, message) => uiDialog({ title, message });
 const uiError = (title, err) => uiDialog({ title, message: err?.detail || err?.message || String(err), tone: "danger" });
 
+// logo da marca (static/brand/logo.svg); é imagem, não ícone Lucide: não herda currentColor
+const brandLogo = (size = 22) => `<img class="brand-logo" src="static/brand/logo.svg" width="${size}" height="${size}" alt="" />`;
+
 const escHtml = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -334,7 +337,7 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login-wrap">
       <form class="login-card" id="login-form">
-        <div class="brand">${icon("network", 22)}<span>Concilium</span></div>
+        <div class="brand">${brandLogo(30)}<span>Concilium</span></div>
         <p class="muted">Entre para acessar a dashboard da base de conhecimento.</p>
         <label class="form-label" for="login-user">Usuário</label>
         <input class="input" id="login-user" type="text" autocomplete="username" required />
@@ -383,7 +386,7 @@ function renderShell() {
   app.innerHTML = `
     <div class="app">
       <aside class="sidebar">
-        <div class="brand">${icon("network", 20)}<span>Concilium</span></div>
+        <div class="brand">${brandLogo(24)}<span>Concilium</span></div>
         <nav id="nav">
           ${navForRole()
             .map(
