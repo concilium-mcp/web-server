@@ -2632,7 +2632,7 @@ body:not([data-role="admin"]) .tech {
 /* ---------------------------------------------------------------- painel (gráficos) */
 /* Tokens de gráfico validados (skill dataviz) contra a superfície escura #1f1e1c:
    --viz-accent = coral da marca ajustado para a faixa de luminosidade do modo escuro. */
-.painel-page {
+.overview-page {
   --viz-surface: #1f1e1c;
   --viz-accent: #d47252;
   --viz-accent-track: rgba(212, 114, 82, 0.18);
@@ -2643,7 +2643,7 @@ body:not([data-role="admin"]) .tech {
   overflow-y: auto;
 }
 
-:root[data-theme="light"] .painel-page {
+:root[data-theme="light"] .overview-page {
   --viz-surface: #ffffff;
   --viz-accent: #c96442;
   --viz-accent-track: rgba(201, 100, 66, 0.15);
@@ -2653,7 +2653,7 @@ body:not([data-role="admin"]) .tech {
   --viz-good: #2e8540;
 }
 
-.painel-col {
+.overview-col {
   width: 100%;
   max-width: 1240px;
   margin: 0 auto;
@@ -2664,11 +2664,11 @@ body:not([data-role="admin"]) .tech {
   transition: opacity 0.15s;
 }
 
-.painel-col.loading {
+.overview-col.loading {
   opacity: 0.55;
 }
 
-.painel-filters {
+.overview-filters {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2723,15 +2723,15 @@ body:not([data-role="admin"]) .tech {
   box-shadow: 0 0 0 2px var(--viz-surface), 0 0 0 4px rgba(217, 119, 87, 0.7);
 }
 
-.painel-updated {
+.overview-updated {
   font-size: 12px;
 }
 
-.painel-refresh.spinning svg {
+.overview-refresh.spinning svg {
   animation: sync-spin 0.7s linear infinite;
 }
 
-.painel-refresh.spinning {
+.overview-refresh.spinning {
   color: var(--accent);
 }
 
