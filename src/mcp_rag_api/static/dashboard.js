@@ -379,8 +379,8 @@ function renderLogin() {
 /* ---------------------------------------------------------------- shell (sidebar + conteúdo) */
 
 const NAV = [
-  { id: "notes", label: "Notas", iconName: "notebook-pen" },
   { id: "painel", label: "Painel", iconName: "layout-dashboard" },
+  { id: "notes", label: "Notas", iconName: "notebook-pen" },
   { id: "search", label: "Busca", iconName: "search" },
   { id: "graph", label: "Grafo", iconName: "network" },
 ];
@@ -2308,10 +2308,13 @@ function painelTemplate() {
       </header>
       <div class="painel-col" id="painel">
         <div class="painel-filters">
-          <div class="seg" id="period-seg" role="radiogroup" aria-label="Período">
+          <span class="filter-label">${icon("calendar", 14)}Período</span>
+          <div class="period-seg" id="period-seg" role="radiogroup" aria-label="Período">
             ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${d === days}" data-days="${d}" class="${d === days ? "active" : ""}">${d} dias</button>`).join("")}
           </div>
-          <span class="muted" id="painel-updated"></span>
+          <span class="grow"></span>
+          <span class="muted painel-updated" id="painel-updated"></span>
+          <button class="icon-btn painel-refresh" type="button" id="painel-refresh" title="Atualizar agora">${icon("refresh-cw", 15)}</button>
         </div>
         <div class="kpis" id="kpis"></div>
         <div class="viz-grid">
@@ -2344,6 +2347,7 @@ async function renderPainel(main) {
     });
     loadInsights();
   });
+  main.querySelector("#painel-refresh").addEventListener("click", () => loadInsights());
   main.querySelector("#painel").addEventListener("click", (e) => {
     const t = e.target.closest("[data-table-toggle]");
     if (t) {
@@ -2364,17 +2368,24 @@ async function loadInsights() {
   const root = document.getElementById("painel");
   if (!root) return;
   root.classList.add("loading"); // recarga mantém o quadro anterior, só esmaecido
+  const spinStart = performance.now();
+  // o ícone completa ao menos a volta em andamento (0,7 s), mesmo com resposta instantânea
+  const stopSpin = () =>
+    setTimeout(() => document.getElementById("painel-refresh")?.classList.remove("spinning"), 700 - ((performance.now() - spinStart) % 700));
+  document.getElementById("painel-refresh")?.classList.add("spinning");
   let data;
   try {
     data = await api.get("/insights", { days: state.insightsDays });
   } catch (err) {
     root.classList.remove("loading");
+    stopSpin();
     await uiError("Não foi possível carregar o painel", err);
     return;
   }
   if (!document.getElementById("painel")) return;
   state.insights = data;
   root.classList.remove("loading");
+  stopSpin();
   document.getElementById("painel-updated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
   root.querySelector("#viz-activity .muted").textContent = `Edições por dia nos últimos ${data.days} dias`;
   root.querySelector("#viz-contributors .muted").textContent = `Edições nos últimos ${data.days} dias`;
@@ -2388,32 +2399,31 @@ function renderKpis(d) {
   const t = d.totals;
   const edits = d.activity.reduce((s, p) => s + p.edits, 0);
   const delta = d.created.current - d.created.previous;
-  const deltaText =
-    d.created.current === 0 && d.created.previous === 0
-      ? `nenhuma nova em ${d.days} dias`
-      : `${delta > 0 ? "+" : ""}${nf.format(delta)} vs. ${d.days} dias anteriores`;
+  const novas = d.created.current;
+  const notasSub = novas ? `+${nf.format(novas)} em ${d.days} dias` : `nenhuma nova em ${d.days} dias`;
+  const notasTip = `${nf.format(novas)} nos últimos ${d.days} dias · ${nf.format(d.created.previous)} nos ${d.days} dias anteriores`;
   const tiles = [
-    { label: "Notas", value: t.documents, sub: `${nf.format(d.created.current)} ${d.created.current === 1 ? "nova" : "novas"} · ${deltaText}`, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
-    { label: `Edições (${d.days} dias)`, value: edits, spark: d.activity.map((p) => p.edits) },
-    { label: "Pastas", value: t.collections },
-    { label: "Conexões", value: t.links, sub: t.pending_links ? `${nf.format(t.pending_links)} pendente(s)` : "links explícitos entre notas" },
-    { label: "Agents ativos", value: t.agents, sub: `${nf.format(t.memories)} memória(s)` },
-    { label: "Chaves ativas", value: t.active_keys, sub: t.proposals ? `${nf.format(t.proposals)} proposta(s) pendente(s)` : "" },
-    { label: "Trechos indexados", value: t.chunks, tech: true },
+    { label: "Notas", iconName: "notebook-pen", value: t.documents, sub: notasSub, subTip: notasTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
+    { label: `Edições · ${d.days} dias`, iconName: "activity", value: edits, spark: d.activity.map((p) => p.edits) },
+    { label: "Pastas", iconName: "folder", value: t.collections },
+    { label: "Conexões", iconName: "link", value: t.links, sub: t.pending_links ? `${nf.format(t.pending_links)} pendente(s)` : "links entre notas" },
+    { label: "Agents", iconName: "bot", value: t.agents, sub: `${nf.format(t.memories)} memória(s)` },
+    { label: "Trechos", iconName: "file-text", value: t.chunks, sub: "indexados para busca", tech: true },
   ];
   document.getElementById("kpis").innerHTML = tiles
     .map(
       (k) => `
       <div class="kpi ${k.tech ? "tech" : ""}">
-        <span class="kpi-label">${escHtml(k.label)}</span>
+        <span class="kpi-label"><span class="kpi-icon">${icon(k.iconName, 14)}</span>${escHtml(k.label)}</span>
         <div class="kpi-row">
           <span class="kpi-value" title="${nf.format(k.value)}">${k.value >= 10000 ? nfCompact.format(k.value) : nf.format(k.value)}</span>
           ${k.spark ? sparkline(k.spark) : ""}
         </div>
-        ${k.sub ? `<span class="kpi-sub ${k.trend || ""}">${k.trend === "up" ? "▲ " : k.trend === "down" ? "▼ " : ""}${escHtml(k.sub)}</span>` : ""}
+        ${k.sub ? `<span class="kpi-sub ${k.trend || ""}" ${k.subTip ? `title="${escHtml(k.subTip)}"` : ""}>${k.trend === "up" ? "▲ " : k.trend === "down" ? "▼ " : ""}${escHtml(k.sub)}</span>` : ""}
       </div>`,
     )
     .join("");
+  loadIcons(document.getElementById("kpis"));
 }
 
 // redesenha só os gráficos (usado também no resize)
