@@ -182,6 +182,7 @@ const state = {
   graphObserver: null,
   graphNeedsFit: false,
   hoverNode: null,
+  legendHover: null,
   docPanelId: null,
   highlightDocs: null, // Set de document_id vindos do testador de busca
   lastSearchResults: [],
@@ -428,10 +429,7 @@ function renderUserFooter() {
         <span class="muted">${roleLabel}</span>
       </div>
       <div class="menu-sep"></div>
-      ${item('data-goto="keys"', "key-round", "Chaves API")}
-      ${item('data-goto="agents"', "bot", "Agents")}
-      ${isAdmin ? item('data-goto="users"', "users", "Gerenciar usuários") : ""}
-      <div class="menu-sep"></div>
+      ${isAdmin ? `${item('data-goto="users"', "users", "Gerenciar usuários")}<div class="menu-sep"></div>` : ""}
       ${item('data-href="/docs"', "book-open", "Documentação da API", icon("external-link", 14))}
       <div class="menu-item static">${icon("activity")}<span class="grow">Status do servidor</span><span class="status" id="server-status"><span class="status-dot"></span>…</span></div>
       <div class="menu-sep"></div>
@@ -1298,7 +1296,7 @@ function graphTemplate() {
           <div class="legend hidden" id="graph-legend"></div>
           <div class="graph-hint hidden" id="graph-hint">Clique num nó para ver o documento · arraste para mover · role para zoom</div>
           <div class="graph-zoom hidden" id="graph-zoom">
-            <button class="icon-btn" id="zoom-fit" title="Enquadrar tudo">${icon("refresh-cw")}</button>
+            <button class="icon-btn" id="zoom-fit" title="Sincronizar e enquadrar">${icon("refresh-cw")}</button>
           </div>
         </div>
       </section>
@@ -1355,13 +1353,64 @@ function bindGraphControls() {
     state.highlightDocs = null;
     loadGraph();
   });
-  main.querySelector("#zoom-fit").addEventListener("click", fitGraph);
+  // sincronizar: recarrega grafo + stats do servidor e reenquadra (o ícone gira até terminar)
+  main.querySelector("#zoom-fit").addEventListener("click", () => {
+    loadStats();
+    loadGraph();
+  });
+
+  // legenda: hover destaca a coleção no grafo, clique filtra (ou volta para todas)
+  const legend = main.querySelector("#graph-legend");
+  const setLegendHover = (name) => {
+    if (state.legendHover === name) return;
+    state.legendHover = name;
+    // o force-graph pausa o redesenho quando a simulação para; liga durante o hover
+    state.graphInstance?.autoPauseRedraw(!name);
+  };
+  legend.addEventListener("mouseover", (e) => setLegendHover(e.target.closest(".legend-row")?.dataset.col || null));
+  legend.addEventListener("mouseleave", () => setLegendHover(null));
+  legend.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-col]");
+    if (!btn) return;
+    setLegendHover(null);
+    state.collection = btn.dataset.col;
+    main.querySelector("#f-collection").value = state.collection;
+    loadGraph();
+  });
 }
 
 let graphRequest = 0;
 
+// Animação do botão de sincronizar: gira enquanto carrega/assenta/enquadra o grafo.
+// Ao parar, completa a volta em andamento para o ícone não "pular".
+const SYNC_TURN_MS = 700;
+let syncSince = 0;
+let syncTimer = null;
+let syncSafety = null;
+
+function setGraphSyncing(on) {
+  const btn = document.getElementById("zoom-fit");
+  if (!btn) return;
+  clearTimeout(syncTimer);
+  clearTimeout(syncSafety);
+  if (on) {
+    if (!btn.classList.contains("syncing")) syncSince = performance.now();
+    btn.classList.add("syncing");
+    btn.setAttribute("aria-busy", "true");
+    // segurança: nunca girar para sempre se a simulação não sinalizar o fim
+    syncSafety = setTimeout(() => setGraphSyncing(false), 10000);
+    return;
+  }
+  const rest = SYNC_TURN_MS - ((performance.now() - syncSince) % SYNC_TURN_MS);
+  syncTimer = setTimeout(() => {
+    btn.classList.remove("syncing");
+    btn.removeAttribute("aria-busy");
+  }, rest);
+}
+
 async function loadGraph() {
   const req = ++graphRequest;
+  setGraphSyncing(true);
   let data;
   try {
     data = await api.get("/graph", {
@@ -1395,6 +1444,7 @@ function destroyGraph() {
 }
 
 function graphMessage(msg) {
+  setGraphSyncing(false);
   destroyGraph();
   const canvas = document.getElementById("graph-canvas");
   if (canvas) canvas.innerHTML = "";
@@ -1425,12 +1475,21 @@ function hexAlpha(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+const MAX_FIT_ZOOM = 2.2;
+
 function fitGraph() {
   const g = state.graphInstance;
   if (!g) return;
-  g.zoomToFit(400, 80);
-  // poucos nós: o zoomToFit aproxima demais; limita o zoom
-  setTimeout(() => state.graphInstance === g && g.zoom() > 2.2 && g.zoom(2.2, 300), 420);
+  // calcula o enquadramento instantâneo, volta à vista atual e anima até o alvo
+  // com o zoom limitado (com poucos nós o zoomToFit aproxima demais)
+  const fromZoom = g.zoom();
+  const fromCenter = g.centerAt();
+  g.zoomToFit(0, 80);
+  const toZoom = Math.min(g.zoom(), MAX_FIT_ZOOM);
+  const toCenter = g.centerAt();
+  g.zoom(fromZoom, 0).centerAt(fromCenter.x, fromCenter.y, 0);
+  g.centerAt(toCenter.x, toCenter.y, 400).zoom(toZoom, 400);
+  setTimeout(() => setGraphSyncing(false), 400);
 }
 
 function createGraph(el) {
@@ -1492,9 +1551,17 @@ function drawGraph(data) {
     .nodeCanvasObjectMode(() => "replace")
     .nodeCanvasObject((n, ctx, scale) => {
       const r = radius(n);
-      const dim = highlight && !isHl(n);
+      // hover na legenda: destaca a coleção e apaga as outras
+      const legendDim = state.legendHover && n.collection !== state.legendHover;
+      const dim = (highlight && !isHl(n)) || legendDim;
       const hovered = state.hoverNode === n;
-      const color = highlight ? (isHl(n) ? "#d97757" : hexAlpha(n.color, 0.25)) : n.color;
+      const color = legendDim
+        ? hexAlpha(n.color, 0.18)
+        : highlight
+          ? isHl(n)
+            ? "#d97757"
+            : hexAlpha(n.color, 0.25)
+          : n.color;
       // halo suave
       if (!dim) {
         ctx.beginPath();
@@ -1538,9 +1605,23 @@ function drawGraph(data) {
   g.graphData({ nodes, links: data.edges.map((e) => ({ ...e })) });
 
   const legend = document.getElementById("graph-legend");
-  legend.innerHTML = data.collections
-    .map((c) => `<div class="row"><span class="dot" style="background:${colorFor(c.name)}"></span>${escHtml(c.name)}<span class="count">${c.count}</span></div>`)
-    .join("");
+  const unit = state.level === "documents" ? "doc" : "trecho";
+  const plural = (n) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  legend.innerHTML = `
+    <div class="legend-head">Coleções</div>
+    ${data.collections
+      .map(
+        (c) => `
+      <button class="legend-row ${state.collection === c.name ? "active" : ""}" type="button" data-col="${escHtml(c.name)}"
+        title="${state.collection === c.name ? "Coleção filtrada" : "Clique para ver só esta coleção"}">
+        <span class="dot" style="background:${colorFor(c.name)}"></span>
+        <span class="legend-name">${escHtml(c.name)}</span>
+        <span class="count">${plural(c.count)}</span>
+      </button>`,
+      )
+      .join("")}
+    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>Ver todas as coleções</span></button>` : ""}`;
+  loadIcons(legend);
   for (const id of ["graph-legend", "graph-hint", "graph-zoom"]) document.getElementById(id).classList.remove("hidden");
 }
 
