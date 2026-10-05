@@ -7,9 +7,9 @@ separada do Bearer da API pública (api_keys continua valendo para agentes/integ
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .core import agents, dash_auth, graph
+from .core import agents, dash_auth, graph, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -315,3 +315,38 @@ async def update_dash_user(
         "SELECT id, username, role, disabled_at, created_at FROM dash_users WHERE id = $1", target
     )
     return record(updated)
+
+
+# ---------------------------------------------------------------- extras: stats e testador de busca
+
+
+@router.get("/stats")
+async def get_stats(_user: DashUser = Depends(current_user)) -> dict:
+    """Contagens da base para os cards da tela inicial da dash."""
+    row = await pool().fetchrow(
+        """
+        SELECT (SELECT count(*) FROM collections) AS collections,
+               (SELECT count(*) FROM documents WHERE status = 'active') AS documents,
+               (SELECT count(*) FROM chunks c JOIN documents d ON d.id = c.document_id
+                 WHERE d.status = 'active') AS chunks,
+               (SELECT count(*) FROM agents WHERE status = 'active') AS agents,
+               (SELECT count(*) FROM agent_memories) AS memories,
+               (SELECT count(*) FROM agent_versions WHERE status = 'proposed') AS proposals,
+               (SELECT count(*) FROM api_keys WHERE revoked_at IS NULL) AS active_keys
+        """
+    )
+    return records([row])[0]
+
+
+class SearchTestIn(BaseModel):
+    query: str
+    collections: list[str] | None = None
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+@router.post("/search-test")
+async def search_test(body: SearchTestIn, user: DashUser = Depends(current_user)) -> dict:
+    """Roda a busca híbrida real da base e devolve os chunks, para destacar no grafo."""
+    principal = Principal(actor=f"dash:{user.username}", scopes=frozenset({"read"}))
+    results = await search.search_knowledge(principal, body.query, body.collections, None, None, body.top_k)
+    return {"results": results}

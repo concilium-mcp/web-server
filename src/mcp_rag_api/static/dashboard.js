@@ -74,6 +74,9 @@ const state = {
   colors: new Map(),
   graphInstance: null,
   docPanelId: null,
+  highlightDocs: null, // Set de document_id vindos do testador de busca
+  lastSearchResults: [],
+  lastSearch: null,
 };
 
 function colorFor(collection) {
@@ -81,6 +84,87 @@ function colorFor(collection) {
     state.colors.set(collection, PALETTE[state.colors.size % PALETTE.length]);
   }
   return state.colors.get(collection);
+}
+
+/* ---------------------------------------------------------------- tela: busca RAG (testador) */
+
+function searchTemplate() {
+  return `
+    <section class="page">
+      <header class="page-header">
+        <h1>${icon("search", 18)} Busca RAG</h1>
+        <span class="sub">Roda a busca híbrida real da base e destaca os resultados no grafo</span>
+      </header>
+      <form class="toolbar" id="search-form">
+        <div class="field search-field">${icon("search")}
+          <input type="text" id="s-query" placeholder="Pergunta ou termo de busca…" required />
+        </div>
+        <div class="field"><label>Top-k</label>
+          <select id="s-k">${[3, 5, 8, 10].map((k) => `<option ${k === 5 ? "selected" : ""}>${k}</option>`).join("")}</select>
+        </div>
+        <button class="btn primary" type="submit">${icon("search")}<span>Buscar</span></button>
+        <button class="btn sm hidden" id="s-highlight" type="button">${icon("network")}<span>Ver resultados no grafo</span></button>
+      </form>
+      <div class="list" id="s-results"></div>
+    </section>`;
+}
+
+function bindSearch() {
+  const form = document.getElementById("search-form");
+  const input = document.getElementById("s-query");
+  const last = state.lastSearch;
+  if (last) input.value = last;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const query = input.value.trim();
+    if (!query) return;
+    const results = document.getElementById("s-results");
+    results.innerHTML = `<div class="empty-state">Buscando…</div>`;
+    try {
+      const data = await api.post("/search-test", { query, top_k: Number(document.getElementById("s-k").value) });
+      state.lastSearch = query;
+      state.lastSearchResults = data.results;
+      await renderSearchResults();
+    } catch (err) {
+      results.innerHTML = `<div class="empty-state">A busca falhou: ${escHtml(err.detail || err.message)}</div>`;
+    }
+  });
+  document.getElementById("s-highlight").addEventListener("click", () => {
+    const docIds = [...new Set(state.lastSearchResults.map((r) => r.document_id))];
+    state.highlightDocs = new Set(docIds);
+    state.screen = "graph";
+    renderShell();
+    renderScreen();
+  });
+}
+
+async function renderSearchResults() {
+  const box = document.getElementById("s-results");
+  if (!box) return;
+  const results = state.lastSearchResults;
+  document.getElementById("s-highlight").classList.toggle("hidden", !results.length);
+  if (!results.length) {
+    box.innerHTML = `<div class="empty-state">${state.lastSearch ? "Nenhum resultado. Tente outros termos." : "Busque algo para testar a recuperação da base."}</div>`;
+    return;
+  }
+  box.innerHTML = results
+    .map(
+      (r, i) => `
+    <div class="card">
+      <div class="card-row">
+        <span class="idx muted mono">${i + 1}</span>
+        <div class="grow">
+          <div class="card-title">${escHtml(r.title)}
+            <span class="chip"><span class="dot" style="background:${colorFor(r.collection)}"></span>${escHtml(r.collection)}</span>
+            <span class="chip">chunk #${r.chunk_index}</span>
+          </div>
+          <div class="muted">${escHtml(r.content.slice(0, 220))}${r.content.length > 220 ? "…" : ""}</div>
+          <div class="muted mono">score ${r.score} · similaridade ${r.similarity}</div>
+        </div>
+      </div>
+    </div>`,
+    )
+    .join("");
 }
 
 /* ---------------------------------------------------------------- login */
@@ -124,6 +208,7 @@ function renderLogin() {
 
 const NAV = [
   { id: "graph", label: "Grafo da base", iconName: "network" },
+  { id: "search", label: "Busca RAG", iconName: "search" },
   { id: "keys", label: "Chaves API", iconName: "key-round" },
   { id: "agents", label: "Agents", iconName: "bot" },
   { id: "users", label: "Usuários", iconName: "users", adminOnly: true },
@@ -187,7 +272,12 @@ async function renderScreen() {
     main.innerHTML = graphTemplate();
     bindGraphControls();
     await loadIcons(main);
-    await loadGraph();
+    await Promise.all([loadStats(), loadGraph()]);
+  } else if (state.screen === "search") {
+    main.innerHTML = searchTemplate();
+    await loadIcons(main);
+    bindSearch();
+    await renderSearchResults();
   } else if (state.screen === "keys") {
     main.innerHTML = pageTemplate("key-round", "Chaves API", "Gestão das chaves Bearer de agentes e integrações");
     await loadIcons(main);
@@ -514,6 +604,11 @@ function graphTemplate() {
         <h1>${icon("network", 18)} Grafo da base</h1>
         <span class="sub" id="graph-sub"></span>
       </header>
+      <div class="stats" id="stats">
+        ${["Documentos", "Chunks", "Collections", "Agents", "Memórias", "Propostas", "Chaves ativas"]
+          .map((label) => `<div class="stat"><span class="stat-num">–</span><span class="stat-label">${label}</span></div>`)
+          .join("")}
+      </div>
       <div class="toolbar">
         <div class="field">${icon("folder")}<label>Collection</label><select id="f-collection"><option value="">Todas</option></select></div>
         <div class="field">${icon("sliders-horizontal")}<label>Similaridade ≥ <span id="f-sim-val">0.70</span></label>
@@ -526,12 +621,27 @@ function graphTemplate() {
           <button data-level="documents" class="${state.level === "documents" ? "active" : ""}">Documentos</button>
           <button data-level="chunks" class="${state.level === "chunks" ? "active" : ""}">Chunks</button>
         </div>
+        <button class="btn sm hidden" id="hl-clear">${icon("check")}<span>Limpar destaque</span></button>
       </div>
       <div class="graph-wrap" id="graph-wrap">
         <div class="empty-state" id="graph-empty">Carregando grafo…</div>
       </div>
     </section>
     <aside class="panel hidden" id="panel"></aside>`;
+}
+
+async function loadStats() {
+  const box = document.getElementById("stats");
+  if (!box) return;
+  try {
+    const s = await api.get("/stats");
+    const values = [s.documents, s.chunks, s.collections, s.agents, s.memories, s.proposals, s.active_keys];
+    box.querySelectorAll(".stat-num").forEach((el, i) => {
+      el.textContent = values[i] ?? "–";
+    });
+  } catch {
+    box.querySelectorAll(".stat-num").forEach((el) => (el.textContent = "–"));
+  }
 }
 
 function bindGraphControls() {
@@ -554,6 +664,10 @@ function bindGraphControls() {
     if (!btn) return;
     state.level = btn.dataset.level;
     main.querySelectorAll("#f-level button").forEach((b) => b.classList.toggle("active", b === btn));
+    loadGraph();
+  });
+  main.querySelector("#hl-clear").addEventListener("click", () => {
+    state.highlightDocs = null;
     loadGraph();
   });
 }
@@ -599,10 +713,26 @@ function fillCollectionFilter(collections) {
     collections.map((c) => `<option value="${c.name}" ${c.name === current ? "selected" : ""}>${c.name} (${c.count})</option>`).join("");
 }
 
+function hexAlpha(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function drawGraph(data) {
   const wrap = document.getElementById("graph-wrap");
   wrap.querySelectorAll("canvas").forEach((c) => c.remove());
   wrap.querySelectorAll(".legend,.graph-hint").forEach((el) => el.remove());
+
+  const highlight = state.highlightDocs && state.highlightDocs.size ? state.highlightDocs : null;
+  const clearBtn = document.getElementById("hl-clear");
+  if (clearBtn) {
+    clearBtn.classList.toggle("hidden", !highlight);
+    if (highlight) clearBtn.querySelector("span").textContent = `Limpar destaque (${highlight.size})`;
+  }
+  const nodeKey = (n) => (state.level === "documents" ? n.id : n.document_id);
+  const isHl = (n) => highlight && highlight.has(nodeKey(n));
 
   const nodes = data.nodes.map((n) => ({
     ...n,
@@ -617,9 +747,12 @@ function drawGraph(data) {
     .backgroundColor("transparent")
     .graphData({ nodes, links: data.edges.map((e) => ({ ...e })) })
     .nodeId("id")
-    .nodeVal((n) => (state.level === "documents" ? Math.max(1, Math.sqrt(n.chunks)) : 1))
+    .nodeVal((n) => {
+      const base = state.level === "documents" ? Math.max(1, Math.sqrt(n.chunks)) : 1;
+      return highlight && isHl(n) ? base * 1.9 : base;
+    })
     .nodeLabel((n) => n.label)
-    .nodeColor((n) => n.color)
+    .nodeColor((n) => (highlight ? (isHl(n) ? "#d97757" : hexAlpha(colorFor(n.collection), 0.22)) : n.color))
     .nodeCanvasObjectMode(() => "after")
     .nodeCanvasObject((n, ctx) => {
       ctx.fillStyle = "rgba(23, 22, 20, 0.9)";
@@ -627,11 +760,18 @@ function drawGraph(data) {
       ctx.textAlign = "center";
       ctx.fillText(n.label.length > 32 ? n.label.slice(0, 31) + "…" : n.label, n.x, n.y + 14);
     })
-    .linkColor(() => "rgba(236, 236, 236, 0.18)")
+    .linkColor((l) =>
+      highlight
+        ? isHl(l.source) && isHl(l.target)
+          ? "rgba(217, 119, 87, 0.45)"
+          : "rgba(236, 236, 236, 0.04)"
+        : "rgba(236, 236, 236, 0.18)",
+    )
     .linkWidth((l) => Math.max(0.5, (l.similarity - state.minSimilarity) * 12))
     .linkDirectionalParticles(0)
-    .onNodeClick((n) => openDocumentPanel(state.level === "documents" ? n.id : n.document_id))
+    .onNodeClick((n) => openDocumentPanel(nodeKey(n)))
     .onBackgroundClick(() => closePanel())
+    .onEngineStop(() => state.graphInstance && state.graphInstance.zoomToFit(400, 60))
     .width(wrap.clientWidth)
     .height(wrap.clientHeight);
 

@@ -668,6 +668,45 @@ select option {
   margin-bottom: 0;
 }
 
+/* ---------------------------------------------------------------- stats e busca */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  padding: 0 22px 14px;
+}
+
+.stat {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-num {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.search-field {
+  flex: 1;
+  min-width: 260px;
+}
+
+.search-field input {
+  flex: 1;
+}
+
 .muted {
   color: var(--text-dim);
 }

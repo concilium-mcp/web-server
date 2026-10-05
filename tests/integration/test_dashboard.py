@@ -306,3 +306,44 @@ async def test_viewer_restrictions(seeded_docs, admin_client):
         await client.post("/dash/api/agents/autonobot/autonomy", json={"auto_apply_updates": True})
     ).status_code == 403
     await client.aclose()
+
+
+# ---------------------------------------------------------------- fatia 4: extras
+
+
+async def test_stats_endpoint(seeded_docs, admin_client):
+    resp = await admin_client.get("/dash/api/stats")
+    assert resp.status_code == 200
+    stats = resp.json()
+    assert stats["collections"] >= 1
+    assert stats["documents"] >= 3
+    assert stats["chunks"] >= 3
+    assert stats["agents"] >= 1
+    assert stats["active_keys"] >= 1
+    assert "memories" in stats and "proposals" in stats
+
+
+async def test_search_test_endpoint(seeded_docs, admin_client):
+    resp = await admin_client.post(
+        "/dash/api/search-test", json={"query": "alfa bravo", "top_k": 3}
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert results
+    top = results[0]
+    assert top["document_id"] in set(seeded_docs.values())
+    assert {"title", "collection", "chunk_index", "content", "score", "similarity"} <= set(top)
+    # busca distante das fontes dos fixtures ainda responde 200 (pode vir vazia)
+    resp = await admin_client.post(
+        "/dash/api/search-test", json={"query": "zzzz inexistente", "top_k": 3}
+    )
+    assert resp.status_code == 200
+
+
+async def test_viewer_can_search_and_stats(seeded_docs, admin_client):
+    client = await dash_client()
+    await client.post("/dash/api/auth/login", json={"username": "um-viewer", "password": "senha-viewer-1"})
+    assert (await client.get("/dash/api/stats")).status_code == 200
+    resp = await client.post("/dash/api/search-test", json={"query": "alfa", "top_k": 2})
+    assert resp.status_code == 200
+    await client.aclose()
