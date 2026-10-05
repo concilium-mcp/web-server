@@ -190,6 +190,7 @@ const state = {
   lastSearchMs: null,
   searchK: 5,
   showRevoked: false,
+  showSemantic: true, // grafo: mostrar arestas de similaridade além dos links explícitos
 };
 
 function colorFor(collection) {
@@ -1372,6 +1373,11 @@ function bindGraphControls() {
   legend.addEventListener("mouseover", (e) => setLegendHover(e.target.closest(".legend-row")?.dataset.col || null));
   legend.addEventListener("mouseleave", () => setLegendHover(null));
   legend.addEventListener("click", (e) => {
+    if (e.target.closest("[data-toggle-semantic]")) {
+      state.showSemantic = !state.showSemantic;
+      loadGraph();
+      return;
+    }
     const btn = e.target.closest("[data-col]");
     if (!btn) return;
     setLegendHover(null);
@@ -1388,7 +1394,7 @@ let graphRequest = 0;
 async function explainMissingEdges(data, req) {
   const notice = document.getElementById("graph-notice");
   notice.classList.add("hidden");
-  if (data.edges.length || data.nodes.length < 2) return;
+  if (!state.showSemantic || data.edges.some((e) => e.kind === "semantic") || data.nodes.length < 2) return;
   let probe;
   try {
     probe = await api.get("/graph", { level: state.level, collection: state.collection, min_similarity: 0, k: 1 });
@@ -1396,13 +1402,13 @@ async function explainMissingEdges(data, req) {
     return;
   }
   if (req !== graphRequest) return; // o usuário já mudou o filtro
-  const strongest = Math.max(0, ...probe.edges.map((e) => e.similarity));
+  const strongest = Math.max(0, ...probe.edges.filter((e) => e.kind === "semantic").map((e) => e.similarity));
   if (!strongest) return;
   // passo do slider é 0.05: arredonda para baixo para a aresta mais forte aparecer
   const target = Math.floor(strongest * 20) / 20;
   const fmt = (v) => v.toFixed(2);
   notice.innerHTML = `
-    <span>Nenhuma conexão com similaridade ≥ ${fmt(state.minSimilarity)}. A mais forte é <strong>${fmt(strongest)}</strong>.</span>
+    <span>Nenhuma similaridade ≥ ${fmt(state.minSimilarity)}. A mais forte é <strong>${fmt(strongest)}</strong>.</span>
     <button class="btn sm" type="button" id="notice-lower">Mostrar a partir de ${fmt(target)}</button>`;
   notice.classList.remove("hidden");
   notice.querySelector("#notice-lower").addEventListener("click", () => {
@@ -1570,8 +1576,12 @@ function drawGraph(data) {
     label: state.level === "documents" ? n.title : `${n.title} · #${n.chunk_index}`,
   }));
 
+  const linkEdges = data.edges.filter((e) => e.kind === "link");
+  const semanticEdges = data.edges.filter((e) => e.kind === "semantic");
+  const visibleEdges = state.showSemantic ? data.edges : linkEdges;
   document.getElementById("graph-sub").textContent =
-    `${nodes.length} nós · ${data.edges.length} arestas · nível ${state.level === "documents" ? "documentos" : "chunks"}`;
+    `${nodes.length} nós · ${linkEdges.length} link(s) · ${semanticEdges.length} por similaridade · ` +
+    `nível ${state.level === "documents" ? "documentos" : "chunks"}`;
 
   if (!state.graphInstance) state.graphInstance = createGraph(el);
   const g = state.graphInstance;
@@ -1625,18 +1635,29 @@ function drawGraph(data) {
       ctx.fillStyle = color;
       ctx.fill();
     })
-    .linkColor((l) =>
-      highlight
-        ? isHl(l.source) && isHl(l.target)
-          ? "rgba(217, 119, 87, 0.5)"
-          : "rgba(236, 236, 236, 0.04)"
-        : `rgba(236, 236, 236, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`,
-    )
+    // link explícito = sólido coral; similaridade = tracejado cinza
+    .linkColor((l) => {
+      if (highlight && !(isHl(l.source) && isHl(l.target))) return "rgba(236, 236, 236, 0.04)";
+      if (l.kind === "link") return highlight ? "rgba(217, 119, 87, 0.95)" : "rgba(217, 119, 87, 0.85)";
+      if (highlight) return "rgba(217, 119, 87, 0.5)";
+      return `rgba(236, 236, 236, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`;
+    })
     // espessura mínima visível mesmo para arestas logo acima do threshold
-    .linkWidth((l) => Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8));
+    .linkWidth((l) => (l.kind === "link" ? 2.2 : Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8)))
+    .linkLineDash((l) => (l.kind === "link" ? null : [4, 3]))
+    .linkLabel((l) => {
+      const sim = l.similarity != null ? `similaridade ${Number(l.similarity).toFixed(2)}` : "";
+      if (l.kind !== "link") return sim;
+      const how = l.link_kinds?.includes("wikilink") ? "[[wikilink]]" : "link manual";
+      return [`Link explícito (${how})`, l.note ? `“${escHtml(l.note)}”` : "", sim].filter(Boolean).join("<br>");
+    });
+  // documentos ligados explicitamente ficam mais perto que os só parecidos
+  g.d3Force("link")
+    .distance((l) => (l.kind === "link" ? 45 : 90))
+    .strength((l) => (l.kind === "link" ? 0.7 : 0.25));
 
   state.graphNeedsFit = true;
-  g.graphData({ nodes, links: data.edges.map((e) => ({ ...e })) });
+  g.graphData({ nodes, links: visibleEdges.map((e) => ({ ...e })) });
 
   const legend = document.getElementById("graph-legend");
   const unit = state.level === "documents" ? "doc" : "trecho";
@@ -1654,7 +1675,18 @@ function drawGraph(data) {
       </button>`,
       )
       .join("")}
-    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>Ver todas as coleções</span></button>` : ""}`;
+    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>Ver todas as coleções</span></button>` : ""}
+    ${
+      state.level === "documents"
+        ? `<div class="legend-head legend-sep">Conexões</div>
+      <div class="legend-edge"><span class="edge-swatch link"></span><span class="legend-name">Link explícito</span>
+        <span class="count">${linkEdges.length}</span></div>
+      <button class="legend-edge toggle ${state.showSemantic ? "" : "off"}" type="button" data-toggle-semantic
+        title="${state.showSemantic ? "Ocultar" : "Mostrar"} as arestas de similaridade">
+        <span class="edge-swatch semantic"></span><span class="legend-name">Similaridade</span>
+        <span class="count">${state.showSemantic ? semanticEdges.length : "oculta"}</span></button>`
+        : ""
+    }`;
   loadIcons(legend);
   for (const id of ["graph-legend", "graph-hint", "graph-zoom"]) document.getElementById(id).classList.remove("hidden");
 }

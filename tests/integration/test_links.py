@@ -113,3 +113,22 @@ async def test_archived_target_disappears_and_relink_backfills(base):
     result = await links.relink_all()
     assert result["documents"] >= 3 and result["wikilinks"] >= 1
     assert (await links.get_links(ADMIN, base["reg"]))["links"][0]["title"] == "Autenticação"
+
+
+async def test_graph_marks_explicit_links_regardless_of_threshold(base):
+    from mcp_rag_api.core import graph
+
+    g = await graph.build_graph("documents", "lk-produto", 0.99, 3)  # threshold alto: sem semânticas
+    link_edges = [e for e in g["edges"] if e["kind"] == "link"]
+    pair = {base["reg"], base["auth"]}
+    assert any({e["source"], e["target"]} == pair and "wikilink" in e["link_kinds"] for e in link_edges)
+    assert all(e["kind"] == "link" for e in g["edges"])
+
+    loose = await graph.build_graph("documents", "lk-produto", 0.0, 3)
+    kinds = {e["kind"] for e in loose["edges"]}
+    assert kinds == {"link", "semantic"}
+    # o par ligado aparece uma vez só (link vence a semântica)
+    assert sum(1 for e in loose["edges"] if {e["source"], e["target"]} == pair) == 1
+
+    chunks = await graph.build_graph("chunks", "lk-produto", 0.0, 3)
+    assert all(e["kind"] == "semantic" for e in chunks["edges"])

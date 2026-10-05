@@ -2,7 +2,10 @@
 
 Nível "documents" usa o centroide de cada documento (rápido, serve para bases grandes);
 nível "chunks" usa os embeddings dos chunks diretamente (denso, limitado a MAX_CHUNK_NODES).
-Arestas = top-k vizinhos de cada nó, filtrados por threshold de similaridade.
+Arestas = top-k vizinhos de cada nó, filtrados por threshold de similaridade (kind "semantic").
+No nível "documents" entram também os links explícitos (kind "link": [[wikilinks]] e manuais),
+independentes do threshold; se o par também é vizinho semântico, a aresta vira "link" com a
+similaridade junto.
 """
 
 from typing import Literal
@@ -83,6 +86,45 @@ _CHUNK_EDGES_SQL = """
 """
 
 
+_LINK_EDGES_SQL = """
+    SELECT l.source_id AS source, l.target_id AS target, l.kind AS link_kind, l.note,
+           round((1 - (s.centroid <=> t.centroid))::numeric, 4)::float AS similarity
+    FROM document_links l
+    JOIN documents s ON s.id = l.source_id
+    JOIN documents t ON t.id = l.target_id
+    JOIN collections cs ON cs.id = s.collection_id
+    JOIN collections ct ON ct.id = t.collection_id
+    WHERE s.status = 'active' AND t.status = 'active'
+      AND s.centroid IS NOT NULL AND t.centroid IS NOT NULL
+      AND ($1::text IS NULL OR (cs.name = $1 AND ct.name = $1))
+"""
+
+
+def _merge_link_edges(semantic: list[dict], explicit: list[dict]) -> list[dict]:
+    """Une as arestas semânticas com os links explícitos: um par ligado vira kind "link"."""
+    by_pair: dict[frozenset[str], dict] = {}
+    for e in semantic:
+        by_pair[frozenset((e["source"], e["target"]))] = {**e, "kind": "semantic"}
+    for link in explicit:
+        pair = frozenset((link["source"], link["target"]))
+        current = by_pair.get(pair)
+        if current and current["kind"] == "link":
+            # A -> B e B -> A (ou wikilink + manual): uma aresta só, juntando os tipos
+            current["link_kinds"] = sorted({*current["link_kinds"], link["link_kind"]})
+            current["note"] = current["note"] or link["note"]
+            continue
+        by_pair[pair] = {
+            "source": link["source"],
+            "target": link["target"],
+            "similarity": link["similarity"],
+            "kind": "link",
+            "link_kinds": [link["link_kind"]],
+            "note": link["note"],
+        }
+    # links primeiro, depois semânticas da mais forte para a mais fraca
+    return sorted(by_pair.values(), key=lambda e: (e["kind"] != "link", -(e["similarity"] or 0)))
+
+
 def _dedupe_edges(rows: list[dict]) -> list[dict]:
     """A consulta devolve arestas dirigidas (cada nó lista seus top-k); mantém cada par uma única vez."""
     best: dict[frozenset[str], dict] = {}
@@ -99,15 +141,18 @@ async def build_graph(
     min_similarity: float,
     k: int,
 ) -> dict:
+    explicit: list[dict] = []
     if level == "chunks":
         nodes = records(await pool().fetch(_CHUNK_NODES_SQL, collection, MAX_CHUNK_NODES))
         edges = records(await pool().fetch(_CHUNK_EDGES_SQL, collection, MAX_CHUNK_NODES, k, min_similarity))
     else:
         nodes = records(await pool().fetch(_DOC_NODES_SQL, collection))
         edges = records(await pool().fetch(_DOC_EDGES_SQL, collection, k, min_similarity))
+        explicit = records(await pool().fetch(_LINK_EDGES_SQL, collection))
     # No nível chunks o LATERAL usa o índice da tabela inteira; descarta arestas para fora do conjunto.
     node_ids = {n["id"] for n in nodes}
     edges = [e for e in edges if e["source"] in node_ids and e["target"] in node_ids]
+    explicit = [e for e in explicit if e["source"] in node_ids and e["target"] in node_ids]
     counts: dict[str, int] = {}
     for n in nodes:
         counts[n["collection"]] = counts.get(n["collection"], 0) + 1
@@ -115,5 +160,5 @@ async def build_graph(
         "level": level,
         "collections": [{"name": name, "count": count} for name, count in sorted(counts.items())],
         "nodes": nodes,
-        "edges": _dedupe_edges(edges),
+        "edges": _merge_link_edges(_dedupe_edges(edges), explicit),
     }

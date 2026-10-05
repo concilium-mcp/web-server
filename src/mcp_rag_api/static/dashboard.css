@@ -1929,3 +1929,61 @@ textarea.input {
     top: 52px;
   }
 }
+
+/* legenda: tipos de conexão (link explícito sólido × similaridade tracejada) */
+.legend-sep {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.legend-edge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.legend-edge.toggle {
+  cursor: pointer;
+}
+
+.legend-edge.toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.legend-edge.off {
+  color: var(--text-dim);
+}
+
+.legend-edge.off .edge-swatch {
+  opacity: 0.35;
+}
+
+.edge-swatch {
+  width: 18px;
+  flex: none;
+  border-top: 2px solid rgba(217, 119, 87, 0.85);
+}
+
+.edge-swatch.semantic {
+  border-top: 2px dashed rgba(236, 236, 236, 0.55);
+}
+
+/* tooltip das arestas/nós do force-graph no tema */
+.graph-canvas .float-tooltip-kap {
+  background: rgba(31, 30, 28, 0.95) !important;
+  border: 1px solid var(--border);
+  border-radius: 8px !important;
+  color: var(--text) !important;
+  font: 12px var(--font) !important;
+  padding: 6px 10px !important;
+}
