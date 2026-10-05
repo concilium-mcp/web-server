@@ -175,7 +175,7 @@ const PALETTE = ["#e8b26a", "#7fb4ca", "#a9c181", "#d08770", "#b48ead", "#ebcb8b
 
 const state = {
   user: null,
-  screen: "graph",
+  screen: "notes",
   level: "documents",
   collection: "",
   minSimilarity: 0.5, // calibrado para bge-m3: docs relacionados ficam ~0.5–0.7
@@ -377,9 +377,9 @@ function renderLogin() {
 /* ---------------------------------------------------------------- shell (sidebar + conteúdo) */
 
 const NAV = [
-  { id: "graph", label: "Grafo da base", iconName: "network" },
-  { id: "search", label: "Busca RAG", iconName: "search" },
-  { id: "agents", label: "Agents", iconName: "bot" },
+  { id: "notes", label: "Notas", iconName: "notebook-pen" },
+  { id: "search", label: "Busca", iconName: "search" },
+  { id: "graph", label: "Grafo", iconName: "network" },
 ];
 
 function navForRole() {
@@ -409,11 +409,7 @@ function renderShell() {
     </div>`;
   document.getElementById("nav").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-nav]");
-    if (btn) {
-      state.screen = btn.dataset.nav;
-      renderShell();
-      renderScreen();
-    }
+    if (btn) goTo(btn.dataset.nav);
   });
   loadIcons(app.querySelector(".sidebar"));
   renderUserFooter();
@@ -424,7 +420,7 @@ function renderUserFooter() {
   if (!footer || !state.user) return;
   const u = state.user;
   const isAdmin = u.role === "admin";
-  const roleLabel = isAdmin ? "Administrador" : "Leitor";
+  const roleLabel = ROLE_LABELS[u.role] || "Leitor";
   const item = (attrs, iconName, label, extra = "") =>
     `<button class="menu-item" role="menuitem" ${attrs}>${icon(iconName)}<span class="grow">${label}</span>${extra}</button>`;
   footer.innerHTML = `
@@ -434,6 +430,7 @@ function renderUserFooter() {
         <span class="muted">${roleLabel}</span>
       </div>
       <div class="menu-sep"></div>
+      ${item('data-goto="agents"', "bot", "Agents")}
       ${item('data-goto="keys"', "key-round", "Chaves API")}
       ${isAdmin ? item('data-goto="users"', "users", "Gerenciar usuários") : ""}
       <div class="menu-sep"></div>
@@ -444,7 +441,7 @@ function renderUserFooter() {
     </div>
     <button class="user-trigger" id="user-trigger" aria-haspopup="menu" aria-expanded="false">
       <span class="avatar">${escHtml(u.username.slice(0, 1).toUpperCase())}</span>
-      <span class="who" title="${escHtml(u.username)}">${escHtml(u.username)} <span class="muted">· ${isAdmin ? "admin" : "leitor"}</span></span>
+      <span class="who" title="${escHtml(u.username)}">${escHtml(u.username)} <span class="muted">· ${(ROLE_LABELS[u.role] || "Leitor").toLowerCase()}</span></span>
       ${icon("chevrons-up-down", 14)}
     </button>`;
   loadIcons(footer);
@@ -474,9 +471,7 @@ function renderUserFooter() {
     if (!el) return;
     setOpen(false);
     if (el.dataset.goto) {
-      state.screen = el.dataset.goto;
-      renderShell();
-      renderScreen();
+      goTo(el.dataset.goto);
     } else if (el.dataset.href) {
       window.open(el.dataset.href, "_blank", "noopener");
     } else if ("logout" in el.dataset) {
@@ -502,11 +497,37 @@ async function refreshServerStatus() {
   box.innerHTML = `<span class="status-dot"></span>${ok ? "OK" : "Sem informação"}`;
 }
 
+// troca de tela: a de notas guarda o endereço da nota aberta (#/notas/<id>), as outras limpam
+async function goTo(screen, openId = null) {
+  if (notes.editor) await notesLeave();
+  state.screen = screen;
+  notes.openId = openId;
+  if (screen !== "notes" && location.hash) history.replaceState(null, "", location.pathname);
+  renderShell();
+  await renderScreen();
+}
+
+window.addEventListener("hashchange", () => {
+  const m = location.hash.match(/^#\/notas\/([0-9a-f-]{36})$/);
+  if (!m || !state.user) return;
+  if (state.screen === "notes" && notes.tree) openNote(m[1]);
+  else goTo("notes", m[1]);
+});
+
+// alterações pendentes ao fechar a aba: o rascunho já está no navegador; tenta salvar também
+window.addEventListener("pagehide", () => {
+  if (notes.dirty && notes.current) {
+    store.set(DRAFT_PREFIX + notes.current.id, { base_version: notes.current.version, at: new Date().toISOString(), ...editedNote() });
+  }
+});
+
 async function renderScreen() {
   const main = document.getElementById("main");
   closePanel();
   destroyGraph();
-  if (state.screen === "graph") {
+  if (state.screen === "notes") {
+    await renderNotesScreen(main, notes.openId);
+  } else if (state.screen === "graph") {
     main.innerHTML = graphTemplate();
     bindGraphControls();
     await loadIcons(main);
@@ -652,7 +673,7 @@ async function renderKeysList() {
       </div>
       ${isAdmin ? keysCreateForm(agents) : ""}
       <div id="key-banner"></div>
-      <div class="table">
+      <div class="data-table">
         ${KEYS_HEAD}
         ${active.map((k) => keyRow(k, isAdmin)).join("") || `<div class="results-empty">Nenhuma chave ativa.${isAdmin ? " Crie uma em “Nova chave”." : ""}</div>`}
       </div>
@@ -660,7 +681,7 @@ async function renderKeysList() {
         revoked.length
           ? `<details class="revoked-block" ${state.showRevoked ? "open" : ""}>
               <summary>${icon("history", 14)} ${revoked.length} revogada(s) — mantidas para auditoria</summary>
-              <div class="table">${KEYS_HEAD}${revoked.map((k) => keyRow(k, isAdmin)).join("")}</div>
+              <div class="data-table">${KEYS_HEAD}${revoked.map((k) => keyRow(k, isAdmin)).join("")}</div>
             </details>`
           : ""
       }
@@ -1078,9 +1099,11 @@ function showAgentBanner(created) {
 /* ---------------------------------------------------------------- tela: usuários */
 
 const ROLES = [
-  ["viewer", "Leitor", "Vê grafo, busca, chaves e agents, sem alterar nada"],
-  ["admin", "Administrador", "Gerencia chaves, usuários e autonomia dos agents"],
+  ["viewer", "Leitor", "Lê notas, busca, grafo, chaves e agents, sem alterar nada"],
+  ["editor", "Editor", "Cria, edita, move e arquiva notas e pastas"],
+  ["admin", "Administrador", "Tudo do editor + chaves, usuários, links e autonomia dos agents"],
 ];
+const ROLE_LABELS = Object.fromEntries(ROLES.map(([value, label]) => [value, label]));
 
 function userRow(u) {
   const disabled = Boolean(u.disabled_at);
@@ -1177,7 +1200,7 @@ async function renderUsersList() {
         <button class="btn primary" id="user-new">${icon("plus")}<span>Novo usuário</span></button>
       </div>
       ${usersCreateForm()}
-      <div class="table">${USERS_HEAD}${users.map(userRow).join("")}</div>
+      <div class="data-table">${USERS_HEAD}${users.map(userRow).join("")}</div>
     </div>`;
   await loadIcons(body);
   bindUserActions();
@@ -1251,6 +1274,794 @@ function bindUserActions() {
       await uiError("A operação falhou", err);
     }
   });
+}
+
+/* ---------------------------------------------------------------- tela: notas (plan-web-02) */
+
+// Modelos v1 estáticos: não poluem a busca RAG com documentos-modelo.
+const NOTE_TEMPLATES = [
+  { id: "blank", label: "Em branco", desc: "Comece do zero", content: "" },
+  {
+    id: "client",
+    label: "Perfil de cliente",
+    desc: "Quem é, contexto, contatos e histórico",
+    content:
+      "## Resumo\n\nQuem é o cliente, segmento e porte.\n\n## Contatos\n\n- Nome — cargo — e-mail/telefone\n\n" +
+      "## Contexto e dores\n\n- \n\n## O que já oferecemos\n\n- \n\n## Próximos passos\n\n- [ ] Próximo passo\n",
+  },
+  {
+    id: "meeting",
+    label: "Ata de reunião",
+    desc: "Participantes, decisões e próximos passos",
+    content:
+      "**Data:** \n**Participantes:** \n\n## Pauta\n\n- \n\n## Decisões\n\n- \n\n" +
+      "## Próximos passos\n\n- [ ] Responsável — tarefa — prazo\n",
+  },
+  {
+    id: "proposal",
+    label: "Proposta",
+    desc: "Problema, solução, escopo e investimento",
+    content:
+      "## Problema\n\n\n## Solução proposta\n\n\n## Escopo\n\n- Inclui:\n- Não inclui:\n\n" +
+      "## Investimento e prazos\n\n| Item | Valor | Prazo |\n| --- | --- | --- |\n|  |  |  |\n\n## Próximos passos\n\n- [ ] Próximo passo\n",
+  },
+  {
+    id: "objections",
+    label: "Playbook de objeções",
+    desc: "Objeção, resposta e prova",
+    content:
+      "## Objeção: \n\n**Quando aparece:** \n\n**Resposta curta:** \n\n**Prova / caso:** \n\n" +
+      "---\n\n## Objeção: \n\n**Quando aparece:** \n\n**Resposta curta:** \n\n**Prova / caso:** \n",
+  },
+];
+
+const IDLE_SAVE_MS = 20000; // salva sozinho depois de ~20 s sem digitar
+const DRAFT_PREFIX = "concilium:draft:";
+
+const notes = {
+  tree: null, // { collections, notes } — sem conteúdo
+  current: null, // nota aberta, como está salva no banco
+  editor: null, // instância Toast UI (editor ou viewer)
+  tags: [], // tags em edição
+  dirty: false,
+  saving: false,
+  idleTimer: null,
+  draftTimer: null,
+  filter: "",
+  side: null, // "related" | "history" | null
+};
+
+const canEdit = () => ["admin", "editor"].includes(state.user?.role);
+
+// localStorage pode falhar (aba privada, bloqueio): rascunho é conveniência, nunca obrigatório
+const store = {
+  get(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key));
+    } catch {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* sem armazenamento local: segue sem rascunho */
+    }
+  },
+  del(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* idem */
+    }
+  },
+};
+
+function notesTemplate() {
+  return `
+    <div class="notes-layout">
+      <aside class="notes-tree">
+        <div class="notes-tree-head">
+          <div class="field notes-filter">${icon("search")}<input type="text" id="notes-filter" placeholder="Buscar nota…" autocomplete="off" /></div>
+          ${
+            canEdit()
+              ? `<div class="notes-tree-actions">
+                  <button class="btn sm primary" id="note-new" title="Nova nota (Alt+N)">${icon("plus", 14)}<span>Nota</span></button>
+                  <button class="btn sm ghost" id="folder-new" title="Nova pasta">${icon("folder", 14)}<span>Pasta</span></button>
+                </div>`
+              : ""
+          }
+        </div>
+        <div class="notes-tree-list" id="notes-tree-list"></div>
+      </aside>
+      <section class="note-main" id="note-main"></section>
+      <aside class="note-side hidden" id="note-side"></aside>
+    </div>`;
+}
+
+async function renderNotesScreen(main, openId) {
+  main.innerHTML = notesTemplate();
+  await loadIcons(main);
+  main.querySelector("#notes-filter").addEventListener("input", (e) => {
+    notes.filter = e.target.value;
+    renderNotesTree();
+  });
+  main.querySelector("#note-new")?.addEventListener("click", () => openNewNoteModal());
+  main.querySelector("#folder-new")?.addEventListener("click", () => openNewFolderModal());
+  main.querySelector("#notes-tree-list").addEventListener("click", async (e) => {
+    const folder = e.target.closest("[data-toggle-folder]");
+    const note = e.target.closest("[data-note]");
+    if (folder) {
+      const collapsed = new Set(store.get("concilium:collapsed") || []);
+      const name = folder.dataset.toggleFolder;
+      collapsed.has(name) ? collapsed.delete(name) : collapsed.add(name);
+      store.set("concilium:collapsed", [...collapsed]);
+      renderNotesTree();
+    } else if (note) {
+      await openNote(note.dataset.note);
+    }
+  });
+  document.addEventListener("keydown", notesKeys);
+  await loadNotesTree();
+  const target = openId || store.get("concilium:last-note");
+  const exists = notes.tree.notes.some((n) => n.id === target);
+  if (exists) await openNote(target);
+  else if (notes.tree.notes.length) await openNote(notes.tree.notes[0].id);
+  else renderNotesEmpty();
+}
+
+// sai da tela de notas: salva o que estiver pendente e desmonta o editor
+async function notesLeave() {
+  document.removeEventListener("keydown", notesKeys);
+  if (notes.current && notes.dirty) await saveNote();
+  clearTimeout(notes.idleTimer);
+  notes.editor?.destroy();
+  notes.editor = null;
+  notes.current = null;
+  notes.dirty = false;
+}
+
+function notesKeys(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    saveNote();
+  } else if (e.altKey && e.key.toLowerCase() === "n" && canEdit()) {
+    e.preventDefault(); // Ctrl+N é do navegador (nova janela) e não pode ser capturado
+    openNewNoteModal();
+  }
+}
+
+async function loadNotesTree() {
+  notes.tree = await api.get("/notes/tree");
+  renderNotesTree();
+}
+
+function renderNotesTree() {
+  const box = document.getElementById("notes-tree-list");
+  if (!box || !notes.tree) return;
+  const q = titleKey(notes.filter);
+  const collapsed = new Set(store.get("concilium:collapsed") || []);
+  const byCol = new Map(notes.tree.collections.map((c) => [c.name, []]));
+  for (const n of notes.tree.notes) {
+    if (!q || titleKey(n.title).includes(q)) byCol.get(n.collection)?.push(n);
+  }
+  box.innerHTML =
+    [...byCol.entries()]
+      .filter(([, items]) => !q || items.length)
+      .map(([name, items]) => {
+        const closed = collapsed.has(name) && !q;
+        return `
+      <div class="tree-folder ${closed ? "collapsed" : ""}">
+        <button class="tree-folder-head" type="button" data-toggle-folder="${escHtml(name)}">
+          <span class="tree-chevron">${icon("chevron-right", 13)}</span>
+          <span class="dot" style="background:${colorFor(name)}"></span>
+          <span class="grow">${escHtml(name)}</span><span class="count">${items.length}</span>
+        </button>
+        <div class="tree-notes">
+          ${
+            items
+              .map(
+                (n) => `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}">
+                  <span class="grow">${escHtml(n.title)}</span>${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="Alterações não salvas"></span>` : ""}</button>`,
+              )
+              .join("") || `<div class="tree-empty">Pasta vazia</div>`
+          }
+        </div>
+      </div>`;
+      })
+      .join("") || `<div class="tree-empty">Nada encontrado para “${escHtml(notes.filter)}”.</div>`;
+  loadIcons(box);
+}
+
+// mesma regra do kb_title_key do banco: minúsculas, sem acento
+const titleKey = (s) =>
+  String(s || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+
+function renderNotesEmpty() {
+  const main = document.getElementById("note-main");
+  main.innerHTML = `
+    <div class="results-empty notes-empty">
+      <div class="results-empty-title">${canEdit() ? "Crie sua primeira nota" : "Nenhuma nota ainda"}</div>
+      ${
+        canEdit()
+          ? `Tudo o que o time escreve aqui vira, na hora, base de conhecimento para os agentes.
+             <div class="template-pick">${NOTE_TEMPLATES.map((t) => `<button class="btn" type="button" data-template="${t.id}">${escHtml(t.label)}</button>`).join("")}</div>`
+          : "Peça a um editor ou admin para criar as primeiras notas."
+      }
+    </div>`;
+  main.querySelectorAll("[data-template]").forEach((b) => b.addEventListener("click", () => openNewNoteModal(b.dataset.template)));
+}
+
+/* ---------- abrir / editar / salvar */
+
+async function openNote(id) {
+  if (notes.current?.id === id) return;
+  if (notes.current && notes.dirty && !(await saveNote())) {
+    const leave = await uiConfirm({
+      title: "Não foi possível salvar",
+      message: "Suas alterações continuam guardadas como rascunho neste navegador. Trocar de nota mesmo assim?",
+      confirmLabel: "Trocar mesmo assim",
+    });
+    if (!leave) return;
+  }
+  let note;
+  try {
+    note = await api.get(`/notes/${id}`);
+  } catch (err) {
+    await uiError("Não foi possível abrir a nota", err);
+    return;
+  }
+  notes.current = note;
+  notes.tags = [...(note.tags || [])];
+  notes.dirty = false;
+  store.set("concilium:last-note", id);
+  if (location.hash !== `#/notas/${id}`) history.replaceState(null, "", `#/notas/${id}`);
+  renderNoteMain();
+  renderNotesTree();
+  if (notes.side) renderNoteSide(notes.side);
+  await offerDraftRecovery();
+}
+
+function renderNoteMain() {
+  const n = notes.current;
+  const main = document.getElementById("note-main");
+  const editable = canEdit();
+  main.innerHTML = `
+    <div class="note-head">
+      <input class="note-title" id="note-title" value="${escHtml(n.title)}" placeholder="Sem título" ${editable ? "" : "readonly"} />
+      <div class="note-actions">
+        <span class="save-state" id="save-state"></span>
+        <button class="btn sm ghost ${notes.side === "related" ? "active" : ""}" type="button" data-side="related">${icon("link", 14)}<span>Conexões</span></button>
+        <button class="btn sm ghost ${notes.side === "history" ? "active" : ""}" type="button" data-side="history">${icon("history", 14)}<span>Histórico</span></button>
+        ${
+          editable
+            ? `<button class="icon-btn" type="button" id="note-move" title="Mover para outra pasta">${icon("folder-input", 16)}</button>
+               <button class="icon-btn danger" type="button" id="note-archive" title="Arquivar nota">${icon("archive", 16)}</button>
+               <button class="btn sm primary" type="button" id="note-save" title="Salvar (Ctrl+S)">${icon("save", 14)}<span>Salvar</span></button>`
+            : ""
+        }
+      </div>
+    </div>
+    <div class="note-meta">
+      <span class="chip"><span class="dot" style="background:${colorFor(n.collection)}"></span>${escHtml(n.collection)}</span>
+      <span class="muted" id="note-version"></span>
+      <div class="tag-input" id="note-tags"></div>
+    </div>
+    <div class="note-editor" id="note-editor"></div>`;
+  loadIcons(main);
+  renderVersionLine();
+  renderTags();
+
+  notes.editor?.destroy();
+  const el = main.querySelector("#note-editor");
+  const common = { el, initialValue: n.content, theme: "dark", usageStatistics: false };
+  notes.editor = editable
+    ? new toastui.Editor({
+        ...common,
+        height: "100%",
+        initialEditType: "wysiwyg",
+        previewStyle: "vertical",
+        language: "pt-BR",
+        placeholder: "Escreva aqui. Cite outra nota com [[Título]] para ligá-las.",
+      })
+    : toastui.Editor.factory({ ...common, viewer: true });
+  if (editable) {
+    notes.editor.on("change", markDirty);
+    main.querySelector("#note-title").addEventListener("input", markDirty);
+    main.querySelector("#note-save").addEventListener("click", () => saveNote());
+    main.querySelector("#note-move").addEventListener("click", openMoveNoteModal);
+    main.querySelector("#note-archive").addEventListener("click", archiveCurrentNote);
+  }
+  main.querySelectorAll("[data-side]").forEach((b) =>
+    b.addEventListener("click", () => {
+      notes.side = notes.side === b.dataset.side ? null : b.dataset.side;
+      main.querySelectorAll("[data-side]").forEach((x) => x.classList.toggle("active", x.dataset.side === notes.side));
+      renderNoteSide(notes.side);
+    }),
+  );
+  setSaveState(notes.dirty ? "dirty" : "saved");
+}
+
+function renderVersionLine() {
+  const n = notes.current;
+  const box = document.getElementById("note-version");
+  if (box) box.textContent = `v${n.version} · atualizada ${fmtAgo(n.updated_at)}${n.updated_by ? ` por ${n.updated_by.replace(/^dash:/, "")}` : ""}`;
+}
+
+function renderTags() {
+  const box = document.getElementById("note-tags");
+  if (!box) return;
+  const editable = canEdit();
+  box.innerHTML =
+    notes.tags
+      .map((t, i) => `<span class="chip tag-chip">#${escHtml(t)}${editable ? `<button type="button" data-tag-del="${i}" title="Remover tag">×</button>` : ""}</span>`)
+      .join("") + (editable ? `<input type="text" id="tag-add" placeholder="${notes.tags.length ? "+ tag" : "Adicionar tag…"}" />` : "");
+  if (!editable) return;
+  const input = box.querySelector("#tag-add");
+  input.addEventListener("keydown", (e) => {
+    const value = input.value.trim().replace(/^#/, "").replace(/,$/, "");
+    if ((e.key === "Enter" || e.key === ",") && value) {
+      e.preventDefault();
+      if (!notes.tags.includes(value)) notes.tags.push(value);
+      renderTags();
+      document.getElementById("tag-add").focus();
+      markDirty();
+    } else if (e.key === "Backspace" && !input.value && notes.tags.length) {
+      notes.tags.pop();
+      renderTags();
+      document.getElementById("tag-add").focus();
+      markDirty();
+    }
+  });
+  box.querySelectorAll("[data-tag-del]").forEach((b) =>
+    b.addEventListener("click", () => {
+      notes.tags.splice(Number(b.dataset.tagDel), 1);
+      renderTags();
+      markDirty();
+    }),
+  );
+}
+
+function editedNote() {
+  return {
+    title: document.getElementById("note-title")?.value.trim() || notes.current.title,
+    content: notes.editor?.getMarkdown() ?? notes.current.content,
+    tags: [...notes.tags],
+  };
+}
+
+function hasChanges() {
+  const n = notes.current;
+  const e = editedNote();
+  return e.title !== n.title || e.content.trim() !== (n.content || "").trim() || JSON.stringify(e.tags) !== JSON.stringify(n.tags || []);
+}
+
+function markDirty() {
+  if (!notes.current) return;
+  const was = notes.dirty;
+  notes.dirty = hasChanges();
+  if (was !== notes.dirty) renderNotesTree();
+  setSaveState(notes.dirty ? "dirty" : "saved");
+  // rascunho local contínuo (não perde nada se a aba fechar) + salvamento automático depois de parado
+  clearTimeout(notes.draftTimer);
+  clearTimeout(notes.idleTimer);
+  if (!notes.dirty) {
+    store.del(DRAFT_PREFIX + notes.current.id);
+    return;
+  }
+  notes.draftTimer = setTimeout(() => {
+    store.set(DRAFT_PREFIX + notes.current.id, { base_version: notes.current.version, at: new Date().toISOString(), ...editedNote() });
+  }, 400);
+  notes.idleTimer = setTimeout(() => saveNote(), IDLE_SAVE_MS);
+}
+
+function setSaveState(kind) {
+  const box = document.getElementById("save-state");
+  if (!box) return;
+  const labels = {
+    saved: `Salvo · v${notes.current?.version}`,
+    dirty: "Alterações não salvas",
+    saving: "Salvando…",
+    error: "Erro ao salvar",
+  };
+  box.className = `save-state ${kind}`;
+  box.textContent = canEdit() ? labels[kind] : "Somente leitura";
+}
+
+// Salva no banco (gera versão). Devolve true se não sobrou nada pendente.
+async function saveNote(force = false) {
+  if (!notes.current || !canEdit()) return true;
+  if (!notes.dirty || notes.saving) return !notes.dirty;
+  clearTimeout(notes.idleTimer);
+  notes.saving = true;
+  setSaveState("saving");
+  const n = notes.current;
+  const edited = editedNote();
+  const content = edited.content.trim() ? edited.content : n.content; // conteúdo vazio não é aceito pela base
+  try {
+    const result = await api.patch(`/notes/${n.id}`, {
+      base_version: force ? force : n.version,
+      title: edited.title,
+      content,
+      tags: edited.tags,
+    });
+    Object.assign(n, { ...edited, content, version: result.version ?? n.version, updated_at: new Date().toISOString(), updated_by: `dash:${state.user.username}` });
+    notes.dirty = hasChanges(); // o usuário pode ter digitado durante o salvamento
+    if (!notes.dirty) store.del(DRAFT_PREFIX + n.id);
+    const item = notes.tree?.notes.find((x) => x.id === n.id);
+    if (item) Object.assign(item, { title: n.title, tags: n.tags, version: n.version });
+    renderNotesTree();
+    renderVersionLine();
+    setSaveState(notes.dirty ? "dirty" : "saved");
+    if (notes.side === "history") renderNoteSide("history");
+    return !notes.dirty;
+  } catch (err) {
+    setSaveState("error");
+    if (err.status === 409 && err.detail?.current_version) {
+      notes.saving = false;
+      const overwrite = await uiDialog({
+        title: "Esta nota mudou enquanto você editava",
+        message: `${err.detail.message} Salvar a sua versão por cima, ou descartar suas alterações e carregar a versão nova?`,
+        confirmLabel: "Salvar a minha por cima",
+        cancelLabel: "Carregar a versão nova",
+        tone: "danger",
+      });
+      if (overwrite) return saveNote(err.detail.current_version);
+      store.del(DRAFT_PREFIX + n.id);
+      notes.current = null;
+      await openNote(n.id);
+      return true;
+    }
+    await uiError("Não foi possível salvar a nota", err);
+    return false;
+  } finally {
+    notes.saving = false;
+  }
+}
+
+async function offerDraftRecovery() {
+  const n = notes.current;
+  const draft = store.get(DRAFT_PREFIX + n.id);
+  if (!draft || !canEdit()) return;
+  const same = draft.title === n.title && draft.content.trim() === (n.content || "").trim() && JSON.stringify(draft.tags) === JSON.stringify(n.tags || []);
+  if (same) {
+    store.del(DRAFT_PREFIX + n.id);
+    return;
+  }
+  const stale = draft.base_version !== n.version;
+  const recover = await uiConfirm({
+    title: "Recuperar rascunho não salvo?",
+    message:
+      `Há alterações desta nota guardadas neste navegador (${fmtAgo(draft.at)}) que não foram salvas.` +
+      (stale ? ` Atenção: a nota foi salva por outra pessoa depois disso (agora está na v${n.version}).` : ""),
+    confirmLabel: "Recuperar rascunho",
+  });
+  if (!recover) {
+    store.del(DRAFT_PREFIX + n.id);
+    return;
+  }
+  document.getElementById("note-title").value = draft.title;
+  notes.tags = [...draft.tags];
+  renderTags();
+  notes.editor.setMarkdown(draft.content, false);
+  markDirty();
+}
+
+/* ---------- criar / mover / arquivar / pastas */
+
+function collectionOptions(selected) {
+  return notes.tree.collections
+    .map((c) => `<option value="${escHtml(c.name)}" ${c.name === selected ? "selected" : ""}>${escHtml(c.name)}</option>`)
+    .join("");
+}
+
+async function openNewNoteModal(templateId = "blank") {
+  if (!notes.tree.collections.length) {
+    await uiAlert("Crie uma pasta primeiro", "As notas ficam dentro de pastas (coleções). Use “Pasta” para criar a primeira.");
+    return;
+  }
+  document.getElementById("note-new-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "note-new",
+    iconName: "notebook-pen",
+    title: "Nova nota",
+    subtitle: "Ela vira conhecimento dos agentes assim que for criada.",
+    submitLabel: "Criar nota",
+    width: 640,
+    body: `
+      <div class="create-grid">
+        <label class="form-field">
+          <span class="form-label">Título</span>
+          <input class="input" id="nn-title" placeholder="ex.: Cliente Acme — perfil" required />
+        </label>
+        <label class="form-field">
+          <span class="form-label">Pasta</span>
+          <select class="input" id="nn-collection">${collectionOptions(notes.current?.collection || notes.tree.collections[0].name)}</select>
+        </label>
+      </div>
+      <div class="form-field">
+        <span class="form-label">Modelo</span>
+        <div class="scope-grid two">
+          ${NOTE_TEMPLATES.map(
+            (t) => `
+            <label class="scope-option">
+              <input type="radio" name="nn-template" value="${t.id}" ${t.id === templateId ? "checked" : ""} />
+              <span><span>${escHtml(t.label)}</span><span class="muted">${escHtml(t.desc)}</span></span>
+            </label>`,
+          ).join("")}
+        </div>
+      </div>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("note-new-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("note-new");
+  modal.querySelector("#note-new-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = modal.querySelector("#nn-title").value.trim();
+    const template = NOTE_TEMPLATES.find((t) => t.id === modal.querySelector("input[name=nn-template]:checked").value);
+    const body = {
+      collection: modal.querySelector("#nn-collection").value,
+      title,
+      content: template.content || `# ${title}\n`,
+    };
+    try {
+      let created = await api.post("/notes", body);
+      if (!created.created && created.reason === "duplicate_suspected") {
+        const sim = created.similar_document;
+        const go = await uiConfirm({
+          title: "Já existe uma nota parecida",
+          message: `“${sim.title}” tem conteúdo muito parecido (${Math.round(sim.similarity * 100)}%). Criar mesmo assim?`,
+          confirmLabel: "Criar mesmo assim",
+        });
+        if (!go) return;
+        created = await api.post("/notes", { ...body, force: true });
+      }
+      setOpen(false);
+      modal.remove();
+      await loadNotesTree();
+      notes.current = notes.current?.id === created.document_id ? null : notes.current;
+      await openNote(created.document_id);
+      notes.editor?.focus?.();
+    } catch (err) {
+      await uiError("Não foi possível criar a nota", err);
+    }
+  });
+  setOpen(true);
+}
+
+async function openNewFolderModal() {
+  document.getElementById("folder-new-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "folder-new",
+    iconName: "folder",
+    title: "Nova pasta",
+    subtitle: "Pastas organizam as notas e definem o que cada agente pode acessar.",
+    submitLabel: "Criar pasta",
+    width: 520,
+    body: `
+      <label class="form-field">
+        <span class="form-label">Nome</span>
+        <input class="input" id="nf-name" placeholder="ex.: comercial, clientes, produto" required />
+      </label>
+      <label class="form-field">
+        <span class="form-label">Descrição <span class="muted">(opcional)</span></span>
+        <input class="input" id="nf-desc" placeholder="O que entra nesta pasta" />
+      </label>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("folder-new-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("folder-new");
+  modal.querySelector("#folder-new-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/collections", {
+        name: modal.querySelector("#nf-name").value.trim(),
+        description: modal.querySelector("#nf-desc").value.trim() || null,
+      });
+      setOpen(false);
+      modal.remove();
+      await loadNotesTree();
+    } catch (err) {
+      await uiError("Não foi possível criar a pasta", err);
+    }
+  });
+  setOpen(true);
+}
+
+async function openMoveNoteModal() {
+  const n = notes.current;
+  if (!(await saveNote())) return;
+  document.getElementById("note-move-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "note-move",
+    iconName: "folder-input",
+    title: "Mover nota",
+    subtitle: `“${escHtml(n.title)}” sai de <strong>${escHtml(n.collection)}</strong>.`,
+    submitLabel: "Mover",
+    submitIcon: "folder-input",
+    width: 480,
+    body: `
+      <label class="form-field">
+        <span class="form-label">Para a pasta</span>
+        <select class="input" id="nm-collection">${collectionOptions(n.collection)}</select>
+      </label>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("note-move-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("note-move");
+  modal.querySelector("#note-move-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const destination = modal.querySelector("#nm-collection").value;
+    try {
+      await api.post(`/notes/${n.id}/move`, { collection: destination });
+      setOpen(false);
+      modal.remove();
+      n.collection = destination;
+      await loadNotesTree();
+      renderNoteMain();
+    } catch (err) {
+      await uiError("Não foi possível mover a nota", err);
+    }
+  });
+  setOpen(true);
+}
+
+async function archiveCurrentNote() {
+  const n = notes.current;
+  const ok = await uiConfirm({
+    title: "Arquivar nota?",
+    message: `“${n.title}” some da lista, da busca e dos agentes. O histórico é mantido e um admin pode recuperá-la.`,
+    confirmLabel: "Arquivar",
+    tone: "danger",
+  });
+  if (!ok) return;
+  try {
+    await api.post(`/notes/${n.id}/archive`, {});
+    store.del(DRAFT_PREFIX + n.id);
+    notes.dirty = false;
+    notes.editor?.destroy();
+    notes.editor = null;
+    notes.current = null;
+    history.replaceState(null, "", "#/notas");
+    await loadNotesTree();
+    if (notes.tree.notes.length) await openNote(notes.tree.notes[0].id);
+    else renderNotesEmpty();
+  } catch (err) {
+    await uiError("Não foi possível arquivar", err);
+  }
+}
+
+/* ---------- painel lateral: conexões e histórico */
+
+async function renderNoteSide(kind) {
+  const side = document.getElementById("note-side");
+  if (!side) return;
+  side.classList.toggle("hidden", !kind);
+  if (!kind || !notes.current) return;
+  const n = notes.current;
+  side.innerHTML = `<div class="muted">Carregando…</div>`;
+  if (kind === "related") {
+    let rel;
+    try {
+      rel = await api.get(`/notes/${n.id}/related`);
+    } catch {
+      side.innerHTML = `<div class="muted">Não foi possível carregar as conexões.</div>`;
+      return;
+    }
+    const item = (d, extra = "") =>
+      `<button class="side-item" type="button" data-open-note="${d.document_id}"><span class="dot" style="background:${colorFor(d.collection)}"></span><span class="grow">${escHtml(d.title)}</span>${extra}</button>`;
+    side.innerHTML = `
+      <div class="side-head"><h3>${icon("link", 15)} Conexões</h3>
+        ${state.user?.role === "admin" ? `<button class="btn sm ghost" type="button" id="side-connect">${icon("plus", 13)}<span>Conectar a…</span></button>` : ""}
+      </div>
+      <div class="links-label">Links (${rel.links.length})</div>
+      ${
+        rel.links
+          .map((l) => (l.pending ? `<div class="side-item pending">${escHtml(l.target_title)} <span class="muted">· ainda não existe</span></div>` : item(l)))
+          .join("") || `<div class="muted links-empty">Escreva [[Título]] no texto para ligar outra nota.</div>`
+      }
+      <div class="links-label">Backlinks (${rel.backlinks.length})</div>
+      ${rel.backlinks.map((b) => item(b)).join("") || `<div class="muted links-empty">Nenhuma nota aponta para esta.</div>`}
+      <div class="links-label">Parecidas (${rel.semantic.length})</div>
+      ${rel.semantic.map((s) => item(s, `<span class="muted">${Math.round(s.similarity * 100)}%</span>`)).join("") || `<div class="muted links-empty">Nenhuma ainda.</div>`}`;
+    side.querySelector("#side-connect")?.addEventListener("click", () =>
+      openConnectModal({ document_id: n.id, title: n.title }, null, () => renderNoteSide("related")),
+    );
+  } else {
+    let versions;
+    try {
+      versions = await api.get(`/notes/${n.id}/versions`);
+    } catch {
+      side.innerHTML = `<div class="muted">Não foi possível carregar o histórico.</div>`;
+      return;
+    }
+    side.innerHTML = `
+      <div class="side-head"><h3>${icon("history", 15)} Histórico</h3></div>
+      ${versions
+        .map(
+          (v) => `
+        <button class="side-version ${v.version === n.version ? "current" : ""}" type="button" data-version="${v.version}">
+          <span class="idx">v${v.version}</span>
+          <span class="grow">${escHtml(v.change_note || "")}<span class="muted">${escHtml((v.changed_by || "—").replace(/^dash:/, ""))} · ${fmtAgo(v.created_at)}</span></span>
+          ${v.version === n.version ? `<span class="chip subtle">atual</span>` : ""}
+        </button>`,
+        )
+        .join("")}`;
+  }
+  await loadIcons(side);
+  side.querySelectorAll("[data-open-note]").forEach((b) => b.addEventListener("click", () => openNote(b.dataset.openNote)));
+  side.querySelectorAll("[data-version]").forEach((b) => b.addEventListener("click", () => openVersionPreview(Number(b.dataset.version))));
+}
+
+async function openVersionPreview(version) {
+  const n = notes.current;
+  let v;
+  try {
+    v = await api.get(`/notes/${n.id}/versions/${version}`);
+  } catch (err) {
+    await uiError("Não foi possível abrir a versão", err);
+    return;
+  }
+  const isCurrent = version === n.version;
+  document.getElementById("version-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "version",
+    iconName: "history",
+    title: `${escHtml(v.title)} — v${version}`,
+    subtitle: `${escHtml((v.changed_by || "—").replace(/^dash:/, ""))} · ${fmtDate(v.created_at)}${v.change_note ? ` · “${escHtml(v.change_note)}”` : ""}`,
+    submitLabel: isCurrent ? "Fechar" : "Restaurar esta versão",
+    submitIcon: isCurrent ? "check" : "refresh-cw",
+    width: 820,
+    body: `<div class="version-viewer" id="version-viewer"></div>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("version-modal");
+  await loadIcons(modal);
+  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: "dark", usageStatistics: false });
+  const setOpen = bindModal("version");
+  if (!canEdit() && !isCurrent) modal.querySelector("button[type=submit]").remove();
+  modal.querySelector("#version-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (isCurrent) {
+      setOpen(false);
+      return;
+    }
+    if (notes.dirty) {
+      const discard = await uiConfirm({
+        title: "Descartar alterações não salvas?",
+        message: "Restaurar substitui o conteúdo atual pela v" + version + ". Suas alterações não salvas serão perdidas.",
+        confirmLabel: "Restaurar mesmo assim",
+        tone: "danger",
+      });
+      if (!discard) return;
+    }
+    try {
+      await api.post(`/notes/${n.id}/restore/${version}`);
+      viewer.destroy();
+      setOpen(false);
+      modal.remove();
+      store.del(DRAFT_PREFIX + n.id);
+      notes.dirty = false;
+      notes.current = null;
+      await loadNotesTree();
+      await openNote(n.id);
+    } catch (err) {
+      await uiError("Não foi possível restaurar", err);
+    }
+  });
+  setOpen(true);
 }
 
 /* ---------------------------------------------------------------- tela: grafo */
@@ -1830,7 +2641,7 @@ function focusGraphNode(docId) {
 }
 
 // "Conectar a…": escolhe o destino por autocomplete (ou já vem do modo conectar) e uma nota opcional
-async function openConnectModal(source, preselected = null) {
+async function openConnectModal(source, preselected = null, onDone = null) {
   document.getElementById("connect-modal")?.remove();
   const holder = document.createElement("div");
   holder.innerHTML = modalShell({
@@ -1892,6 +2703,7 @@ async function openConnectModal(source, preselected = null) {
       });
       setOpen(false);
       modal.remove();
+      if (onDone) return onDone();
       if (document.getElementById("graph-wrap")) loadGraph();
       openDocumentPanel(source.document_id);
     } catch (err) {
@@ -2001,6 +2813,8 @@ new MutationObserver(() => enhancePasswordFields()).observe(document.body, { chi
     renderLogin();
     return;
   }
+  const deep = location.hash.match(/^#\/notas\/([0-9a-f-]{36})$/);
+  if (deep) notes.openId = deep[1];
   renderShell();
   await renderScreen();
   await loadIcons(document);

@@ -115,3 +115,10 @@ async def test_editor_is_not_admin(editor):
 def test_editor_role_helpers():
     assert dash_auth.DashUser("1", "e", "editor").can_edit and not dash_auth.DashUser("1", "e", "editor").is_admin
     assert not dash_auth.DashUser("1", "v", "viewer").can_edit
+
+
+async def test_related_endpoint(editor):
+    tree = (await editor.get("/dash/api/notes/tree")).json()
+    note_id = tree["notes"][0]["id"]
+    rel = (await editor.get(f"/dash/api/notes/{note_id}/related")).json()
+    assert set(rel) == {"document", "links", "backlinks", "semantic"}

@@ -116,6 +116,15 @@ def _writer(user: DashUser) -> Principal:
 _DASH_CHANGE_NOTE = "edição pela dashboard"
 
 
+def _who(actor: str | None) -> str:
+    """Autor legível: "dash:maria" -> "maria", "key:kb_sk_x" -> "uma integração"."""
+    if not actor:
+        return "outra pessoa"
+    if actor.startswith("dash:"):
+        return actor.removeprefix("dash:")
+    return "um agente/integração"
+
+
 @router.get("/notes/tree")
 async def notes_tree() -> dict:
     """Árvore leve da tela Notas: todas as coleções (inclusive vazias) e os documentos ativos, sem conteúdo."""
@@ -175,7 +184,7 @@ async def update_note(document_id: str, body: NotePatch, user: DashUser = Depend
         raise HTTPException(
             status_code=409,
             detail={
-                "message": f"A nota foi salva por {current['updated_by'] or 'outra pessoa'} enquanto você editava.",
+                "message": f"A nota foi salva por {_who(current['updated_by'])} enquanto você editava.",
                 "current_version": current["version"],
             },
         )
@@ -205,6 +214,12 @@ class ArchiveIn(BaseModel):
 @router.post("/notes/{document_id}/archive")
 async def archive_note(document_id: str, body: ArchiveIn, user: DashUser = Depends(require_editor)) -> dict:
     return await documents.archive_document(_writer(user), document_id, body.reason)
+
+
+@router.get("/notes/{document_id}/related")
+async def note_related(document_id: str, user: DashUser = Depends(current_user)) -> dict:
+    """Painel "Conexões" da nota: links, backlinks e vizinhos semânticos."""
+    return await links.get_related(_reader(user), document_id, 6)
 
 
 @router.get("/notes/{document_id}/versions")
