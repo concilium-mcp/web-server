@@ -175,7 +175,7 @@ const state = {
   screen: "graph",
   level: "documents",
   collection: "",
-  minSimilarity: 0.7,
+  minSimilarity: 0.5, // calibrado para bge-m3: docs relacionados ficam ~0.5–0.7
   k: 5,
   colors: new Map(),
   graphInstance: null,
