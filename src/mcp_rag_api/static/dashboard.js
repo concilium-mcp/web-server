@@ -374,7 +374,6 @@ const NAV = [
   { id: "search", label: "Busca RAG", iconName: "search" },
   { id: "keys", label: "Chaves API", iconName: "key-round" },
   { id: "agents", label: "Agents", iconName: "bot" },
-  { id: "users", label: "Usuários", iconName: "users", adminOnly: true },
 ];
 
 function navForRole() {
