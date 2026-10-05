@@ -126,6 +126,22 @@ curl http://localhost:8000/health        # {"status":"ok"}
 - Documentação interativa da API REST: http://localhost:8000/docs
 - Endpoint MCP: http://localhost:8000/mcp
 
+### Dashboard do time
+
+Com o servidor no ar, abra `http://localhost:8000/dashboard`. O primeiro acesso é criado pela linha de comando:
+
+```bash
+uv run mcp-rag-api create-user --username voce --role admin
+```
+
+| Papel | O que faz |
+|---|---|
+| `viewer` (Leitor) | lê notas, busca, grafo, chaves e agents |
+| `editor` (Editor) | + cria, edita, move e arquiva notas e pastas |
+| `admin` (Administrador) | + chaves de API, usuários, links manuais e autonomia dos agents |
+
+A tela inicial é **Notas**: pastas (coleções) à esquerda, editor visual (Toast UI, com aba Markdown) no centro e, sob demanda, as conexões e o histórico da nota. Tudo o que o time escreve vira, na hora, conhecimento dos agentes. O salvamento cria uma versão (Ctrl+S, botão, ~20 s parado ou ao trocar de nota); enquanto isso, um rascunho fica guardado no navegador. Atalhos: **Ctrl+S** salva, **Alt+N** cria nota.
+
 ## 6. Conectar ao Claude
 
 ### Claude Code
