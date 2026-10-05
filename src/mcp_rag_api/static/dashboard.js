@@ -379,8 +379,8 @@ function renderLogin() {
 /* ---------------------------------------------------------------- shell (sidebar + conteúdo) */
 
 const NAV = [
-  { id: "notes", label: "Notas", iconName: "notebook-pen" },
   { id: "painel", label: "Painel", iconName: "layout-dashboard" },
+  { id: "notes", label: "Notas", iconName: "notebook-pen" },
   { id: "search", label: "Busca", iconName: "search" },
   { id: "graph", label: "Grafo", iconName: "network" },
 ];
