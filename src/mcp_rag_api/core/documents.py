@@ -77,6 +77,12 @@ async def _write_chunks(conn: asyncpg.Connection, doc_id: uuid.UUID, chunks: lis
         "INSERT INTO chunks (document_id, chunk_index, content, word_count, embedding) VALUES ($1, $2, $3, $4, $5)",
         [(doc_id, i, c, wc, v) for i, c, wc, v in chunks],
     )
+    # Centroide (unitário) = média dos embeddings: alimenta o grafo da dashboard via cosseno.
+    centroid = np.mean([v for _, _, _, v in chunks], axis=0)
+    norm = float(np.linalg.norm(centroid))
+    if norm > 0:
+        centroid = centroid / norm
+    await conn.execute("UPDATE documents SET centroid = $2 WHERE id = $1", doc_id, centroid)
 
 
 async def _find_similar(
