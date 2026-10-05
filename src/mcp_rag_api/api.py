@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .config import get_settings
-from .core import agents, documents, memory, search
+from .core import agents, documents, links, memory, search
 from .security import DEV_PRINCIPAL, PermissionDenied, Principal, bearer_token, resolve_key
 
 router = APIRouter()
@@ -61,6 +61,11 @@ class DocumentPatch(BaseModel):
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
     source: str | None = None
+
+
+class LinkIn(BaseModel):
+    target_id: str
+    note: str | None = None
 
 
 class DocumentUpsert(BaseModel):
@@ -192,6 +197,26 @@ async def archive_document(document_id: str, reason: str = "arquivado via API", 
 @router.get("/documents/{document_id}/versions")
 async def document_history(document_id: str, p: Principal = Auth) -> list[dict]:
     return await documents.document_history(p, document_id)
+
+
+@router.get("/documents/{document_id}/links")
+async def document_links(document_id: str, p: Principal = Auth) -> dict:
+    return await links.get_links(p, document_id)
+
+
+@router.get("/documents/{document_id}/related")
+async def related_documents(document_id: str, k: int = Query(default=5, ge=1, le=20), p: Principal = Auth) -> dict:
+    return await links.get_related(p, document_id, k)
+
+
+@router.post("/documents/{document_id}/links")
+async def link_documents(document_id: str, body: LinkIn, p: Principal = Auth) -> dict:
+    return await links.link_documents(p, document_id, body.target_id, body.note)
+
+
+@router.delete("/links/{link_id}")
+async def unlink_documents(link_id: int, p: Principal = Auth) -> dict:
+    return await links.unlink_documents(p, link_id)
 
 
 # ---------------------------------------------------------------- agentes

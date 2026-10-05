@@ -376,3 +376,29 @@ async def test_viewer_can_search_and_stats(seeded_docs, admin_client):
     resp = await client.post("/dash/api/search-test", json={"query": "alfa", "top_k": 2})
     assert resp.status_code == 200
     await client.aclose()
+
+
+async def test_dash_links_endpoints(seeded_docs, admin_client):
+    a, c = seeded_docs["a"], seeded_docs["c"]
+    titles = (await admin_client.get("/dash/api/documents/titles", params={"q": "alf"})).json()
+    assert [t["title"] for t in titles] == ["Alfa"]
+
+    resp = await admin_client.post(f"/dash/api/documents/{a}/links", json={"target_id": c, "note": "teste"})
+    assert resp.status_code == 200 and resp.json()["created"]
+    link_id = resp.json()["link_id"]
+    out = (await admin_client.get(f"/dash/api/documents/{a}/links")).json()
+    assert [(lk["title"], lk["kind"], lk["note"]) for lk in out["links"]] == [("Mike", "manual", "teste")]
+    back = (await admin_client.get(f"/dash/api/documents/{c}/links")).json()
+    assert [b["title"] for b in back["backlinks"]] == ["Alfa"]
+
+    # viewer lê, mas não cria/remove
+    await dash_auth.create_user("viewer-links", "senha-viewer-9", "viewer")
+    viewer = await dash_client()
+    await viewer.post("/dash/api/auth/login", json={"username": "viewer-links", "password": "senha-viewer-9"})
+    assert (await viewer.get(f"/dash/api/documents/{a}/links")).status_code == 200
+    assert (await viewer.post(f"/dash/api/documents/{a}/links", json={"target_id": c})).status_code == 403
+    assert (await viewer.delete(f"/dash/api/links/{link_id}")).status_code == 403
+    await viewer.aclose()
+
+    assert (await admin_client.delete(f"/dash/api/links/{link_id}")).status_code == 200
+    assert (await admin_client.get(f"/dash/api/documents/{a}/links")).json()["links"] == []
