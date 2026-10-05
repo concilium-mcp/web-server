@@ -9,11 +9,11 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
-from .core import dash_auth, graph
+from .core import agents, dash_auth, graph
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
-from .db import pool, records
-from .security import NotFound
+from .db import audit, pool, record, records
+from .security import KBError, NotFound, Principal, create_api_key, validate_scopes
 
 # ---------------------------------------------------------------- sessão
 
@@ -123,3 +123,195 @@ async def get_document_detail(document_id: str) -> dict:
     out["chunks"] = records(chunks)
     out["versions"] = records(versions)
     return out
+
+
+# ---------------------------------------------------------------- agentes
+
+
+@router.get("/agents")
+async def list_agents(_user: DashUser = Depends(current_user)) -> list[dict]:
+    """Agents cadastrados, com contagem de propostas pendentes e chaves ativas."""
+    rows = await pool().fetch(
+        """
+        SELECT a.slug, a.name, a.description, a.status, a.scopes, a.allowed_collections,
+               a.version, a.updated_at, a.config,
+               (SELECT count(*) FROM agent_versions v WHERE v.agent_id = a.id AND v.status = 'proposed') AS proposals,
+               (SELECT count(*) FROM api_keys k WHERE k.agent_id = a.id AND k.revoked_at IS NULL) AS active_keys
+        FROM agents a
+        ORDER BY a.slug
+        """
+    )
+    items = records(rows)
+    for item in items:
+        item["auto_apply_updates"] = bool((item.pop("config") or {}).get("auto_apply_updates"))
+    return items
+
+
+class AutonomyIn(BaseModel):
+    auto_apply_updates: bool
+
+
+@router.post("/agents/{slug}/autonomy")
+async def set_autonomy(
+    slug: str, body: AutonomyIn, user: DashUser = Depends(require_admin)
+) -> dict:
+    """Liga/desliga a autonomia (auto_apply_updates) de um agente — ação de admin."""
+    admin = Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+    return await agents.set_agent_autonomy(admin, slug, body.auto_apply_updates)
+
+
+# ---------------------------------------------------------------- chaves Bearer
+
+
+@router.get("/keys")
+async def list_keys(_user: DashUser = Depends(current_user)) -> list[dict]:
+    """Todas as chaves da API (prefixo, label, escopos, agente, último uso, status)."""
+    rows = await pool().fetch(
+        """
+        SELECT k.id, k.prefix, k.label, k.scopes, k.revoked_at, k.last_used_at, k.created_at,
+               a.slug AS agent
+        FROM api_keys k
+        LEFT JOIN agents a ON a.id = k.agent_id
+        ORDER BY k.created_at DESC
+        """
+    )
+    return records(rows)
+
+
+class KeyIn(BaseModel):
+    label: str
+    scopes: list[str] = ["read"]
+    agent_slug: str | None = None
+
+
+@router.post("/keys")
+async def create_key(body: KeyIn, user: DashUser = Depends(require_admin)) -> dict:
+    """Cria uma chave humana ou de agente. O material da chave só aparece desta vez."""
+    scopes = validate_scopes(body.scopes)
+    async with pool().acquire() as conn, conn.transaction():
+        agent_id = None
+        if body.agent_slug:
+            agent_id = await conn.fetchval("SELECT id FROM agents WHERE slug = $1", body.agent_slug)
+            if agent_id is None:
+                raise NotFound(f"Agente '{body.agent_slug}' não encontrado.")
+        key = await create_api_key(conn, label=body.label, scopes=scopes, agent_id=agent_id)
+        await audit(conn, f"dash:{user.username}", "dash.key.create", key["prefix"], agent=body.agent_slug)
+    return key
+
+
+@router.post("/keys/{key_id}/revoke")
+async def revoke_key(key_id: str, user: DashUser = Depends(require_admin)) -> dict:
+    key_uuid = parse_uuid(key_id, "key_id")
+    async with pool().acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            "UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL "
+            "RETURNING prefix, agent_id",
+            key_uuid,
+        )
+        if row is None:
+            raise NotFound("Chave não encontrada ou já revogada.")
+        await audit(conn, f"dash:{user.username}", "dash.key.revoke", row["prefix"])
+    return {"revoked": True, "prefix": row["prefix"]}
+
+
+@router.post("/keys/{key_id}/renew")
+async def renew_key(key_id: str, user: DashUser = Depends(require_admin)) -> dict:
+    """Revoga a chave e emite uma nova com o mesmo label/escopos/agente."""
+    key_uuid = parse_uuid(key_id, "key_id")
+    async with pool().acquire() as conn, conn.transaction():
+        old = await conn.fetchrow("SELECT * FROM api_keys WHERE id = $1", key_uuid)
+        if old is None:
+            raise NotFound("Chave não encontrada.")
+        if old["revoked_at"] is not None:
+            raise KBError("A chave já está revogada; crie uma nova em vez de renovar.")
+        await conn.execute("UPDATE api_keys SET revoked_at = now() WHERE id = $1", key_uuid)
+        key = await create_api_key(
+            conn, label=old["label"], scopes=list(old["scopes"]), agent_id=old["agent_id"]
+        )
+        await audit(conn, f"dash:{user.username}", "dash.key.renew", old["prefix"], new_prefix=key["prefix"])
+    return {"revoked_key_id": str(key_uuid), **key}
+
+
+# ---------------------------------------------------------------- usuários da dash
+
+
+@router.get("/users")
+async def list_users(_admin: DashUser = Depends(require_admin)) -> list[dict]:
+    rows = await pool().fetch(
+        "SELECT id, username, role, disabled_at, created_at FROM dash_users ORDER BY username"
+    )
+    return records(rows)
+
+
+class DashUserIn(BaseModel):
+    username: str
+    password: str
+    role: Literal["admin", "viewer"] = "viewer"
+
+
+@router.post("/users")
+async def create_dash_user(body: DashUserIn, admin: DashUser = Depends(require_admin)) -> dict:
+    created = await dash_auth.create_user(body.username, body.password, body.role)
+    async with pool().acquire() as conn:
+        await audit(conn, f"dash:{admin.username}", "dash.user.create", created["username"], role=body.role)
+    return created
+
+
+class DashUserPatch(BaseModel):
+    role: Literal["admin", "viewer"] | None = None
+    disabled: bool | None = None
+    password: str | None = None
+
+
+@router.patch("/users/{user_id}")
+async def update_dash_user(
+    user_id: str, body: DashUserPatch, admin: DashUser = Depends(require_admin)
+) -> dict:
+    target = parse_uuid(user_id, "user_id")
+    if not (body.role is not None or body.disabled is not None or body.password is not None):
+        raise KBError("Nada para alterar: informe role, disabled ou password.")
+    row = await pool().fetchrow("SELECT id, username FROM dash_users WHERE id = $1", target)
+    if row is None:
+        raise NotFound(f"Usuário {user_id} não encontrado.")
+    if str(row["id"]) == admin.id and (
+        (body.role is not None and body.role != "admin") or body.disabled
+    ):
+        raise KBError("Use outra conta admin para rebaixar ou desativar a si mesmo.")
+
+    sets, args = [], []
+
+    def add(fragment: str, value=None) -> None:
+        if "${n}" in fragment:
+            args.append(value)
+            fragment = fragment.format(n=len(args))
+        sets.append(fragment)
+
+    if body.role is not None:
+        add("role = ${n}", body.role)
+    if body.disabled is not None:
+        add("disabled_at = CASE WHEN ${n} THEN now() ELSE NULL END", body.disabled)
+    if body.password is not None:
+        if len(body.password) < 8:
+            raise KBError("A senha deve ter ao menos 8 caracteres.")
+        add("password_hash = ${n}", dash_auth.hash_password(body.password))
+    add("updated_at = now()")
+    args.append(target)
+    await pool().execute(
+        f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args
+    )
+    if body.disabled or body.password is not None:
+        await dash_auth.revoke_user_sessions(str(row["id"]))
+    async with pool().acquire() as conn:
+        await audit(
+            conn,
+            f"dash:{admin.username}",
+            "dash.user.update",
+            row["username"],
+            role=body.role,
+            disabled=body.disabled,
+            password_reset=body.password is not None,
+        )
+    updated = await pool().fetchrow(
+        "SELECT id, username, role, disabled_at, created_at FROM dash_users WHERE id = $1", target
+    )
+    return record(updated)

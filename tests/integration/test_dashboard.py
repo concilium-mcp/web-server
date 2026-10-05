@@ -15,9 +15,10 @@ import numpy as np
 import pytest
 
 from mcp_rag_api import db
-from mcp_rag_api.core import dash_auth, documents
+from mcp_rag_api.core import agents, dash_auth, documents
 from mcp_rag_api.main import app
 from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
+from mcp_rag_api.security import PermissionDenied, resolve_key
 
 # A e B compartilham quase todas as palavras (cosseno alto); C é distante de ambos.
 FONTE_A = "alfa bravo charlie delta echo foxtrot"
@@ -38,6 +39,11 @@ async def seeded_docs():
 
 async def dash_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://dash.test")
+
+
+async def principal_for(api_key: str):
+    async with db.pool().acquire() as conn:
+        return await resolve_key(conn, api_key)
 
 
 @pytest.fixture(scope="module")
@@ -167,3 +173,136 @@ async def test_document_detail_endpoint(seeded_docs, admin_client):
 
     resp = await client.get(f"/dash/api/documents/{uuid.uuid4()}")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------- fatia 3: gestão de contas
+
+
+async def test_agents_endpoint_lists_aggregates(seeded_docs, admin_client):
+    created = await agents.create_agent(ADMIN, slug="dashbot", name="Dash Bot", system_prompt="v1")
+    items = (await admin_client.get("/dash/api/agents")).json()
+    by_slug = {a["slug"]: a for a in items}
+    assert by_slug["dashbot"]["active_keys"] == 1  # create_agent emite uma chave
+    assert by_slug["dashbot"]["auto_apply_updates"] is False
+    assert "config" not in by_slug["dashbot"]  # só expomos o que a tela usa
+
+    # proposta pendente aparece no badge
+    bot = await principal_for(created["api_key"])
+    await agents.propose_agent_update(bot, "melhoria", system_prompt="v2")
+    items = (await admin_client.get("/dash/api/agents")).json()
+    assert next(a for a in items if a["slug"] == "dashbot")["proposals"] == 1
+
+
+async def test_dash_autonomy_toggle(seeded_docs, admin_client):
+    await agents.create_agent(ADMIN, slug="autonobot", name="Auto", system_prompt="v1")
+    resp = await admin_client.post("/dash/api/agents/autonobot/autonomy", json={"auto_apply_updates": True})
+    assert resp.status_code == 200 and resp.json()["auto_apply_updates"] is True
+    row = await db.pool().fetchrow("SELECT config FROM agents WHERE slug = 'autonobot'")
+    assert row["config"]["auto_apply_updates"] is True
+
+
+async def test_keys_list_create_renew_revoke(seeded_docs, admin_client):
+    resp = await admin_client.post(
+        "/dash/api/keys", json={"label": "dash-test", "scopes": ["read", "write"]}
+    )
+    assert resp.status_code == 200
+    created = resp.json()
+    assert created["api_key"].startswith("kb_sk_")
+    key_id = created["key_id"]
+
+    keys = (await admin_client.get("/dash/api/keys")).json()
+    mine = next(k for k in keys if k["id"] == key_id)
+    assert mine["label"] == "dash-test" and mine["agent"] is None
+    assert mine["scopes"] == ["read", "write"] and mine["revoked_at"] is None
+
+    # a chave criada pela dash funciona na API pública
+    principal = await principal_for(created["api_key"])
+    assert principal.has("write")
+
+    # renovar: revoga a antiga e emite uma nova com os mesmos escopos
+    resp = await admin_client.post(f"/dash/api/keys/{key_id}/renew")
+    assert resp.status_code == 200
+    renewed = resp.json()
+    assert renewed["api_key"] != created["api_key"]
+    keys = (await admin_client.get("/dash/api/keys")).json()
+    assert next(k for k in keys if k["id"] == key_id)["revoked_at"] is not None
+    with pytest.raises(PermissionDenied):
+        await principal_for(created["api_key"])
+    assert (await principal_for(renewed["api_key"])).has("write")
+
+    # chave já revogada não renova
+    resp = await admin_client.post(f"/dash/api/keys/{key_id}/renew")
+    assert resp.status_code == 400
+
+    # revogar
+    assert (await admin_client.post(f"/dash/api/keys/{renewed['key_id']}/revoke")).status_code == 200
+    resp = await admin_client.post(f"/dash/api/keys/{renewed['key_id']}/revoke")
+    assert resp.status_code == 404
+
+    # chave ligada a agente inexistente → 404
+    resp = await admin_client.post(
+        "/dash/api/keys", json={"label": "x", "scopes": ["read"], "agent_slug": "nao-existe"}
+    )
+    assert resp.status_code == 404
+
+
+async def test_users_management(seeded_docs, admin_client):
+    resp = await admin_client.post(
+        "/dash/api/users", json={"username": "novo-viewer", "password": "senha-12345", "role": "viewer"}
+    )
+    assert resp.status_code == 200
+    uid = resp.json()["id"]
+
+    users = (await admin_client.get("/dash/api/users")).json()
+    assert any(u["username"] == "novo-viewer" and u["role"] == "viewer" for u in users)
+
+    # troca de role
+    resp = await admin_client.patch(f"/dash/api/users/{uid}", json={"role": "admin"})
+    assert resp.status_code == 200 and resp.json()["role"] == "admin"
+
+    # reset de senha derruba a sessão ativa do usuário
+    client = await dash_client()
+    resp = await client.post(
+        "/dash/api/auth/login", json={"username": "novo-viewer", "password": "senha-12345"}
+    )
+    assert resp.status_code == 200
+    resp = await admin_client.patch(f"/dash/api/users/{uid}", json={"password": "outra-senha-999"})
+    assert resp.status_code == 200
+    assert (await client.get("/dash/api/auth/me")).status_code == 401
+    resp = await client.post(
+        "/dash/api/auth/login", json={"username": "novo-viewer", "password": "outra-senha-999"}
+    )
+    assert resp.status_code == 200
+    await client.aclose()
+
+    # desativar bloqueia login
+    resp = await admin_client.patch(f"/dash/api/users/{uid}", json={"disabled": True})
+    assert resp.status_code == 200 and resp.json()["disabled_at"] is not None
+    client = await dash_client()
+    resp = await client.post(
+        "/dash/api/auth/login", json={"username": "novo-viewer", "password": "outra-senha-999"}
+    )
+    assert resp.status_code == 401
+    await client.aclose()
+
+    # auto-desativação/rebaixamento é recusado
+    me = (await admin_client.get("/dash/api/auth/me")).json()
+    resp = await admin_client.patch(f"/dash/api/users/{me['id']}", json={"disabled": True})
+    assert resp.status_code == 400
+    resp = await admin_client.patch(f"/dash/api/users/{me['id']}", json={"role": "viewer"})
+    assert resp.status_code == 400
+
+
+async def test_viewer_restrictions(seeded_docs, admin_client):
+    await dash_auth.create_user("um-viewer", "senha-viewer-1", "viewer")
+    client = await dash_client()
+    await client.post("/dash/api/auth/login", json={"username": "um-viewer", "password": "senha-viewer-1"})
+    # viewer lê, mas não gerencia
+    assert (await client.get("/dash/api/keys")).status_code == 200
+    assert (await client.get("/dash/api/agents")).status_code == 200
+    assert (await client.post("/dash/api/keys", json={"label": "x", "scopes": ["read"]})).status_code == 403
+    assert (await client.get("/dash/api/users")).status_code == 403
+    assert (
+        await client.post("/dash/api/agents/autonobot/autonomy", json={"auto_apply_updates": True})
+    ).status_code == 403
+    await client.aclose()
