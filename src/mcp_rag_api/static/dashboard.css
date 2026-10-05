@@ -83,8 +83,10 @@ body {
   letter-spacing: 0.01em;
 }
 
-.brand svg {
-  color: var(--accent);
+.brand-logo {
+  display: block;
+  flex: none;
+  object-fit: contain;
 }
 
 .nav-item {
@@ -823,6 +825,7 @@ select option {
 
 .reset-row {
   display: flex;
+  align-items: stretch;
   gap: 8px;
   margin-top: 10px;
 }
@@ -830,6 +833,58 @@ select option {
 .reset-row .input {
   margin-bottom: 0;
   flex: 1;
+}
+
+/* botões da linha com a mesma altura do campo */
+.reset-row .btn {
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- senha com olho */
+
+.pw-field {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.reset-row .pw-field {
+  flex: 1;
+  display: flex;
+}
+
+.login-card .pw-field {
+  margin-bottom: 6px;
+}
+
+.pw-field > .input {
+  width: 100%;
+  margin-bottom: 0;
+  padding-right: 40px;
+}
+
+.pw-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.pw-toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
 }
 
 .role-select {
