@@ -1,0 +1,70 @@
+# syntax=docker/dockerfile:1
+# ============================================
+# MCP-RAG-API — Dockerfile otimizado para Coolify v4
+#
+# Imagem de produção: Python 3.12 slim, non-root, healthcheck.
+# O Coolify expõe a porta 8000 e gerencia SSL/Traefik externamente.
+# Migrações do banco rodam sozinhas no start (lifespan do app).
+#
+# Build com embeddings locais (sentence-transformers, imagem bem maior):
+#   docker build -f Dockerfile.coolify --build-arg INSTALL_LOCAL_EMBEDDINGS=true .
+# ============================================
+
+# --------------------------------------------
+# Stage 1: Builder — instala dependências com uv (versões travadas no uv.lock)
+# --------------------------------------------
+FROM python:3.12-slim AS builder
+
+ARG INSTALL_LOCAL_EMBEDDINGS=false
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+
+WORKDIR /build
+
+# 1) só dependências (camada cacheada enquanto o uv.lock não muda)
+COPY pyproject.toml uv.lock README.md ./
+RUN EXTRAS=$([ "$INSTALL_LOCAL_EMBEDDINGS" = "true" ] && echo "--extra local" || echo "") \
+    && uv sync --frozen --no-dev --no-install-project $EXTRAS
+
+# 2) o projeto
+COPY src ./src
+RUN EXTRAS=$([ "$INSTALL_LOCAL_EMBEDDINGS" = "true" ] && echo "--extra local" || echo "") \
+    && uv sync --frozen --no-dev --no-editable $EXTRAS
+
+# --------------------------------------------
+# Stage 2: Runtime — imagem final enxuta
+# --------------------------------------------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    MIGRATIONS_DIR=/app/migrations \
+    PORT=8000
+
+# Criar usuário não-root
+RUN groupadd -g 1000 appuser \
+    && useradd -u 1000 -g appuser -s /bin/bash -m appuser
+
+WORKDIR /app
+
+# Copia apenas o virtualenv pronto e as migrações SQL
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=appuser:appuser migrations ./migrations
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"8000\")}/health').read()" || exit 1
+
+# --proxy-headers: respeita X-Forwarded-* do Traefik (https, IP real do cliente)
+CMD ["sh", "-c", "exec uvicorn mcp_rag_api.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]

@@ -1,0 +1,131 @@
+# ============================================
+# GITLAB CI/CD — MCP-RAG-API (Python/FastAPI + MCP) — Zero-Git + Docker Registry
+# ============================================
+# Roda os testes, builda a imagem Docker e faz push para o GitLab Registry.
+# O Coolify faz pull e deploy da imagem.
+# NENHUM codigo fonte vai para a VPS.
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+
+# ============================================
+# JOBS — TESTES (unitarios + integracao com Postgres/pgvector efemero)
+# ============================================
+
+test:pytest:
+  stage: test
+  image: ghcr.io/astral-sh/uv:0.11-python3.12-bookworm-slim
+  services:
+    - name: pgvector/pgvector:pg16
+      alias: postgres
+  variables:
+    POSTGRES_USER: kb
+    POSTGRES_PASSWORD: kb
+    POSTGRES_DB: kb_test
+    TEST_DATABASE_URL: postgresql://kb:kb@postgres:5432/kb_test
+    UV_CACHE_DIR: .uv-cache
+    UV_LINK_MODE: copy
+  cache:
+    key:
+      files: [uv.lock]
+    paths: [.uv-cache]
+  script:
+    - uv sync --frozen --extra dev
+    - uv run ruff check src tests
+    - uv run pytest -q
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ============================================
+# JOBS — BUILD E PUSH (Docker Registry)
+# ============================================
+
+build:push:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs: [test:pytest]
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - |
+      echo "Buildando imagem do mcp-rag-api..."
+      # Para embeddings locais (sentence-transformers), defina INSTALL_LOCAL_EMBEDDINGS=true nas variaveis de CI
+      docker build --pull -f Dockerfile.coolify \
+        --build-arg INSTALL_LOCAL_EMBEDDINGS="${INSTALL_LOCAL_EMBEDDINGS:-false}" \
+        -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
+        -t "$CI_REGISTRY_IMAGE:latest" \
+        .
+      echo "Push para registry..."
+      docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      docker push "$CI_REGISTRY_IMAGE:latest"
+      echo "✅ Imagem publicada: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ============================================
+# JOBS — DEPLOY AUTOMATICO (Coolify Webhook)
+# ============================================
+# Configure no GitLab:
+#   Settings → CI/CD → Variables
+#   COOLIFY_WEBHOOK = https://<host>/api/v1/deploy?uuid=<UUID>&force=false
+#   COOLIFY_SECRET  = <token_do_coolify_com_permissao_deploy>
+#   CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET = opcional, somente o hash (sem "CF-Access-...:"),
+#     necessario se o webhook estiver protegido pelo Cloudflare Access
+
+deploy:coolify:
+  stage: deploy
+  image: alpine/curl
+  needs: [build:push]
+  script:
+    - |
+      if [ -z "$COOLIFY_WEBHOOK" ] || [ -z "$COOLIFY_SECRET" ]; then
+        echo "⚠️  Variaveis COOLIFY_WEBHOOK ou COOLIFY_SECRET nao configuradas."
+        echo "   Configure em: GitLab → Settings → CI/CD → Variables"
+        exit 0
+      fi
+
+      echo "Disparando deploy no Coolify..."
+
+      # Cria arquivo temporario com os headers (evita problemas de quoting no shell)
+      HEADERS_FILE=$(mktemp)
+      echo "Authorization: Bearer $COOLIFY_SECRET" > "$HEADERS_FILE"
+      echo "Content-Type: application/json" >> "$HEADERS_FILE"
+
+      if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+        echo "🔐 Cloudflare Access Service Token detectado."
+        echo "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" >> "$HEADERS_FILE"
+        echo "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" >> "$HEADERS_FILE"
+      fi
+
+      # -L segue redirects (302); --post302 mantem o metodo POST ao seguir
+      HTTP_CODE=$(curl -X POST "$COOLIFY_WEBHOOK" \
+        -H @"$HEADERS_FILE" \
+        -L --post302 \
+        -s -D /tmp/coolify_headers.txt -o /tmp/coolify_response.txt \
+        -w "%{http_code}")
+
+      rm -f "$HEADERS_FILE"
+
+      if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+        echo "✅ Deploy disparado com sucesso! (HTTP $HTTP_CODE)"
+      else
+        echo "⚠️  Resposta do Coolify: HTTP $HTTP_CODE"
+        echo "--- Headers da resposta (inclui cadeia de redirects) ---"
+        cat /tmp/coolify_headers.txt
+        echo "--- Corpo da resposta ---"
+        cat /tmp/coolify_response.txt
+        echo ""
+        echo "-------------------------"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

@@ -1,0 +1,20 @@
+# O banco NÃO sobe aqui: usamos o Postgres compartilhado do DB-DOCKER (container db-postgres, imagem pgvector),
+# com um database próprio "kb". Criar uma vez:
+#   docker exec db-postgres psql -U user -d defaultdb -c "CREATE DATABASE kb"
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.coolify
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://user:password@db-postgres:5432/kb
+    ports:
+      - "8000:8000"
+    networks:
+      - db_network
+    restart: unless-stopped
+
+networks:
+  db_network:
+    external: true

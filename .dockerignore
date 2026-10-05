@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.git
+.gitlab-ci.yml
+.venv
+.uv-cache
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.claude
+tests
+PLANO.md
