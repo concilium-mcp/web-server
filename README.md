@@ -68,6 +68,7 @@ Abra o `.env` e defina **pelo menos** o provedor de embeddings:
 |---|---|---|
 | `voyage` (padrão) | `VOYAGE_API_KEY` | chave em voyageai.com |
 | `openai` | `OPENAI_API_KEY` | modelo `text-embedding-3-small` |
+| `huggingface` | `HF_API_KEY` | Inference API do Hugging Face, modelo BAAI/bge-m3 (bom em português), sem baixar nada; `EMBEDDING_API_URL` opcional |
 | `local` | `uv sync --extra local` | roda na sua máquina (modelo BAAI/bge-m3, ~2 GB, bom em português); sem custo, mais lento |
 | `fake` | nada | **só para testar a instalação**: a busca não entende significado |
 
@@ -80,7 +81,7 @@ EMBEDDING_PROVIDER=voyage
 VOYAGE_API_KEY=pa-xxxxxxxx
 ```
 
-> ⚠️ Escolha o provedor antes de inserir documentos. Os vetores de provedores diferentes não são compatíveis, e ainda não existe um comando de reindexação.
+> ⚠️ Vetores de provedores/modelos diferentes não são compatíveis. Trocou o provedor depois de já ter documentos? Rode `uv run mcp-rag-api reindex` para recalcular todos os embeddings (documentos, grafo e memórias).
 
 Outras opções do `.env` (os padrões costumam servir):
 
@@ -181,7 +182,10 @@ Com o Claude Code conectado (passo 6), converse normalmente. Os exemplos abaixo 
 
 → `update_document` com `change_note`. Isso gera a versão 2, e a anterior fica no histórico (`document_history`).
 
-**5. Sincronizar de outro sistema**
+**5. Ligar documentos**
+Ao escrever um documento, cite outro pelo título entre colchetes duplos: `[[Política de reembolso]]` (também vale `[[Título|texto exibido]]`). Isso vira um **link explícito**: o documento citado ganha um *backlink*, e os dois aparecem ligados por uma linha sólida no grafo da dashboard. Maiúsculas e acentos não importam. Se o título ainda não existe, o link fica pendente e se conecta sozinho quando o documento for criado. Para ver tudo o que se relaciona a um documento (links, backlinks e vizinhos semânticos), use `get_related`; para ligar sem mexer no texto, `link_documents`.
+
+**6. Sincronizar de outro sistema**
 Use `upsert_document` com um `external_id` (por exemplo, o id no CRM). Se o documento já existir, ele é atualizado; se não, é criado.
 
 ## 8. Tutorial: cadastrar e usar um agente
@@ -308,6 +312,13 @@ curl -s -X POST $API/documents -H "Authorization: Bearer $KEY" -H "Content-Type:
 curl -s -X PUT $API/documents/upsert -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"collection": "manuais", "external_id": "crm-42", "title": "Contato", "content": "Ramal 200."}'
 
+# links, backlinks e vizinhos semânticos de um documento
+curl -s "$API/documents/DOC_ID/related?k=5" -H "Authorization: Bearer $KEY"
+
+# ligar dois documentos (link manual, com nota opcional)
+curl -s -X POST $API/documents/DOC_ID/links -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"target_id": "OUTRO_DOC_ID", "note": "o pitch usa estes números"}'
+
 # contexto de um agente (mesmo retorno do load_agent)
 curl -s $API/agents/suporte/context -H "Authorization: Bearer $KEY"
 
@@ -334,6 +345,7 @@ A chave de um agente herda os escopos e as coleções permitidas (`allowed_colle
 | Grupo | Tools |
 |---|---|
 | Base | `search_knowledge`, `get_document`, `list_documents`, `list_collections`, `create_collection`, `add_document`, `update_document`, `upsert_document`, `archive_document`, `document_history` |
+| Links entre documentos | `get_related`, `link_documents`, `unlink_documents` (e `[[Título]]` no conteúdo) |
 | Agente (sobre si mesmo) | `load_agent`, `recall`, `remember`, `forget`, `save_session`, `list_sessions`, `list_tasks`, `upsert_task`, `propose_agent_update` |
 | Gestão (`agents:manage`) | `create_agent`, `update_agent`, `set_agent_autonomy`, `get_agent`, `list_agents`, `clone_agent`, `archive_agent`, `restore_agent_version`, `issue_agent_key`, `revoke_agent_key`, `list_agent_proposals`, `review_agent_update`, `add_agent_memory`, `add_agent_task` |
 
@@ -350,6 +362,8 @@ A chave de um agente herda os escopos e as coleções permitidas (`allowed_colle
 | `uv run mcp-rag-api migrate` | aplica migrações pendentes (o `serve` já faz isso) |
 | `uv run mcp-rag-api sync-agents [--out .claude/agents]` | exporta os agentes para o Claude Code |
 | `uv run mcp-rag-api cleanup` | remove memórias expiradas |
+| `uv run mcp-rag-api reindex` | recalcula todos os embeddings com o provedor atual (depois de trocar de provedor/modelo) |
+| `uv run mcp-rag-api relink` | reprocessa os `[[links]]` de todos os documentos (depois de importar conteúdo) |
 
 ## 12. Manutenção
 

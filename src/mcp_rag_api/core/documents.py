@@ -11,6 +11,7 @@ from ..db import audit, pool, record, records
 from ..security import KBError, NotFound, Principal
 from .chunking import chunk_text, content_hash, normalize
 from .embeddings import get_embedder
+from .wikilinks import resolve_pending, sync_wikilinks
 
 
 def parse_uuid(value: str, what: str = "id") -> uuid.UUID:
@@ -218,6 +219,8 @@ async def add_document(
                 p.actor,
             )
             await _write_chunks(conn, doc_id, chunks)
+            await sync_wikilinks(conn, doc_id, content, p.actor)
+            await resolve_pending(conn, doc_id, title)
             await audit(conn, p.actor, "document.create", str(doc_id), collection=collection, title=title)
     return {"created": True, "document_id": str(doc_id), "version": 1, "chunks": len(chunks)}
 
@@ -288,6 +291,9 @@ async def update_document(
         )
         if chunks is not None:
             await _write_chunks(conn, doc_uuid, chunks)
+            await sync_wikilinks(conn, doc_uuid, new_content, p.actor)
+            if new_title != current["title"]:
+                await resolve_pending(conn, doc_uuid, new_title)
         await audit(conn, p.actor, "document.update", document_id, version=version, note=change_note)
     return {"updated": True, "document_id": document_id, "version": version, "reindexed": chunks is not None}
 

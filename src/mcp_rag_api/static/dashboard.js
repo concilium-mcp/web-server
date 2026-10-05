@@ -26,6 +26,9 @@ const api = {
   patch(path, body) {
     return this.req("PATCH", path, body ?? {});
   },
+  del(path) {
+    return this.req("DELETE", path);
+  },
 };
 
 /* ---------------------------------------------------------------- ícones Lucide (SVG inline) */
@@ -190,6 +193,9 @@ const state = {
   lastSearchMs: null,
   searchK: 5,
   showRevoked: false,
+  connectMode: false, // grafo: modo "clique na origem e no destino"
+  connectFrom: null, // nó de origem escolhido no modo conectar
+  showSemantic: true, // grafo: mostrar arestas de similaridade além dos links explícitos
 };
 
 function colorFor(collection) {
@@ -1289,6 +1295,11 @@ function graphTemplate() {
             <button data-level="chunks" class="${state.level === "chunks" ? "active" : ""}">Chunks</button>
           </div>
           <button class="btn sm hidden" id="hl-clear">${icon("check")}<span>Limpar destaque</span></button>
+          ${
+            state.user?.role === "admin"
+              ? `<button class="btn sm ghost" id="connect-mode" title="Clique na origem e depois no destino para ligar dois documentos">${icon("link", 14)}<span>Conectar</span></button>`
+              : ""
+          }
         </div>
         <div class="graph-wrap" id="graph-wrap">
           <!-- o force-graph limpa o elemento em que é montado: overlays ficam fora de #graph-canvas -->
@@ -1351,6 +1362,7 @@ function bindGraphControls() {
     main.querySelectorAll("#f-level button").forEach((b) => b.classList.toggle("active", b === btn));
     loadGraph();
   });
+  main.querySelector("#connect-mode")?.addEventListener("click", () => setConnectMode(!state.connectMode));
   main.querySelector("#hl-clear").addEventListener("click", () => {
     state.highlightDocs = null;
     loadGraph();
@@ -1372,6 +1384,11 @@ function bindGraphControls() {
   legend.addEventListener("mouseover", (e) => setLegendHover(e.target.closest(".legend-row")?.dataset.col || null));
   legend.addEventListener("mouseleave", () => setLegendHover(null));
   legend.addEventListener("click", (e) => {
+    if (e.target.closest("[data-toggle-semantic]")) {
+      state.showSemantic = !state.showSemantic;
+      loadGraph();
+      return;
+    }
     const btn = e.target.closest("[data-col]");
     if (!btn) return;
     setLegendHover(null);
@@ -1388,7 +1405,7 @@ let graphRequest = 0;
 async function explainMissingEdges(data, req) {
   const notice = document.getElementById("graph-notice");
   notice.classList.add("hidden");
-  if (data.edges.length || data.nodes.length < 2) return;
+  if (!state.showSemantic || data.edges.some((e) => e.kind === "semantic") || data.nodes.length < 2) return;
   let probe;
   try {
     probe = await api.get("/graph", { level: state.level, collection: state.collection, min_similarity: 0, k: 1 });
@@ -1396,13 +1413,13 @@ async function explainMissingEdges(data, req) {
     return;
   }
   if (req !== graphRequest) return; // o usuário já mudou o filtro
-  const strongest = Math.max(0, ...probe.edges.map((e) => e.similarity));
+  const strongest = Math.max(0, ...probe.edges.filter((e) => e.kind === "semantic").map((e) => e.similarity));
   if (!strongest) return;
   // passo do slider é 0.05: arredonda para baixo para a aresta mais forte aparecer
   const target = Math.floor(strongest * 20) / 20;
   const fmt = (v) => v.toFixed(2);
   notice.innerHTML = `
-    <span>Nenhuma conexão com similaridade ≥ ${fmt(state.minSimilarity)}. A mais forte é <strong>${fmt(strongest)}</strong>.</span>
+    <span>Nenhuma similaridade ≥ ${fmt(state.minSimilarity)}. A mais forte é <strong>${fmt(strongest)}</strong>.</span>
     <button class="btn sm" type="button" id="notice-lower">Mostrar a partir de ${fmt(target)}</button>`;
   notice.classList.remove("hidden");
   notice.querySelector("#notice-lower").addEventListener("click", () => {
@@ -1467,6 +1484,7 @@ async function loadGraph() {
 }
 
 function destroyGraph() {
+  if (state.connectMode) setConnectMode(false);
   if (state.graphObserver) state.graphObserver.disconnect();
   if (state.graphInstance) {
     state.graphInstance.pauseAnimation();
@@ -1537,7 +1555,7 @@ function createGraph(el) {
       state.hoverNode = n || null;
       el.style.cursor = n ? "pointer" : "";
     })
-    .onNodeClick((n) => openDocumentPanel(state.level === "documents" ? n.id : n.document_id))
+    .onNodeClick((n) => onGraphNodeClick(n))
     .onBackgroundClick(() => closePanel())
     .onEngineStop(() => {
       if (state.graphNeedsFit) {
@@ -1570,8 +1588,12 @@ function drawGraph(data) {
     label: state.level === "documents" ? n.title : `${n.title} · #${n.chunk_index}`,
   }));
 
+  const linkEdges = data.edges.filter((e) => e.kind === "link");
+  const semanticEdges = data.edges.filter((e) => e.kind === "semantic");
+  const visibleEdges = state.showSemantic ? data.edges : linkEdges;
   document.getElementById("graph-sub").textContent =
-    `${nodes.length} nós · ${data.edges.length} arestas · nível ${state.level === "documents" ? "documentos" : "chunks"}`;
+    `${nodes.length} nós · ${linkEdges.length} link(s) · ${semanticEdges.length} por similaridade · ` +
+    `nível ${state.level === "documents" ? "documentos" : "chunks"}`;
 
   if (!state.graphInstance) state.graphInstance = createGraph(el);
   const g = state.graphInstance;
@@ -1587,7 +1609,7 @@ function drawGraph(data) {
       // hover na legenda: destaca a coleção e apaga as outras
       const legendDim = state.legendHover && n.collection !== state.legendHover;
       const dim = (highlight && !isHl(n)) || legendDim;
-      const hovered = state.hoverNode === n;
+      const hovered = state.hoverNode === n || state.connectFrom === n;
       const color = legendDim
         ? hexAlpha(n.color, 0.18)
         : highlight
@@ -1625,18 +1647,29 @@ function drawGraph(data) {
       ctx.fillStyle = color;
       ctx.fill();
     })
-    .linkColor((l) =>
-      highlight
-        ? isHl(l.source) && isHl(l.target)
-          ? "rgba(217, 119, 87, 0.5)"
-          : "rgba(236, 236, 236, 0.04)"
-        : `rgba(236, 236, 236, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`,
-    )
+    // link explícito = sólido coral; similaridade = tracejado cinza
+    .linkColor((l) => {
+      if (highlight && !(isHl(l.source) && isHl(l.target))) return "rgba(236, 236, 236, 0.04)";
+      if (l.kind === "link") return highlight ? "rgba(217, 119, 87, 0.95)" : "rgba(217, 119, 87, 0.85)";
+      if (highlight) return "rgba(217, 119, 87, 0.5)";
+      return `rgba(236, 236, 236, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`;
+    })
     // espessura mínima visível mesmo para arestas logo acima do threshold
-    .linkWidth((l) => Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8));
+    .linkWidth((l) => (l.kind === "link" ? 2.2 : Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8)))
+    .linkLineDash((l) => (l.kind === "link" ? null : [4, 3]))
+    .linkLabel((l) => {
+      const sim = l.similarity != null ? `similaridade ${Number(l.similarity).toFixed(2)}` : "";
+      if (l.kind !== "link") return sim;
+      const how = l.link_kinds?.includes("wikilink") ? "[[wikilink]]" : "link manual";
+      return [`Link explícito (${how})`, l.note ? `“${escHtml(l.note)}”` : "", sim].filter(Boolean).join("<br>");
+    });
+  // documentos ligados explicitamente ficam mais perto que os só parecidos
+  g.d3Force("link")
+    .distance((l) => (l.kind === "link" ? 45 : 90))
+    .strength((l) => (l.kind === "link" ? 0.7 : 0.25));
 
   state.graphNeedsFit = true;
-  g.graphData({ nodes, links: data.edges.map((e) => ({ ...e })) });
+  g.graphData({ nodes, links: visibleEdges.map((e) => ({ ...e })) });
 
   const legend = document.getElementById("graph-legend");
   const unit = state.level === "documents" ? "doc" : "trecho";
@@ -1654,7 +1687,18 @@ function drawGraph(data) {
       </button>`,
       )
       .join("")}
-    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>Ver todas as coleções</span></button>` : ""}`;
+    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>Ver todas as coleções</span></button>` : ""}
+    ${
+      state.level === "documents"
+        ? `<div class="legend-head legend-sep">Conexões</div>
+      <div class="legend-edge"><span class="edge-swatch link"></span><span class="legend-name">Link explícito</span>
+        <span class="count">${linkEdges.length}</span></div>
+      <button class="legend-edge toggle ${state.showSemantic ? "" : "off"}" type="button" data-toggle-semantic
+        title="${state.showSemantic ? "Ocultar" : "Mostrar"} as arestas de similaridade">
+        <span class="edge-swatch semantic"></span><span class="legend-name">Similaridade</span>
+        <span class="count">${state.showSemantic ? semanticEdges.length : "oculta"}</span></button>`
+        : ""
+    }`;
   loadIcons(legend);
   for (const id of ["graph-legend", "graph-hint", "graph-zoom"]) document.getElementById(id).classList.remove("hidden");
 }
@@ -1665,9 +1709,12 @@ async function openDocumentPanel(docId) {
   const panel = document.getElementById("panel");
   panel.classList.remove("hidden");
   panel.innerHTML = `<div class="muted">Carregando…</div>`;
-  let doc;
+  let doc, docLinks;
   try {
-    doc = await api.get(`/documents/${docId}`);
+    [doc, docLinks] = await Promise.all([
+      api.get(`/documents/${docId}`),
+      api.get(`/documents/${docId}/links`).catch(() => ({ links: [], backlinks: [] })),
+    ]);
   } catch {
     panel.innerHTML = `<div class="muted">Não foi possível carregar o documento.</div>`;
     return;
@@ -1676,7 +1723,7 @@ async function openDocumentPanel(docId) {
   panel.innerHTML = `
     <div class="panel-head">
       <h2>${escHtml(doc.title)}</h2>
-      <button class="icon-btn" id="panel-close" title="Fechar">${icon("plus")}</button>
+      <button class="icon-btn" id="panel-close" title="Fechar">${icon("x", 16)}</button>
     </div>
     <div class="chip"><span class="dot" style="background:${colorFor(doc.collection)}"></span>${escHtml(doc.collection)}</div>
     <dl class="kv">
@@ -1686,6 +1733,7 @@ async function openDocumentPanel(docId) {
       ${doc.source ? `<dt>Fonte</dt><dd>${escHtml(doc.source)}</dd>` : ""}
       ${doc.tags?.length ? `<dt>Tags</dt><dd>${doc.tags.map((t) => `<span class="chip">${escHtml(t)}</span>`).join(" ")}</dd>` : ""}
     </dl>
+    ${linksSection(doc, docLinks)}
     <div class="section">
       <h3>${icon("file-text")} Conteúdo</h3>
       <div class="doc-content">${escHtml(doc.content)}</div>
@@ -1699,10 +1747,206 @@ async function openDocumentPanel(docId) {
       ${doc.versions.map((v) => `<div class="version-item"><span class="idx">v${v.version}</span>${escHtml(v.change_note ?? "")}<p>${escHtml(v.changed_by ?? "—")} · ${fmtDate(v.created_at)}</p></div>`).join("")}
     </div>`;
   await loadIcons(panel);
-  // o ícone "plus" vira um X com rotação simples via estilo inline
-  const close = panel.querySelector("#panel-close svg");
-  if (close) close.style.transform = "rotate(45deg)";
   panel.querySelector("#panel-close").addEventListener("click", closePanel);
+  panel.querySelector("#connect-open")?.addEventListener("click", () =>
+    openConnectModal({ document_id: docId, title: doc.title }),
+  );
+  panel.querySelector(".links-section")?.addEventListener("click", async (e) => {
+    const go = e.target.closest("[data-open-doc]");
+    const del = e.target.closest("[data-unlink]");
+    if (go) {
+      focusGraphNode(go.dataset.openDoc);
+      openDocumentPanel(go.dataset.openDoc);
+    } else if (del) {
+      const ok = await uiConfirm({
+        title: "Remover link?",
+        message: `A ligação manual com “${del.dataset.title}” será removida. Os documentos continuam iguais.`,
+        confirmLabel: "Remover",
+        tone: "danger",
+      });
+      if (!ok) return;
+      try {
+        await api.del(`/links/${del.dataset.unlink}`);
+        openDocumentPanel(docId);
+        if (document.getElementById("graph-wrap")) loadGraph();
+      } catch (err) {
+        await uiError("Não foi possível remover o link", err);
+      }
+    }
+  });
+}
+
+/* ---------------------------------------------------------------- links explícitos (plan-web-03) */
+
+function linksSection(doc, data) {
+  const isAdmin = state.user?.role === "admin";
+  const kindChip = (kind) => `<span class="chip subtle">${kind === "wikilink" ? "[[wikilink]]" : "manual"}</span>`;
+  const outgoing = data.links || [];
+  const backlinks = data.backlinks || [];
+  const outItem = (l) =>
+    l.pending
+      ? `<div class="link-item pending" title="Nenhum documento com esse título ainda: o link se conecta sozinho quando ele for criado">
+           ${icon("link", 13)}<span class="grow">${escHtml(l.target_title)} <span class="muted">· ainda não existe</span></span>${kindChip(l.kind)}
+         </div>`
+      : `<div class="link-item">
+           ${icon("link", 13)}
+           <button class="link-title grow" type="button" data-open-doc="${l.document_id}">${escHtml(l.title)}
+             ${l.note ? `<span class="muted link-note">“${escHtml(l.note)}”</span>` : ""}</button>
+           ${kindChip(l.kind)}
+           ${
+             isAdmin && l.kind === "manual"
+               ? `<button class="icon-btn danger" type="button" data-unlink="${l.id}" data-title="${escHtml(l.title)}" title="Remover link manual">${icon("x", 13)}</button>`
+               : ""
+           }
+         </div>`;
+  const backItem = (b) => `
+    <div class="link-item">
+      ${icon("link", 13)}
+      <button class="link-title grow" type="button" data-open-doc="${b.document_id}">${escHtml(b.title)}
+        ${b.note ? `<span class="muted link-note">“${escHtml(b.note)}”</span>` : ""}</button>
+      ${kindChip(b.kind)}
+    </div>`;
+  return `
+    <div class="section links-section">
+      <h3>${icon("link")} Conexões
+        ${isAdmin && doc.status === "active" ? `<button class="btn sm ghost connect-btn" type="button" id="connect-open">${icon("plus", 13)}<span>Conectar a…</span></button>` : ""}
+      </h3>
+      <div class="links-group">
+        <div class="links-label">Links (${outgoing.length})</div>
+        ${outgoing.map(outItem).join("") || `<div class="muted links-empty">Nenhum. Escreva [[Título]] no texto ou use “Conectar a…”.</div>`}
+      </div>
+      <div class="links-group">
+        <div class="links-label">Backlinks (${backlinks.length})</div>
+        ${backlinks.map(backItem).join("") || `<div class="muted links-empty">Nenhum documento aponta para este.</div>`}
+      </div>
+    </div>`;
+}
+
+// centraliza o nó no grafo (se o grafo estiver aberto) ao navegar por um link do painel
+function focusGraphNode(docId) {
+  const g = state.graphInstance;
+  const node = g?.graphData().nodes.find((n) => n.id === docId);
+  if (node) g.centerAt(node.x, node.y, 500);
+}
+
+// "Conectar a…": escolhe o destino por autocomplete (ou já vem do modo conectar) e uma nota opcional
+async function openConnectModal(source, preselected = null) {
+  document.getElementById("connect-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "connect",
+    iconName: "link",
+    title: "Conectar documentos",
+    subtitle: `Origem: <strong>${escHtml(source.title)}</strong> — o destino ganha um backlink.`,
+    submitLabel: "Conectar",
+    submitIcon: "link",
+    width: 560,
+    body: `
+      <label class="form-field">
+        <span class="form-label">Destino</span>
+        <input class="input" type="text" id="connect-q" placeholder="Busque pelo título…" autocomplete="off" />
+      </label>
+      <div class="connect-results" id="connect-results" role="listbox"></div>
+      <label class="form-field">
+        <span class="form-label">Por que estão ligados? <span class="muted">(opcional)</span></span>
+        <input class="input" type="text" id="connect-note" placeholder="ex.: o pitch usa os números desta análise" />
+      </label>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("connect-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("connect");
+  let chosen = preselected;
+  const results = modal.querySelector("#connect-results");
+  const render = (items) => {
+    const list = items.filter((d) => d.document_id !== source.document_id);
+    results.innerHTML =
+      list
+        .map(
+          (d) => `
+        <button type="button" class="connect-option ${chosen?.document_id === d.document_id ? "selected" : ""}" data-pick="${d.document_id}" data-title="${escHtml(d.title)}">
+          <span class="dot" style="background:${colorFor(d.collection)}"></span>
+          <span class="grow">${escHtml(d.title)}</span><span class="muted">${escHtml(d.collection)}</span>
+        </button>`,
+        )
+        .join("") || `<div class="muted links-empty">Nenhum documento encontrado.</div>`;
+  };
+  const search = debounce(async (q) => render(await api.get("/documents/titles", { q, limit: 8 }).catch(() => [])), 180);
+  modal.querySelector("#connect-q").addEventListener("input", (e) => search(e.target.value));
+  results.addEventListener("click", (e) => {
+    const opt = e.target.closest("[data-pick]");
+    if (!opt) return;
+    chosen = { document_id: opt.dataset.pick, title: opt.dataset.title };
+    results.querySelectorAll(".connect-option").forEach((b) => b.classList.toggle("selected", b === opt));
+  });
+  modal.querySelector("#connect-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!chosen) {
+      await uiAlert("Escolha o destino", "Selecione na lista o documento que será ligado.");
+      return;
+    }
+    try {
+      await api.post(`/documents/${source.document_id}/links`, {
+        target_id: chosen.document_id,
+        note: modal.querySelector("#connect-note").value.trim() || null,
+      });
+      setOpen(false);
+      modal.remove();
+      if (document.getElementById("graph-wrap")) loadGraph();
+      openDocumentPanel(source.document_id);
+    } catch (err) {
+      await uiError("Não foi possível conectar", err);
+    }
+  });
+  setOpen(true);
+  if (preselected) {
+    modal.querySelector("#connect-q").value = preselected.title;
+    render([preselected]);
+    modal.querySelector("#connect-note").focus();
+  } else {
+    render(await api.get("/documents/titles", { q: "", limit: 8 }).catch(() => []));
+  }
+}
+
+// modo conectar no grafo: 1º clique = origem (destacada), 2º = destino (abre o modal já preenchido)
+function setConnectMode(on) {
+  state.connectMode = on;
+  state.connectFrom = null;
+  const btn = document.getElementById("connect-mode");
+  btn?.classList.toggle("active", on);
+  btn?.classList.toggle("ghost", !on);
+  connectNotice(on ? "Modo conectar: clique no documento de <strong>origem</strong>. Esc cancela." : null);
+  state.graphInstance?.autoPauseRedraw(!on);
+  if (on) document.addEventListener("keydown", connectEsc);
+  else document.removeEventListener("keydown", connectEsc);
+}
+
+const connectEsc = (e) => e.key === "Escape" && setConnectMode(false);
+
+function connectNotice(html) {
+  const notice = document.getElementById("graph-notice");
+  if (!notice) return;
+  notice.classList.toggle("hidden", !html);
+  notice.classList.toggle("connect", Boolean(html));
+  notice.innerHTML = html ? `${icon("link", 14)}<span>${html}</span>` : "";
+  if (html) loadIcons(notice);
+}
+
+function onGraphNodeClick(n) {
+  const docId = state.level === "documents" ? n.id : n.document_id;
+  if (!state.connectMode) {
+    openDocumentPanel(docId);
+    return;
+  }
+  if (!state.connectFrom) {
+    state.connectFrom = n;
+    connectNotice(`Origem: <strong>${escHtml(n.title)}</strong>. Agora clique no <strong>destino</strong>. Esc cancela.`);
+    return;
+  }
+  if (state.connectFrom.id === n.id) return;
+  const from = state.connectFrom;
+  setConnectMode(false);
+  openConnectModal({ document_id: from.id, title: from.title }, { document_id: n.id, title: n.title, collection: n.collection });
 }
 
 function closePanel() {

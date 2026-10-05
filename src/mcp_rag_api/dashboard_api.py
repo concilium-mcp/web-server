@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from .core import agents, dash_auth, documents, graph, search
+from .core import agents, dash_auth, documents, graph, links, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -91,6 +91,51 @@ async def get_graph(
 ) -> dict:
     """Nós e arestas do grafo da base: vizinhança por cosseno (centroides ou chunks)."""
     return await graph.build_graph(level, collection, min_similarity, k)
+
+
+def _reader(user: DashUser) -> Principal:
+    return Principal(actor=f"dash:{user.username}", scopes=frozenset({"read"}))
+
+
+def _admin(user: DashUser) -> Principal:
+    return Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+
+
+@router.get("/documents/titles")
+async def document_titles(q: str = "", limit: int = Query(default=10, ge=1, le=50)) -> list[dict]:
+    """Autocomplete leve do "Conectar a…": título/coleção dos documentos ativos (sem conteúdo)."""
+    rows = await pool().fetch(
+        """
+        SELECT d.id AS document_id, d.title, c.name AS collection
+        FROM documents d JOIN collections c ON c.id = d.collection_id
+        WHERE d.status = 'active' AND ($1 = '' OR kb_title_key(d.title) LIKE '%' || kb_title_key($1) || '%')
+        ORDER BY d.updated_at DESC LIMIT $2
+        """,
+        q.strip(),
+        limit,
+    )
+    return records(rows)
+
+
+@router.get("/documents/{document_id}/links")
+async def document_links(document_id: str, user: DashUser = Depends(current_user)) -> dict:
+    """Links que saem do documento (inclusive [[pendentes]]) e backlinks."""
+    return await links.get_links(_reader(user), document_id)
+
+
+class LinkIn(BaseModel):
+    target_id: str
+    note: str | None = None
+
+
+@router.post("/documents/{document_id}/links")
+async def create_link(document_id: str, body: LinkIn, user: DashUser = Depends(require_admin)) -> dict:
+    return await links.link_documents(_admin(user), document_id, body.target_id, body.note)
+
+
+@router.delete("/links/{link_id}")
+async def delete_link(link_id: int, user: DashUser = Depends(require_admin)) -> dict:
+    return await links.unlink_documents(_admin(user), link_id)
 
 
 @router.get("/documents/{document_id}")
