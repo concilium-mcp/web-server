@@ -1598,6 +1598,39 @@ function closePanel() {
   document.querySelectorAll(".result.selected").forEach((el) => el.classList.remove("selected"));
 }
 
+/* ---------------------------------------------------------------- campos de senha: botão de mostrar/ocultar */
+
+// Envolve todo input[type=password] (inclusive os criados depois) com o botão de olho.
+function enhancePasswordFields(root = document) {
+  for (const input of root.querySelectorAll('input[type="password"]:not([data-pw])')) {
+    input.dataset.pw = "1";
+    const wrap = document.createElement("span");
+    wrap.className = "pw-field";
+    input.replaceWith(wrap);
+    wrap.appendChild(input);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pw-toggle";
+    btn.tabIndex = -1; // Tab segue do campo para o próximo controle do formulário
+    btn.title = "Mostrar senha";
+    btn.setAttribute("aria-label", "Mostrar senha");
+    btn.innerHTML = icon("eye");
+    wrap.appendChild(btn);
+    loadIcons(btn);
+    btn.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.title = show ? "Ocultar senha" : "Mostrar senha";
+      btn.setAttribute("aria-label", btn.title);
+      btn.innerHTML = icon(show ? "eye-off" : "eye");
+      loadIcons(btn);
+      input.focus();
+    });
+  }
+}
+
+new MutationObserver(() => enhancePasswordFields()).observe(document.body, { childList: true, subtree: true });
+
 /* ---------------------------------------------------------------- boot */
 
 (async function boot() {
