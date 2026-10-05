@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from mcp_rag_api import db
-from mcp_rag_api.core import documents
+from mcp_rag_api.core import dash_auth, documents
 from mcp_rag_api.main import app
 from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
 
@@ -23,6 +23,8 @@ from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
 FONTE_A = "alfa bravo charlie delta echo foxtrot"
 FONTE_B = "alfa bravo charlie delta echo foxtrot golf hotel"
 FONTE_C = "mike november oscar papa quebec romeo"
+
+ADMIN_USER = {"username": "dash-admin", "password": "senha-muito-secreta"}
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +38,63 @@ async def seeded_docs():
 
 async def dash_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://dash.test")
+
+
+@pytest.fixture(scope="module")
+async def admin_client(seeded_docs):
+    await dash_auth.create_user(ADMIN_USER["username"], ADMIN_USER["password"], "admin")
+    client = await dash_client()
+    resp = await client.post("/dash/api/auth/login", json=ADMIN_USER)
+    assert resp.status_code == 200
+    yield client
+    await client.aclose()
+
+
+async def test_auth_login_me_logout(seeded_docs, admin_client):
+    # sem sessão: rotas protegidas barram com 401
+    async with await dash_client() as anon:
+        assert (await anon.get("/dash/api/auth/me")).status_code == 401
+        assert (await anon.get("/dash/api/graph")).status_code == 401
+
+    # senha errada não loga
+    async with await dash_client() as c:
+        resp = await c.post(
+            "/dash/api/auth/login", json={"username": ADMIN_USER["username"], "password": "errada"}
+        )
+        assert resp.status_code == 401
+
+    # login → cookie HttpOnly → me → logout → sessão morre
+    async with await dash_client() as c:
+        resp = await c.post("/dash/api/auth/login", json=ADMIN_USER)
+        assert resp.status_code == 200
+        cookie = resp.cookies.get(dash_auth.SESSION_COOKIE)
+        assert cookie
+        set_cookie = resp.headers.get("set-cookie", "")
+        assert "HttpOnly" in set_cookie and "SameSite=lax" in set_cookie
+        # só o hash do token vai para o banco
+        stored = await db.pool().fetchval("SELECT token_hash FROM dash_sessions")
+        assert stored != cookie and len(stored) == 64
+        me = await c.get("/dash/api/auth/me")
+        assert me.json()["username"] == ADMIN_USER["username"]
+        assert me.json()["role"] == "admin"
+        assert (await c.post("/dash/api/auth/logout")).status_code == 200
+        assert (await c.get("/dash/api/auth/me")).status_code == 401
+
+
+async def test_session_expiration_and_disabled_user(seeded_docs):
+    user = await dash_auth.create_user("expira", "senha-muito-secreta", "viewer")
+    token = await dash_auth.create_session(user["id"])
+    assert (await dash_auth.resolve_session(token)) is not None
+    # expira no passado → sessão inválida
+    await db.pool().execute(
+        "UPDATE dash_sessions SET expires_at = now() - interval '1 second' WHERE user_id = $1",
+        uuid.UUID(user["id"]),
+    )
+    assert (await dash_auth.resolve_session(token)) is None
+    # usuário desativado perde a sessão, mesmo válida
+    token2 = await dash_auth.create_session(user["id"])
+    await db.pool().execute("UPDATE dash_users SET disabled_at = now() WHERE id = $1", uuid.UUID(user["id"]))
+    assert (await dash_auth.resolve_session(token2)) is None
 
 
 async def test_centroid_written_on_ingest_and_reindex(seeded_docs):
@@ -52,11 +111,11 @@ async def test_centroid_written_on_ingest_and_reindex(seeded_docs):
     await documents.update_document(ADMIN, seeded_docs["a"], "restaurando", content=FONTE_A)
 
 
-async def test_graph_endpoint_documents_level(seeded_docs):
-    async with await dash_client() as client:
-        resp = await client.get(
-            "/dash/api/graph", params={"collection": "grafos", "min_similarity": 0.5, "k": 3}
-        )
+async def test_graph_endpoint_documents_level(seeded_docs, admin_client):
+    client = admin_client
+    resp = await client.get(
+        "/dash/api/graph", params={"collection": "grafos", "min_similarity": 0.5, "k": 3}
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["level"] == "documents"
@@ -72,17 +131,16 @@ async def test_graph_endpoint_documents_level(seeded_docs):
     assert edge["similarity"] >= 0.7  # conteúdo quase idêntico → cosseno alto
 
     # threshold alto demais: nenhuma aresta passa
-    async with await dash_client() as client:
-        resp = await client.get("/dash/api/graph", params={"collection": "grafos", "min_similarity": 0.95})
+    resp = await client.get("/dash/api/graph", params={"collection": "grafos", "min_similarity": 0.95})
     assert resp.json()["edges"] == []
 
 
-async def test_graph_endpoint_chunks_level(seeded_docs):
-    async with await dash_client() as client:
-        resp = await client.get(
-            "/dash/api/graph",
-            params={"level": "chunks", "collection": "grafos", "min_similarity": 0.5, "k": 3},
-        )
+async def test_graph_endpoint_chunks_level(seeded_docs, admin_client):
+    client = admin_client
+    resp = await client.get(
+        "/dash/api/graph",
+        params={"level": "chunks", "collection": "grafos", "min_similarity": 0.5, "k": 3},
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["level"] == "chunks"
@@ -97,9 +155,9 @@ async def test_graph_endpoint_chunks_level(seeded_docs):
     assert all(by_doc[seeded_docs["c"]][0] not in p for p in pairs)
 
 
-async def test_document_detail_endpoint(seeded_docs):
-    async with await dash_client() as client:
-        resp = await client.get(f"/dash/api/documents/{seeded_docs['a']}")
+async def test_document_detail_endpoint(seeded_docs, admin_client):
+    client = admin_client
+    resp = await client.get(f"/dash/api/documents/{seeded_docs['a']}")
     assert resp.status_code == 200
     doc = resp.json()
     assert doc["title"] == "Alfa"
@@ -107,6 +165,5 @@ async def test_document_detail_endpoint(seeded_docs):
     assert len(doc["chunks"]) == 1 and doc["chunks"][0]["chunk_index"] == 0
     assert doc["versions"][0]["version"] == doc["version"]
 
-    async with await dash_client() as client:
-        resp = await client.get(f"/dash/api/documents/{uuid.uuid4()}")
+    resp = await client.get(f"/dash/api/documents/{uuid.uuid4()}")
     assert resp.status_code == 404

@@ -1,20 +1,85 @@
 """API da dashboard web (prefixo /dash/api) — consumida pela SPA em /dashboard.
 
-Autenticação própria (sessão da dash via cookie, ver core/dash_auth.py), separada do
-Bearer da API pública. Guard aplicada a partir da fatia 2 (login); por ora as rotas
-são abertas porque a dash ainda não tem usuários.
+Autenticação própria: sessão da dash via cookie HttpOnly (core/dash_auth.py),
+separada do Bearer da API pública (api_keys continua valendo para agentes/integrações).
 """
 
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel
 
-from .core import graph
+from .core import dash_auth, graph
+from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import pool, records
 from .security import NotFound
 
-router = APIRouter(prefix="/dash/api", tags=["dashboard"])
+# ---------------------------------------------------------------- sessão
+
+
+async def current_user(request: Request) -> DashUser:
+    token = request.cookies.get(dash_auth.SESSION_COOKIE)
+    if not token:
+        raise HTTPException(status_code=401, detail="Sessão da dashboard ausente.")
+    user = await dash_auth.resolve_session(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sessão expirada ou revogada. Faça login de novo.")
+    return user
+
+
+async def require_admin(user: DashUser = Depends(current_user)) -> DashUser:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Ação restrita a administradores.")
+    return user
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+auth_router = APIRouter(prefix="/dash/api/auth", tags=["dashboard-auth"])
+
+
+@auth_router.post("/login")
+async def login(body: LoginIn, response: Response) -> dict:
+    user = await dash_auth.authenticate(body.username, body.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+    token = await dash_auth.create_session(user.id)
+    response.set_cookie(
+        dash_auth.SESSION_COOKIE,
+        token,
+        max_age=int(dash_auth.SESSION_TTL.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return {"id": user.id, "username": user.username, "role": user.role}
+
+
+@auth_router.post("/logout")
+async def logout(request: Request, response: Response, _user: DashUser = Depends(current_user)) -> dict:
+    token = request.cookies.get(dash_auth.SESSION_COOKIE, "")
+    await dash_auth.revoke_session(token)
+    response.delete_cookie(dash_auth.SESSION_COOKIE, path="/")
+    return {"ok": True}
+
+
+@auth_router.get("/me")
+async def me(user: DashUser = Depends(current_user)) -> dict:
+    return {"id": user.id, "username": user.username, "role": user.role}
+
+
+# ---------------------------------------------------------------- rotas protegidas
+
+
+router = APIRouter(
+    prefix="/dash/api",
+    tags=["dashboard"],
+    dependencies=[Depends(current_user)],
+)
 
 
 @router.get("/graph")

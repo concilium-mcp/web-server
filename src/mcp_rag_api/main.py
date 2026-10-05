@@ -12,6 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import db
 from .api import router
 from .config import get_settings
+from .dashboard_api import auth_router
 from .dashboard_api import router as dashboard_router
 from .mcp_server import mcp
 from .security import KBError, NotFound, PermissionDenied, bearer_token, resolve_key
@@ -31,6 +32,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="MCP RAG API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(auth_router)
 app.include_router(dashboard_router)
 
 

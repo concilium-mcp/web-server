@@ -480,6 +480,71 @@ select option {
   color: var(--text-dim);
 }
 
+/* ---------------------------------------------------------------- login */
+
+.login-wrap {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-card {
+  width: 360px;
+  max-width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.login-card .brand {
+  padding: 0 0 4px;
+}
+
+.login-card .muted {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.form-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: -4px;
+}
+
+.input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  color: var(--text);
+  font: inherit;
+  margin-bottom: 6px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 2px 0 4px;
+}
+
+.login-card .btn.primary {
+  justify-content: center;
+  margin-top: 6px;
+}
+
 .muted {
   color: var(--text-dim);
 }

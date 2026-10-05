@@ -1,11 +1,30 @@
 /* Concilium Dashboard — SPA sem build. Fatia 1: grafo da base RAG (force-graph vendored). */
 
 const api = {
-  async get(path, params) {
+  async req(method, path, body) {
+    const r = await fetch(`/dash/api${path}`, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 401 && state.user) {
+      // sessão caiu (expirou/revogada): volta para o login
+      state.user = null;
+      renderLogin();
+      throw new Error("sessão expirada");
+    }
+    if (!r.ok) throw Object.assign(new Error(`${r.status}`), { status: r.status, detail: (await r.json().catch(() => ({}))).detail });
+    return r.status === 204 ? null : r.json();
+  },
+  get(path, params) {
     const qs = params ? "?" + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "")) : "";
-    const r = await fetch(`/dash/api${path}${qs}`);
-    if (!r.ok) throw new Error(`${r.status}`);
-    return r.json();
+    return this.req("GET", `${path}${qs}`);
+  },
+  post(path, body) {
+    return this.req("POST", path, body ?? {});
+  },
+  patch(path, body) {
+    return this.req("PATCH", path, body ?? {});
   },
 };
 
@@ -41,6 +60,7 @@ const icon = (name, size = 16) => `<span data-icon="${name}" data-size="${size}"
 const PALETTE = ["#e8b26a", "#7fb4ca", "#a9c181", "#d08770", "#b48ead", "#ebcb8b", "#88c0d0", "#a3be8c", "#d3869b", "#81a1c1"];
 
 const state = {
+  user: null,
   screen: "graph",
   level: "documents",
   collection: "",
@@ -56,6 +76,43 @@ function colorFor(collection) {
     state.colors.set(collection, PALETTE[state.colors.size % PALETTE.length]);
   }
   return state.colors.get(collection);
+}
+
+/* ---------------------------------------------------------------- login */
+
+function renderLogin() {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div class="login-wrap">
+      <form class="login-card" id="login-form">
+        <div class="brand">${icon("network", 22)}<span>Concilium</span></div>
+        <p class="muted">Entre para acessar a dashboard da base de conhecimento.</p>
+        <label class="form-label" for="login-user">Usuário</label>
+        <input class="input" id="login-user" type="text" autocomplete="username" required />
+        <label class="form-label" for="login-pass">Senha</label>
+        <input class="input" id="login-pass" type="password" autocomplete="current-password" required />
+        <div class="form-error hidden" id="login-error"></div>
+        <button class="btn primary" type="submit">${icon("log-in")}<span>Entrar</span></button>
+      </form>
+    </div>`;
+  loadIcons(app);
+  const form = document.getElementById("login-form");
+  const error = document.getElementById("login-error");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    error.classList.add("hidden");
+    try {
+      state.user = await api.post("/auth/login", {
+        username: document.getElementById("login-user").value,
+        password: document.getElementById("login-pass").value,
+      });
+      renderShell();
+      renderScreen();
+    } catch (err) {
+      error.textContent = err.status === 401 ? "Usuário ou senha inválidos." : "Não foi possível entrar. Tente de novo.";
+      error.classList.remove("hidden");
+    }
+  });
 }
 
 /* ---------------------------------------------------------------- shell (sidebar + conteúdo) */
@@ -77,7 +134,7 @@ function renderShell() {
           ).join("")}
         </nav>
         <div class="nav-spacer"></div>
-        <div id="user-footer"></div>
+        <div class="user-footer" id="user-footer"></div>
       </aside>
       <main class="content" id="main"></main>
     </div>`;
@@ -88,6 +145,22 @@ function renderShell() {
       renderShell();
       renderScreen();
     }
+  });
+  renderUserFooter();
+}
+
+function renderUserFooter() {
+  const footer = document.getElementById("user-footer");
+  if (!footer || !state.user) return;
+  footer.innerHTML = `
+    ${icon("circle-user-round", 18)}
+    <span class="who" title="${state.user.username}">${state.user.username}${state.user.role === "admin" ? ' <span class="chip accent">admin</span>' : ""}</span>
+    <button class="icon-btn" id="btn-logout" title="Sair">${icon("log-out")}</button>`;
+  loadIcons(footer);
+  footer.querySelector("#btn-logout").addEventListener("click", async () => {
+    await api.post("/auth/logout").catch(() => {});
+    state.user = null;
+    renderLogin();
   });
 }
 
@@ -300,8 +373,16 @@ function closePanel() {
 /* ---------------------------------------------------------------- boot */
 
 (async function boot() {
+  try {
+    state.user = await api.get("/auth/me");
+  } catch {
+    state.user = null;
+  }
+  if (!state.user) {
+    renderLogin();
+    return;
+  }
   renderShell();
-  document.getElementById("user-footer").innerHTML = `<span class="who muted">dashboard</span>`;
   await renderScreen();
   await loadIcons(document);
 })();

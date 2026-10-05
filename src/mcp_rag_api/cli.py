@@ -1,7 +1,8 @@
-"""Linha de comando: servir (HTTP/stdio), migrar, criar chave admin, sincronizar agentes, limpeza."""
+"""Linha de comando: servir (HTTP/stdio), migrar, criar chave admin, usuários da dash, sincronizar agentes, limpeza."""
 
 import argparse
 import asyncio
+import getpass
 from pathlib import Path
 
 from . import db
@@ -15,6 +16,17 @@ async def _create_key(label: str, scopes: list[str]) -> dict:
     try:
         async with db.pool().acquire() as conn:
             return await create_api_key(conn, label=label, scopes=scopes)
+    finally:
+        await db.close_pool()
+
+
+async def _create_user(username: str, role: str, password: str) -> dict:
+    from .core import dash_auth
+
+    await db.run_migrations()
+    await db.init_pool()
+    try:
+        return await dash_auth.create_user(username, password, role)
     finally:
         await db.close_pool()
 
@@ -70,6 +82,11 @@ def main() -> None:
     key.add_argument("--label", default="admin")
     key.add_argument("--scopes", nargs="+", default=["admin"])
 
+    user = sub.add_parser("create-user", help="Cria um usuário da dashboard (primeiro admin: --role admin)")
+    user.add_argument("--username", required=True)
+    user.add_argument("--role", choices=["admin", "viewer"], default="viewer")
+    user.add_argument("--password", help="Se omitido, pede interativamente (sem eco)")
+
     sync = sub.add_parser("sync-agents", help="Gera .claude/agents/<slug>.md a partir do banco")
     sync.add_argument("--out", type=Path, default=Path(".claude/agents"))
 
@@ -92,6 +109,14 @@ def main() -> None:
             result = asyncio.run(_create_key(args.label, args.scopes))
             print(f"Chave criada ({', '.join(args.scopes)}). Guarde agora, ela não será exibida de novo:\n")
             print(result["api_key"])
+        case "create-user":
+            password = args.password
+            if not password:
+                password = getpass.getpass("Senha: ")
+                if getpass.getpass("Repita a senha: ") != password:
+                    raise SystemExit("Senhas não conferem.")
+            result = asyncio.run(_create_user(args.username, args.role, password))
+            print(f"Usuário '{result['username']}' criado com role '{result['role']}'.")
         case "sync-agents":
             for path in asyncio.run(_sync_agents(args.out)):
                 print("escrito:", path)
