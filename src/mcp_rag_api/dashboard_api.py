@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from .core import agents, dash_auth, graph, search
+from .core import agents, dash_auth, documents, graph, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -145,6 +145,40 @@ async def list_agents(_user: DashUser = Depends(current_user)) -> list[dict]:
     for item in items:
         item["auto_apply_updates"] = bool((item.pop("config") or {}).get("auto_apply_updates"))
     return items
+
+
+class AgentCreateIn(BaseModel):
+    slug: str
+    name: str
+    system_prompt: str
+    description: str | None = None
+    allowed_collections: list[str] = []
+    scopes: list[str] = ["read", "write"]
+    auto_apply_updates: bool = False
+
+
+@router.post("/agents")
+async def create_agent(body: AgentCreateIn, user: DashUser = Depends(require_admin)) -> dict:
+    """Cadastra um agente pela dash — mesma regra do create_agent do MCP/REST (versão 1 + chave do agente).
+
+    Devolve a API key do agente (exibida uma única vez) e o connect_command."""
+    admin = Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+    return await agents.create_agent(
+        admin,
+        slug=body.slug,
+        name=body.name,
+        system_prompt=body.system_prompt,
+        description=body.description,
+        config={"auto_apply_updates": body.auto_apply_updates},
+        allowed_collections=body.allowed_collections,
+        scopes=body.scopes,
+    )
+
+
+@router.get("/collections")
+async def list_collections(user: DashUser = Depends(current_user)) -> list[dict]:
+    """Coleções da base (nome, descrição, nº de documentos) — usadas no formulário de agente."""
+    return await documents.list_collections(Principal(actor=f"dash:{user.username}", scopes=frozenset({"read"})))
 
 
 class AutonomyIn(BaseModel):

@@ -201,6 +201,32 @@ async def test_dash_autonomy_toggle(seeded_docs, admin_client):
     assert row["config"]["auto_apply_updates"] is True
 
 
+async def test_dash_create_agent(seeded_docs, admin_client):
+    body = {
+        "slug": "dash-criado",
+        "name": "Criado pela Dash",
+        "system_prompt": "Você é um agente de teste.",
+        "description": "teste",
+        "allowed_collections": ["grafos"],
+        "scopes": ["read"],
+        "auto_apply_updates": True,
+    }
+    resp = await admin_client.post("/dash/api/agents", json=body)
+    assert resp.status_code == 200
+    out = resp.json()
+    assert out["agent"]["slug"] == "dash-criado"
+    assert out["agent"]["allowed_collections"] == ["grafos"]
+    assert out["agent"]["config"]["auto_apply_updates"] is True
+    assert out["api_key"].startswith("kb_sk_") and "kb-dash-criado" in out["connect_command"]
+    # a chave devolvida autentica como o agente
+    p = await principal_for(out["api_key"])
+    assert p.agent_slug == "dash-criado"
+    # slug duplicado vira erro de negócio, não 500
+    assert (await admin_client.post("/dash/api/agents", json=body)).status_code == 400
+    cols = (await admin_client.get("/dash/api/collections")).json()
+    assert any(c["name"] == "grafos" and c["documents"] >= 3 for c in cols)
+
+
 async def test_keys_list_create_renew_revoke(seeded_docs, admin_client):
     resp = await admin_client.post(
         "/dash/api/keys", json={"label": "dash-test", "scopes": ["read", "write"]}
@@ -302,6 +328,9 @@ async def test_viewer_restrictions(seeded_docs, admin_client):
     assert (await client.get("/dash/api/agents")).status_code == 200
     assert (await client.post("/dash/api/keys", json={"label": "x", "scopes": ["read"]})).status_code == 403
     assert (await client.get("/dash/api/users")).status_code == 403
+    assert (
+        await client.post("/dash/api/agents", json={"slug": "nao", "name": "Não", "system_prompt": "x"})
+    ).status_code == 403
     assert (
         await client.post("/dash/api/agents/autonobot/autonomy", json={"auto_apply_updates": True})
     ).status_code == 403
