@@ -1295,6 +1295,7 @@ function graphTemplate() {
           <div class="graph-canvas" id="graph-canvas"></div>
           <div class="empty-state" id="graph-empty">Carregando grafo…</div>
           <div class="legend hidden" id="graph-legend"></div>
+          <div class="graph-notice hidden" id="graph-notice" role="status"></div>
           <div class="graph-hint hidden" id="graph-hint">Clique num nó para ver o documento · arraste para mover · role para zoom</div>
           <div class="graph-zoom hidden" id="graph-zoom">
             <button class="icon-btn" id="zoom-fit" title="Sincronizar e enquadrar">${icon("refresh-cw")}</button>
@@ -1382,6 +1383,36 @@ function bindGraphControls() {
 
 let graphRequest = 0;
 
+// Grafo com nós mas sem arestas: descobre a conexão mais forte (consulta com threshold 0, k=1)
+// e oferece baixar o slider até ela — senão parece que o grafo "quebrou".
+async function explainMissingEdges(data, req) {
+  const notice = document.getElementById("graph-notice");
+  notice.classList.add("hidden");
+  if (data.edges.length || data.nodes.length < 2) return;
+  let probe;
+  try {
+    probe = await api.get("/graph", { level: state.level, collection: state.collection, min_similarity: 0, k: 1 });
+  } catch {
+    return;
+  }
+  if (req !== graphRequest) return; // o usuário já mudou o filtro
+  const strongest = Math.max(0, ...probe.edges.map((e) => e.similarity));
+  if (!strongest) return;
+  // passo do slider é 0.05: arredonda para baixo para a aresta mais forte aparecer
+  const target = Math.floor(strongest * 20) / 20;
+  const fmt = (v) => v.toFixed(2);
+  notice.innerHTML = `
+    <span>Nenhuma conexão com similaridade ≥ ${fmt(state.minSimilarity)}. A mais forte é <strong>${fmt(strongest)}</strong>.</span>
+    <button class="btn sm" type="button" id="notice-lower">Mostrar a partir de ${fmt(target)}</button>`;
+  notice.classList.remove("hidden");
+  notice.querySelector("#notice-lower").addEventListener("click", () => {
+    state.minSimilarity = target;
+    document.getElementById("f-sim").value = target;
+    document.getElementById("f-sim-val").textContent = fmt(target);
+    loadGraph();
+  });
+}
+
 // Animação do botão de sincronizar: gira enquanto carrega/assenta/enquadra o grafo.
 // Ao parar, completa a volta em andamento para o ícone não "pular".
 const SYNC_TURN_MS = 700;
@@ -1432,6 +1463,7 @@ async function loadGraph() {
     return;
   }
   drawGraph(data);
+  explainMissingEdges(data, req);
 }
 
 function destroyGraph() {
@@ -1449,7 +1481,7 @@ function graphMessage(msg) {
   destroyGraph();
   const canvas = document.getElementById("graph-canvas");
   if (canvas) canvas.innerHTML = "";
-  for (const id of ["graph-legend", "graph-hint", "graph-zoom"]) {
+  for (const id of ["graph-legend", "graph-hint", "graph-zoom", "graph-notice"]) {
     document.getElementById(id)?.classList.add("hidden");
   }
   const empty = document.getElementById("graph-empty");
@@ -1598,9 +1630,10 @@ function drawGraph(data) {
         ? isHl(l.source) && isHl(l.target)
           ? "rgba(217, 119, 87, 0.5)"
           : "rgba(236, 236, 236, 0.04)"
-        : `rgba(236, 236, 236, ${0.08 + Math.max(0, l.similarity - state.minSimilarity) * 0.8})`,
+        : `rgba(236, 236, 236, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`,
     )
-    .linkWidth((l) => Math.max(0.6, (l.similarity - state.minSimilarity) * 10));
+    // espessura mínima visível mesmo para arestas logo acima do threshold
+    .linkWidth((l) => Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8));
 
   state.graphNeedsFit = true;
   g.graphData({ nodes, links: data.edges.map((e) => ({ ...e })) });
