@@ -206,7 +206,7 @@ const PALETTE = ["#e8b26a", "#7fb4ca", "#a9c181", "#d08770", "#b48ead", "#ebcb8b
 
 const state = {
   user: null,
-  screen: "painel", // tela inicial ao entrar
+  screen: "overview", // tela inicial ao entrar
   insightsDays: 30, // período do Painel (7 | 30 | 90)
   insights: null,
   level: "documents",
@@ -410,7 +410,7 @@ function renderLogin() {
 /* ---------------------------------------------------------------- shell (sidebar + conteúdo) */
 
 const NAV = [
-  { id: "painel", label: "Painel", iconName: "layout-dashboard" },
+  { id: "overview", label: "Painel", iconName: "layout-dashboard" },
   { id: "notes", label: "Notas", iconName: "notebook-pen" },
   { id: "search", label: "Busca", iconName: "search" },
   { id: "graph", label: "Grafo", iconName: "network" },
@@ -537,7 +537,12 @@ async function refreshServerStatus() {
   box.innerHTML = `<span class="status-dot"></span>${ok ? "OK" : "Sem informação"}`;
 }
 
-// troca de tela: a de notas guarda o endereço da nota aberta (#/notas/<id>), as outras limpam
+// troca de tela: a de notas guarda o endereço da nota aberta (#/notes/<id>), as outras limpam
+// rota de nota: #/notes/<id>; aceita também #/notas/<id> (links compartilhados antes da troca de nome)
+function matchNoteRoute(hash) {
+  return hash.match(/^#\/(?:notes|notas)\/([0-9a-f-]{36})$/);
+}
+
 async function goTo(screen, openId = null) {
   if (notes.editor) await notesLeave();
   state.screen = screen;
@@ -548,7 +553,7 @@ async function goTo(screen, openId = null) {
 }
 
 window.addEventListener("hashchange", () => {
-  const m = location.hash.match(/^#\/notas\/([0-9a-f-]{36})$/);
+  const m = matchNoteRoute(location.hash);
   if (!m || !state.user) return;
   if (state.screen === "notes" && notes.tree) openNote(m[1]);
   else goTo("notes", m[1]);
@@ -568,8 +573,8 @@ async function renderScreen() {
   hideTip();
   if (state.screen === "notes") {
     await renderNotesScreen(main, notes.openId);
-  } else if (state.screen === "painel") {
-    await renderPainel(main);
+  } else if (state.screen === "overview") {
+    await renderOverview(main);
   } else if (state.screen === "graph") {
     main.innerHTML = graphTemplate();
     bindGraphControls();
@@ -1563,7 +1568,7 @@ async function openNote(id) {
   notes.tags = [...(note.tags || [])];
   notes.dirty = false;
   store.set("concilium:last-note", id);
-  if (location.hash !== `#/notas/${id}`) history.replaceState(null, "", `#/notas/${id}`);
+  if (location.hash !== `#/notes/${id}`) history.replaceState(null, "", `#/notes/${id}`);
   renderNoteMain();
   renderNotesTree();
   if (notes.side) renderNoteSide(notes.side);
@@ -1976,7 +1981,7 @@ async function archiveCurrentNote() {
     notes.editor?.destroy();
     notes.editor = null;
     notes.current = null;
-    history.replaceState(null, "", "#/notas");
+    history.replaceState(null, "", "#/notes");
     await loadNotesTree();
     if (notes.tree.notes.length) await openNote(notes.tree.notes[0].id);
     else renderNotesEmpty();
@@ -2334,23 +2339,23 @@ function dataTable(head, rows) {
     <tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? "num" : ""}">${escHtml(String(c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
-function painelTemplate() {
+function overviewTemplate() {
   const days = state.insightsDays;
   return `
-    <section class="page painel-page">
+    <section class="page overview-page">
       <header class="page-header">
         <h1>${icon("layout-dashboard", 18)} Painel</h1>
         <span class="sub">Como a base de conhecimento está crescendo e sendo usada</span>
       </header>
-      <div class="painel-col" id="painel">
-        <div class="painel-filters">
+      <div class="overview-col" id="overview">
+        <div class="overview-filters">
           <span class="filter-label">${icon("calendar", 14)}Período</span>
           <div class="period-seg" id="period-seg" role="radiogroup" aria-label="Período">
             ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${d === days}" data-days="${d}" class="${d === days ? "active" : ""}">${d} dias</button>`).join("")}
           </div>
           <span class="grow"></span>
-          <span class="muted painel-updated" id="painel-updated"></span>
-          <button class="icon-btn painel-refresh" type="button" id="painel-refresh" title="Atualizar agora">${icon("refresh-cw", 15)}</button>
+          <span class="muted overview-updated" id="overview-updated"></span>
+          <button class="icon-btn overview-refresh" type="button" id="overview-refresh" title="Atualizar agora">${icon("refresh-cw", 15)}</button>
         </div>
         <div class="kpis" id="kpis"></div>
         <div class="viz-grid">
@@ -2370,8 +2375,8 @@ function painelTemplate() {
     </section>`;
 }
 
-async function renderPainel(main) {
-  main.innerHTML = painelTemplate();
+async function renderOverview(main) {
+  main.innerHTML = overviewTemplate();
   await loadIcons(main);
   main.querySelector("#period-seg").addEventListener("click", (e) => {
     const b = e.target.closest("[data-days]");
@@ -2383,8 +2388,8 @@ async function renderPainel(main) {
     });
     loadInsights();
   });
-  main.querySelector("#painel-refresh").addEventListener("click", () => loadInsights());
-  main.querySelector("#painel").addEventListener("click", (e) => {
+  main.querySelector("#overview-refresh").addEventListener("click", () => loadInsights());
+  main.querySelector("#overview").addEventListener("click", (e) => {
     const t = e.target.closest("[data-table-toggle]");
     if (t) {
       const card = document.getElementById(t.dataset.tableToggle);
@@ -2401,14 +2406,14 @@ async function renderPainel(main) {
 }
 
 async function loadInsights() {
-  const root = document.getElementById("painel");
+  const root = document.getElementById("overview");
   if (!root) return;
   root.classList.add("loading"); // recarga mantém o quadro anterior, só esmaecido
   const spinStart = performance.now();
   // o ícone completa ao menos a volta em andamento (0,7 s), mesmo com resposta instantânea
   const stopSpin = () =>
-    setTimeout(() => document.getElementById("painel-refresh")?.classList.remove("spinning"), 700 - ((performance.now() - spinStart) % 700));
-  document.getElementById("painel-refresh")?.classList.add("spinning");
+    setTimeout(() => document.getElementById("overview-refresh")?.classList.remove("spinning"), 700 - ((performance.now() - spinStart) % 700));
+  document.getElementById("overview-refresh")?.classList.add("spinning");
   let data;
   try {
     data = await api.get("/insights", { days: state.insightsDays });
@@ -2418,15 +2423,15 @@ async function loadInsights() {
     await uiError("Não foi possível carregar o painel", err);
     return;
   }
-  if (!document.getElementById("painel")) return;
+  if (!document.getElementById("overview")) return;
   state.insights = data;
   root.classList.remove("loading");
   stopSpin();
-  document.getElementById("painel-updated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  document.getElementById("overview-updated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
   root.querySelector("#viz-activity .muted").textContent = `Edições por dia nos últimos ${data.days} dias`;
   root.querySelector("#viz-contributors .muted").textContent = `Edições nos últimos ${data.days} dias`;
   renderKpis(data);
-  renderPainelCharts();
+  renderOverviewCharts();
   renderHealth(data);
   renderRecent(data);
 }
@@ -2435,11 +2440,11 @@ function renderKpis(d) {
   const t = d.totals;
   const edits = d.activity.reduce((s, p) => s + p.edits, 0);
   const delta = d.created.current - d.created.previous;
-  const novas = d.created.current;
-  const notasSub = novas ? `+${nf.format(novas)} em ${d.days} dias` : `nenhuma nova em ${d.days} dias`;
-  const notasTip = `${nf.format(novas)} nos últimos ${d.days} dias · ${nf.format(d.created.previous)} nos ${d.days} dias anteriores`;
+  const newCount = d.created.current;
+  const notesSub = newCount ? `+${nf.format(newCount)} em ${d.days} dias` : `nenhuma nova em ${d.days} dias`;
+  const notesTip = `${nf.format(newCount)} nos últimos ${d.days} dias · ${nf.format(d.created.previous)} nos ${d.days} dias anteriores`;
   const tiles = [
-    { label: "Notas", iconName: "notebook-pen", value: t.documents, sub: notasSub, subTip: notasTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
+    { label: "Notas", iconName: "notebook-pen", value: t.documents, sub: notesSub, subTip: notesTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
     { label: `Edições · ${d.days} dias`, iconName: "activity", value: edits, spark: d.activity.map((p) => p.edits) },
     { label: "Pastas", iconName: "folder", value: t.collections },
     { label: "Conexões", iconName: "link", value: t.links, sub: t.pending_links ? `${nf.format(t.pending_links)} pendente(s)` : "links entre notas" },
@@ -2463,9 +2468,9 @@ function renderKpis(d) {
 }
 
 // redesenha só os gráficos (usado também no resize)
-function renderPainelCharts() {
+function renderOverviewCharts() {
   const d = state.insights;
-  if (!d || !document.getElementById("painel")) return;
+  if (!d || !document.getElementById("overview")) return;
   const activity = d.activity.map((p) => ({
     label: fmtDay(p.day),
     value: p.edits,
@@ -2532,8 +2537,8 @@ function renderRecent(d) {
       .join("") || `<div class="viz-empty">Nenhuma nota ainda.</div>`;
 }
 
-const onPainelResize = debounce(() => state.screen === "painel" && renderPainelCharts(), 150);
-window.addEventListener("resize", onPainelResize);
+const onOverviewResize = debounce(() => state.screen === "overview" && renderOverviewCharts(), 150);
+window.addEventListener("resize", onOverviewResize);
 
 /* ---------------------------------------------------------------- tela: grafo */
 
@@ -3250,7 +3255,7 @@ new MutationObserver(() => enhancePasswordFields()).observe(document.body, { chi
     renderLogin();
     return;
   }
-  const deep = location.hash.match(/^#\/notas\/([0-9a-f-]{36})$/);
+  const deep = matchNoteRoute(location.hash);
   if (deep) {
     // link direto para uma nota abre a nota, não o Painel
     state.screen = "notes";
