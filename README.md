@@ -5,7 +5,7 @@
 <h1 align="center">Concilium</h1>
 
 <p align="center">
-  <strong>The self-hosted knowledge base for AI agents.</strong><br />
+  <strong>The open-source, self-hosted knowledge base for AI agents.</strong><br />
   A team notes workspace, like Obsidian or Notion, that Claude and your own agents can search, read and write through MCP.
 </p>
 
@@ -18,6 +18,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" />
   <img alt="PostgreSQL + pgvector" src="https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white" />
   <img alt="Model Context Protocol" src="https://img.shields.io/badge/MCP-server-D97757" />
+  <img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-blue" />
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-2E8540" />
 </p>
 
@@ -85,7 +86,7 @@ Agents also get a home: a profile (system prompt), persistent memory, session su
 
 <sub>This comparison reflects built-in features. Plugins and integrations can add more to each tool.</sub>
 
-**Pick Concilium** if your team wants an **Obsidian or Notion alternative** that is built for **AI agents and RAG** from day one: one place where people write and agents read, search and learn.
+**Pick Concilium** if your team wants an **open-source Obsidian or Notion alternative** that is built for **AI agents and RAG** from day one: one place where people write and agents read, search and learn.
 
 ## Quick start
 
@@ -176,11 +177,18 @@ Send them through the REST API (`PUT /documents/upsert`) or ask Claude to add th
 **Does it work with ChatGPT, Cursor or other LLM tools?**
 Any client that speaks the **Model Context Protocol** can connect. Everything else can use the REST API. Embeddings are independent of the chat model.
 
+**Is Concilium open source?**
+Yes. Concilium is released under the [Apache License 2.0](LICENSE): you can use, modify and self-host it, including commercially.
+
 **Is my data private?**
 Concilium is self-hosted: notes, vectors and agent memories live in your own PostgreSQL. With the `local` embeddings provider, no text leaves your server.
 
 **Which embedding models are supported?**
 Voyage AI (`voyage-3.5`), OpenAI (`text-embedding-3-small`), Hugging Face Inference (`BAAI/bge-m3`) and local `BAAI/bge-m3` via sentence-transformers. All of them use 1024 dimensions.
+
+## License
+
+Concilium is open source under the [Apache License 2.0](LICENSE).
 
 ## Tech stack
 
@@ -189,5 +197,5 @@ Python 3.12 · FastAPI · MCP Python SDK · asyncpg with plain SQL · PostgreSQL
 ---
 
 <p align="center">
-  <sub>Concilium: a shared knowledge base, second brain and RAG memory for teams and their AI agents.</sub>
+  <sub>Concilium: an open-source shared knowledge base, second brain and RAG memory for teams and their AI agents.</sub>
 </p>

@@ -5,7 +5,7 @@
 <h1 align="center">Concilium</h1>
 
 <p align="center">
-  <strong>La base de conocimiento self-hosted para agentes de IA.</strong><br />
+  <strong>La base de conocimiento open source y self-hosted para agentes de IA.</strong><br />
   Un espacio de notas para el equipo, como Obsidian o Notion, que Claude y tus propios agentes pueden buscar, leer y escribir vía MCP.
 </p>
 
@@ -18,6 +18,7 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" />
   <img alt="PostgreSQL + pgvector" src="https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white" />
   <img alt="Model Context Protocol" src="https://img.shields.io/badge/MCP-server-D97757" />
+  <img alt="Licencia: Apache 2.0" src="https://img.shields.io/badge/licencia-Apache%202.0-blue" />
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-s%C3%AD-2E8540" />
 </p>
 
@@ -85,7 +86,7 @@ Los agentes también tienen un hogar: perfil (system prompt), memoria persistent
 
 <sub>La comparación considera las funcionalidades nativas. Los plugins e integraciones pueden añadir más a cada herramienta.</sub>
 
-**Elige Concilium** si tu equipo busca una **alternativa a Obsidian o a Notion** pensada desde el primer día para **agentes de IA y RAG**: un único lugar donde las personas escriben y los agentes leen, buscan y aprenden.
+**Elige Concilium** si tu equipo busca una **alternativa open source a Obsidian o a Notion** pensada desde el primer día para **agentes de IA y RAG**: un único lugar donde las personas escriben y los agentes leen, buscan y aprenden.
 
 ## Inicio rápido
 
@@ -176,11 +177,18 @@ Envíalos por la API REST (`PUT /documents/upsert`) o pide a Claude que los aña
 **¿Funciona con ChatGPT, Cursor u otras herramientas de LLM?**
 Cualquier cliente que hable el **Model Context Protocol** puede conectarse. Lo demás puede usar la API REST. Los embeddings no dependen del modelo de chat.
 
+**¿Concilium es open source?**
+Sí. Concilium se distribuye bajo la [Licencia Apache 2.0](LICENSE): puedes usarlo, modificarlo y alojarlo tú mismo, incluso con fines comerciales.
+
 **¿Mis datos son privados?**
 Concilium es self-hosted: notas, vectores y memorias de los agentes viven en tu propio PostgreSQL. Con el proveedor de embeddings `local`, ningún texto sale de tu servidor.
 
 **¿Qué modelos de embeddings se admiten?**
 Voyage AI (`voyage-3.5`), OpenAI (`text-embedding-3-small`), Hugging Face Inference (`BAAI/bge-m3`) y `BAAI/bge-m3` local vía sentence-transformers. Todos usan 1024 dimensiones.
+
+## Licencia
+
+Concilium es open source, bajo la [Licencia Apache 2.0](LICENSE).
 
 ## Stack
 
@@ -189,5 +197,5 @@ Python 3.12 · FastAPI · MCP Python SDK · asyncpg con SQL puro · PostgreSQL 1
 ---
 
 <p align="center">
-  <sub>Concilium: base de conocimiento compartida, segundo cerebro y memoria RAG para equipos y sus agentes de IA.</sub>
+  <sub>Concilium: base de conocimiento open source y compartida, segundo cerebro y memoria RAG para equipos y sus agentes de IA.</sub>
 </p>
