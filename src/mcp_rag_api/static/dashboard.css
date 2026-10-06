@@ -275,6 +275,45 @@ body {
   background: transparent;
 }
 
+/* seletor de idioma no menu do usuário: pílulas PT · EN · ES (mesmo desenho do período do Painel) */
+.lang-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.lang-seg button {
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lang-seg button:hover {
+  color: var(--text);
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+.lang-seg button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lang-seg button:focus {
+  outline: none;
+}
+
+.lang-seg button:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
 .status {
   display: inline-flex;
   align-items: center;

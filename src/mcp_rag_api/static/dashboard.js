@@ -11,7 +11,7 @@ const api = {
       // sessão caiu (expirou/revogada): volta para o login
       state.user = null;
       renderLogin();
-      throw new Error("sessão expirada");
+      throw new Error(t("common.sessionExpired"));
     }
     if (!r.ok) throw Object.assign(new Error(`${r.status}`), { status: r.status, detail: (await r.json().catch(() => ({}))).detail });
     return r.status === 204 ? null : r.json();
@@ -30,6 +30,44 @@ const api = {
     return this.req("DELETE", path);
   },
 };
+
+/* ---------------------------------------------------------------- idioma (pt-BR / en / es) */
+
+// dicionários em static/i18n/<idioma>.js; chave ausente cai no pt-BR e, por fim, na própria chave.
+// A escolha fica no navegador; sem escolha salva, segue o idioma do navegador (o <head> aplica).
+const LANG_KEY = "concilium:lang";
+const LANGS = [
+  { id: "pt-BR", label: "PT", name: "Português" },
+  { id: "en", label: "EN", name: "English" },
+  { id: "es", label: "ES", name: "Español" },
+];
+// locale do Intl (datas/números) e do editor Toast UI para cada idioma da interface
+const LOCALES = { "pt-BR": "pt-BR", en: "en-US", es: "es-ES" };
+
+function currentLang() {
+  const lang = document.documentElement.lang;
+  return LANGS.some((l) => l.id === lang) ? lang : "pt-BR";
+}
+
+const locale = () => LOCALES[currentLang()];
+
+function setLang(lang) {
+  document.documentElement.lang = lang;
+  try {
+    localStorage.setItem(LANG_KEY, JSON.stringify(lang));
+  } catch {
+    /* sem armazenamento local: vale só nesta aba */
+  }
+}
+
+// t("keys.counts", { active: 2 }): {nome} vira o valor; mensagem { one, other } escolhe a forma por vars.count.
+// Não escapa nada: quem interpola dado do usuário passa o valor já com escHtml.
+function t(key, vars = {}) {
+  const messages = window.I18N || {};
+  let msg = messages[currentLang()]?.[key] ?? messages["pt-BR"]?.[key] ?? key;
+  if (typeof msg === "object") msg = msg[new Intl.PluralRules(locale()).select(vars.count ?? 0)] ?? msg.other;
+  return msg.replace(/\{(\w+)\}/g, (m, name) => (name in vars ? String(vars[name]) : m));
+}
 
 /* ---------------------------------------------------------------- tema (escuro/claro) */
 
@@ -102,11 +140,11 @@ function modalShell({ id, iconName, title, subtitle = "", body, submitLabel, sub
             <h2 id="${id}-title">${title}</h2>
             ${subtitle ? `<span class="muted">${subtitle}</span>` : ""}
           </div>
-          <button class="icon-btn" type="button" data-close-modal title="Fechar (Esc)">${icon("x", 18)}</button>
+          <button class="icon-btn" type="button" data-close-modal title="${t("common.closeEsc")}">${icon("x", 18)}</button>
         </header>
         <div class="modal-body">${body}</div>
         <footer class="modal-foot">
-          <button class="btn" type="button" data-close-modal>Cancelar</button>
+          <button class="btn" type="button" data-close-modal>${t("common.cancel")}</button>
           <button class="btn primary" type="submit">${icon(submitIcon)}<span>${submitLabel}</span></button>
         </footer>
       </form>
@@ -141,7 +179,7 @@ function bindModal(id, { trigger, onOpen } = {}) {
 /* ---------------------------------------------------------------- diálogos (substituem alert/confirm) */
 
 // Abre um diálogo no tema da dash e resolve true (confirmou) / false (cancelou, Esc, clique fora).
-function uiDialog({ title, message = "", confirmLabel = "OK", cancelLabel = null, tone = "default", iconName = null }) {
+function uiDialog({ title, message = "", confirmLabel = t("common.ok"), cancelLabel = null, tone = "default", iconName = null }) {
   return new Promise((resolve) => {
     const prevFocus = document.activeElement;
     const root = document.createElement("div");
@@ -188,7 +226,7 @@ function uiDialog({ title, message = "", confirmLabel = "OK", cancelLabel = null
   });
 }
 
-const uiConfirm = (opts) => uiDialog({ cancelLabel: "Cancelar", ...opts });
+const uiConfirm = (opts) => uiDialog({ cancelLabel: t("common.cancel"), ...opts });
 const uiAlert = (title, message) => uiDialog({ title, message });
 const uiError = (title, err) => uiDialog({ title, message: err?.detail || err?.message || String(err), tone: "danger" });
 
@@ -198,7 +236,7 @@ const brandLogo = (size = 22) => `<img class="brand-logo" src="static/brand/logo
 const escHtml = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString("pt-BR") : "—");
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(locale()) : "—");
 
 /* ---------------------------------------------------------------- estado */
 
@@ -245,21 +283,21 @@ function searchTemplate() {
     <div class="split">
       <section class="page search-page">
         <header class="page-header">
-          <h1>${icon("search", 18)} Busca RAG</h1>
-          <span class="sub">Busca híbrida real da base (semântica + full-text)</span>
+          <h1>${icon("search", 18)} ${t("search.title")}</h1>
+          <span class="sub">${t("search.sub")}</span>
         </header>
         <div class="search-col">
           <form class="composer" id="search-form">
             ${icon("search", 18)}
-            <input type="text" id="s-query" placeholder="Pergunte algo ou busque um termo…" autocomplete="off" required />
-            <label class="composer-k tech" title="Quantos trechos trazer">Top-k
+            <input type="text" id="s-query" placeholder="${t("search.placeholder")}" autocomplete="off" required />
+            <label class="composer-k tech" title="${t("search.topkTitle")}">Top-k
               <select id="s-k">${[3, 5, 8, 10].map((k) => `<option ${k === state.searchK ? "selected" : ""}>${k}</option>`).join("")}</select>
             </label>
-            <button class="composer-send" type="submit" title="Buscar (Enter)">${icon("search", 16)}</button>
+            <button class="composer-send" type="submit" title="${t("search.submit")}">${icon("search", 16)}</button>
           </form>
           <div class="results-head hidden" id="s-head">
             <span class="muted" id="s-summary"></span>
-            <button class="btn sm" id="s-highlight" type="button">${icon("network")}<span>Ver no grafo</span></button>
+            <button class="btn sm" id="s-highlight" type="button">${icon("network")}<span>${t("search.showInGraph")}</span></button>
           </div>
           <div class="results" id="s-results"></div>
         </div>
@@ -280,7 +318,7 @@ function bindSearch() {
     state.searchK = Number(document.getElementById("s-k").value);
     const results = document.getElementById("s-results");
     form.classList.add("busy");
-    results.innerHTML = `<div class="results-empty">Buscando…</div>`;
+    results.innerHTML = `<div class="results-empty">${t("search.searching")}</div>`;
     const t0 = performance.now();
     try {
       const data = await api.post("/search-test", { query, top_k: state.searchK });
@@ -289,7 +327,7 @@ function bindSearch() {
       state.lastSearchMs = Math.round(performance.now() - t0);
       await renderSearchResults();
     } catch (err) {
-      results.innerHTML = `<div class="results-empty">A busca falhou: ${escHtml(err.detail || err.message)}</div>`;
+      results.innerHTML = `<div class="results-empty">${t("search.failed", { error: escHtml(err.detail || err.message) })}</div>`;
     } finally {
       form.classList.remove("busy");
     }
@@ -311,9 +349,9 @@ function bindSearch() {
 
 // destaca os termos da busca no trecho (escapando o texto fora dos destaques)
 function highlightTerms(text, query) {
-  const terms = [...new Set(query.toLowerCase().split(/\s+/).filter((t) => t.length >= 3))];
+  const terms = [...new Set(query.toLowerCase().split(/\s+/).filter((term) => term.length >= 3))];
   if (!terms.length) return escHtml(text);
-  const re = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  const re = new RegExp(`(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
   return text
     .split(re)
     .map((part, i) => (i % 2 ? `<mark>${escHtml(part)}</mark>` : escHtml(part)))
@@ -329,19 +367,19 @@ async function renderSearchResults() {
     head.classList.add("hidden");
     box.innerHTML = `
       <div class="results-empty">
-        <div class="results-empty-title">O que você quer encontrar na base?</div>
-        Teste a recuperação como um agente faria: o resultado é o mesmo do <span class="mono">search_knowledge</span> via MCP/REST.
+        <div class="results-empty-title">${t("search.emptyTitle")}</div>
+        ${t("search.emptyBody", { tool: '<span class="mono">search_knowledge</span>' })}
       </div>`;
     return;
   }
   head.classList.toggle("hidden", !results.length);
   if (!results.length) {
-    box.innerHTML = `<div class="results-empty">Nenhum resultado para “${escHtml(state.lastSearch)}”. Tente outros termos.</div>`;
+    box.innerHTML = `<div class="results-empty">${t("search.noResults", { query: escHtml(state.lastSearch) })}</div>`;
     return;
   }
   const docs = new Set(results.map((r) => r.document_id)).size;
   document.getElementById("s-summary").textContent =
-    `${results.length} trecho(s) de ${docs} documento(s) · ${state.lastSearchMs ?? "–"} ms`;
+    t("search.summary", { chunks: results.length, docs, ms: state.lastSearchMs ?? "–" });
   const maxScore = Math.max(...results.map((r) => r.score)) || 1;
   box.innerHTML = results
     .map((r, i) => {
@@ -359,8 +397,8 @@ async function renderSearchResults() {
         </div>
         <p class="snippet">${highlightTerms(snippet, state.lastSearch)}</p>
         <div class="result-meta">
-          <span class="relbar" title="Relevância relativa ao 1º resultado"><span style="width:${rel}%"></span></span>
-          <span class="tech">${sim > 0 ? `semântica ${sim}%` : "só full-text"}</span>
+          <span class="relbar" title="${t("search.relevance")}"><span style="width:${rel}%"></span></span>
+          <span class="tech">${sim > 0 ? t("search.semantic", { pct: sim }) : t("search.fulltextOnly")}</span>
           <span class="mono tech">score ${Number(r.score).toFixed(4)}</span>
         </div>
       </div>
@@ -378,13 +416,13 @@ function renderLogin() {
     <div class="login-wrap">
       <form class="login-card" id="login-form">
         <div class="brand">${brandLogo(30)}<span>Concilium</span></div>
-        <p class="muted">Entre para acessar a dashboard da base de conhecimento.</p>
-        <label class="form-label" for="login-user">Usuário</label>
+        <p class="muted">${t("login.intro")}</p>
+        <label class="form-label" for="login-user">${t("login.username")}</label>
         <input class="input" id="login-user" type="text" autocomplete="username" required />
-        <label class="form-label" for="login-pass">Senha</label>
+        <label class="form-label" for="login-pass">${t("login.password")}</label>
         <input class="input" id="login-pass" type="password" autocomplete="current-password" required />
         <div class="form-error hidden" id="login-error"></div>
-        <button class="btn primary" type="submit">${icon("log-in")}<span>Entrar</span></button>
+        <button class="btn primary" type="submit">${icon("log-in")}<span>${t("login.submit")}</span></button>
       </form>
     </div>`;
   loadIcons(app);
@@ -401,7 +439,7 @@ function renderLogin() {
       renderShell();
       renderScreen();
     } catch (err) {
-      error.textContent = err.status === 401 ? "Usuário ou senha inválidos." : "Não foi possível entrar. Tente de novo.";
+      error.textContent = err.status === 401 ? t("login.invalid") : t("login.failed");
       error.classList.remove("hidden");
     }
   });
@@ -410,11 +448,11 @@ function renderLogin() {
 /* ---------------------------------------------------------------- shell (sidebar + conteúdo) */
 
 const NAV = [
-  { id: "overview", label: "Painel", iconName: "layout-dashboard" },
-  { id: "notes", label: "Notas", iconName: "notebook-pen" },
-  { id: "search", label: "Busca", iconName: "search" },
-  { id: "graph", label: "Grafo", iconName: "network" },
-  { id: "agents", label: "Agents", iconName: "bot" },
+  { id: "overview", iconName: "layout-dashboard" },
+  { id: "notes", iconName: "notebook-pen" },
+  { id: "search", iconName: "search" },
+  { id: "graph", iconName: "network" },
+  { id: "agents", iconName: "bot" },
 ];
 
 function navForRole() {
@@ -433,7 +471,7 @@ function renderShell() {
             .map(
               (n) => `
             <button class="nav-item ${state.screen === n.id ? "active" : ""}" data-nav="${n.id}">
-              ${icon(n.iconName)}<span>${n.label}</span>
+              ${icon(n.iconName)}<span>${t(`nav.${n.id}`)}</span>
             </button>`,
             )
             .join("")}
@@ -456,7 +494,7 @@ function renderUserFooter() {
   if (!footer || !state.user) return;
   const u = state.user;
   const isAdmin = u.role === "admin";
-  const roleLabel = ROLE_LABELS[u.role] || "Leitor";
+  const roleLabel = roleName(u.role);
   const item = (attrs, iconName, label, extra = "") =>
     `<button class="menu-item" role="menuitem" ${attrs}>${icon(iconName)}<span class="grow">${label}</span>${extra}</button>`;
   footer.innerHTML = `
@@ -466,18 +504,23 @@ function renderUserFooter() {
         <span class="muted">${roleLabel}</span>
       </div>
       <div class="menu-sep"></div>
-      ${item('data-goto="keys"', "key-round", "Chaves API")}
-      ${isAdmin ? item('data-goto="users"', "users", "Gerenciar usuários") : ""}
+      ${item('data-goto="keys"', "key-round", t("menu.keys"))}
+      ${isAdmin ? item('data-goto="users"', "users", t("menu.users")) : ""}
       <div class="menu-sep"></div>
-      ${item("data-theme-toggle", currentTheme() === "dark" ? "sun" : "moon", currentTheme() === "dark" ? "Tema claro" : "Tema escuro")}
-      ${item('data-href="/docs"', "book-open", "Documentação da API", icon("external-link", 14))}
-      <div class="menu-item static">${icon("activity")}<span class="grow">Status do servidor</span><span class="status" id="server-status"><span class="status-dot"></span>…</span></div>
+      ${item("data-theme-toggle", currentTheme() === "dark" ? "sun" : "moon", currentTheme() === "dark" ? t("menu.lightTheme") : t("menu.darkTheme"))}
+      <div class="menu-item static lang-row">${icon("languages")}<span class="grow">${t("menu.language")}</span>
+        <span class="lang-seg" role="radiogroup" aria-label="${t("menu.language")}">${LANGS.map(
+          (l) => `<button type="button" role="radio" aria-checked="${l.id === currentLang()}" class="${l.id === currentLang() ? "active" : ""}" data-lang="${l.id}" title="${l.name}">${l.label}</button>`,
+        ).join("")}</span>
+      </div>
+      ${item('data-href="/docs"', "book-open", t("menu.docs"), icon("external-link", 14))}
+      <div class="menu-item static">${icon("activity")}<span class="grow">${t("menu.status")}</span><span class="status" id="server-status"><span class="status-dot"></span>…</span></div>
       <div class="menu-sep"></div>
-      ${item('data-logout', "log-out", "Sair")}
+      ${item('data-logout', "log-out", t("menu.logout"))}
     </div>
     <button class="user-trigger" id="user-trigger" aria-haspopup="menu" aria-expanded="false">
       <span class="avatar">${escHtml(u.username.slice(0, 1).toUpperCase())}</span>
-      <span class="who" title="${escHtml(u.username)}">${escHtml(u.username)} <span class="muted">· ${{ admin: "admin", editor: "editor" }[u.role] || "leitor"}</span></span>
+      <span class="who" title="${escHtml(u.username)}">${escHtml(u.username)} <span class="muted">· ${t(`roleShort.${roleId(u.role)}`)}</span></span>
       ${icon("chevrons-up-down", 14)}
     </button>`;
   loadIcons(footer);
@@ -503,8 +546,17 @@ function renderUserFooter() {
   document.addEventListener("keydown", state.menuEsc);
 
   menu.addEventListener("click", async (e) => {
+    const lang = e.target.closest("[data-lang]");
+    if (lang) {
+      setOpen(false);
+      if (lang.dataset.lang === currentLang()) return;
+      setLang(lang.dataset.lang);
+      // re-renderiza a tela inteira no novo idioma (o editor também lê o idioma na criação)
+      goTo(state.screen, notes.openId);
+      return;
+    }
     const el = e.target.closest(".menu-item");
-    if (!el) return;
+    if (!el || el.classList.contains("static")) return;
     setOpen(false);
     if (el.dataset.goto) {
       goTo(el.dataset.goto);
@@ -534,7 +586,7 @@ async function refreshServerStatus() {
     ok = false;
   }
   box.classList.toggle("ok", ok);
-  box.innerHTML = `<span class="status-dot"></span>${ok ? "OK" : "Sem informação"}`;
+  box.innerHTML = `<span class="status-dot"></span>${ok ? t("status.ok") : t("status.unknown")}`;
 }
 
 // troca de tela: a de notas guarda o endereço da nota aberta (#/notes/<id>), as outras limpam
@@ -586,15 +638,15 @@ async function renderScreen() {
     bindSearch();
     await renderSearchResults();
   } else if (state.screen === "keys") {
-    main.innerHTML = pageTemplate("key-round", "Chaves API", "Gestão das chaves Bearer de agentes e integrações");
+    main.innerHTML = pageTemplate("key-round", t("keys.title"), t("keys.sub"));
     await loadIcons(main);
     await renderKeysList();
   } else if (state.screen === "agents") {
-    main.innerHTML = pageTemplate("bot", "Agents", "Agentes cadastrados na base de conhecimento");
+    main.innerHTML = pageTemplate("bot", t("agents.title"), t("agents.sub"));
     await loadIcons(main);
     await renderAgentsList();
   } else if (state.screen === "users") {
-    main.innerHTML = pageTemplate("users", "Usuários", "Acesso humano à dashboard (admin)");
+    main.innerHTML = pageTemplate("users", t("users.title"), t("users.sub"));
     await loadIcons(main);
     await renderUsersList();
   }
@@ -613,56 +665,57 @@ function pageTemplate(iconName, title, sub) {
 
 /* ---------------------------------------------------------------- tela: chaves API */
 
+// [escopo, chave da descrição]
 const SCOPES = [
-  ["read", "Consultar e buscar na base"],
-  ["write", "Inserir e atualizar documentos"],
-  ["agents:manage", "Gerenciar agentes e memórias"],
-  ["admin", "Acesso total, inclusive chaves"],
+  ["read", "scope.read"],
+  ["write", "scope.write"],
+  ["agents:manage", "scope.agentsManage"],
+  ["admin", "scope.admin"],
 ];
 
 function fmtAgo(iso) {
-  if (!iso) return "nunca";
+  if (!iso) return t("ago.never");
   const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "agora";
+  if (s < 60) return t("ago.now");
   const m = Math.round(s / 60);
-  if (m < 60) return `há ${m} min`;
+  if (m < 60) return t("ago.minutes", { count: m });
   const h = Math.round(m / 60);
-  if (h < 24) return `há ${h} h`;
+  if (h < 24) return t("ago.hours", { count: h });
   const d = Math.round(h / 24);
-  return d < 30 ? `há ${d} dia(s)` : new Date(iso).toLocaleDateString("pt-BR");
+  return d < 30 ? t("ago.days", { count: d }) : new Date(iso).toLocaleDateString(locale());
 }
 
 function keysCreateForm(agents) {
   return modalShell({
     id: "key",
     iconName: "key-round",
-    title: "Nova chave",
-    subtitle: "Chave Bearer para a API/MCP. Ela é exibida uma única vez, logo após criar.",
-    submitLabel: "Criar chave",
+    title: t("keys.new"),
+    subtitle: t("keys.newSub"),
+    submitLabel: t("keys.create"),
     submitIcon: "key-round",
     width: 720,
     body: `
       <div class="create-grid">
         <label class="form-field">
-          <span class="form-label">Nome</span>
-          <input class="input" type="text" id="key-label" placeholder="ex.: claude-desktop, integração CRM" required />
+          <span class="form-label">${t("common.name")}</span>
+          <input class="input" type="text" id="key-label" placeholder="${t("keys.labelPh")}" required />
         </label>
         <label class="form-field">
-          <span class="form-label">Dono</span>
+          <span class="form-label">${t("keys.owner")}</span>
           <select class="input" id="key-agent">
-            <option value="">Chave humana (sem agente)</option>
+            <option value="">${t("keys.humanKey")}</option>
             ${agents.map((a) => `<option value="${a.slug}">agent: ${escHtml(a.slug)}</option>`).join("")}
           </select>
         </label>
       </div>
       <div class="form-field">
-        <span class="form-label">Escopos</span>
+        <span class="form-label">${t("keys.scopes")}</span>
         <div class="scope-grid two" id="key-scopes">
           ${SCOPES.map(
             ([sc, desc]) => `
             <label class="scope-option">
               <input type="checkbox" value="${sc}" ${sc === "read" ? "checked" : ""} />
-              <span><span class="mono">${sc}</span><span class="muted">${desc}</span></span>
+              <span><span class="mono">${sc}</span><span class="muted">${t(desc)}</span></span>
             </label>`,
           ).join("")}
         </div>
@@ -682,23 +735,23 @@ function keyRow(k, isAdmin) {
         </div>
       </div>
       <div class="tcell">${(k.scopes || []).map((s) => `<span class="chip ${s === "admin" ? "accent" : ""}">${s}</span>`).join("")}</div>
-      <div class="tcell muted">${k.agent ? `<span class="chip">${icon("bot", 12)} ${escHtml(k.agent)}</span>` : "humana"}</div>
-      <div class="tcell muted" title="Criada em ${fmtDate(k.created_at)}">${revoked ? `revogada ${fmtAgo(k.revoked_at)}` : fmtAgo(k.created_at)}</div>
-      <div class="tcell muted" title="${k.last_used_at ? fmtDate(k.last_used_at) : "Nunca usada"}">${fmtAgo(k.last_used_at)}</div>
+      <div class="tcell muted">${k.agent ? `<span class="chip">${icon("bot", 12)} ${escHtml(k.agent)}</span>` : t("keys.human")}</div>
+      <div class="tcell muted" title="${t("keys.createdAt", { date: fmtDate(k.created_at) })}">${revoked ? t("keys.revokedAgo", { ago: fmtAgo(k.revoked_at) }) : fmtAgo(k.created_at)}</div>
+      <div class="tcell muted" title="${k.last_used_at ? fmtDate(k.last_used_at) : t("keys.neverUsed")}">${fmtAgo(k.last_used_at)}</div>
       <div class="tcell-actions">
         ${
           isAdmin && !revoked
-            ? `<button class="btn sm ghost" data-renew="${k.id}" title="Revoga a atual e emite uma chave nova">${icon("refresh-cw", 14)}<span>Renovar</span></button>
-               <button class="btn sm ghost danger-text" data-revoke="${k.id}" title="Revogar chave">${icon("ban", 14)}<span>Revogar</span></button>`
+            ? `<button class="btn sm ghost" data-renew="${k.id}" title="${t("keys.renewTitle")}">${icon("refresh-cw", 14)}<span>${t("keys.renew")}</span></button>
+               <button class="btn sm ghost danger-text" data-revoke="${k.id}" title="${t("keys.revokeTitle")}">${icon("ban", 14)}<span>${t("keys.revoke")}</span></button>`
             : ""
         }
       </div>
     </div>`;
 }
 
-const KEYS_HEAD = `
+const keysHead = () => `
   <div class="trow thead">
-    <div>Chave</div><div>Escopos</div><div>Dono</div><div>Criada</div><div>Último uso</div><div></div>
+    <div>${t("keys.col.key")}</div><div>${t("keys.col.scopes")}</div><div>${t("keys.col.owner")}</div><div>${t("keys.col.created")}</div><div>${t("keys.col.lastUsed")}</div><div></div>
   </div>`;
 
 async function renderKeysList() {
@@ -708,7 +761,7 @@ async function renderKeysList() {
   try {
     [keys, agents] = await Promise.all([api.get("/keys"), api.get("/agents")]);
   } catch {
-    body.innerHTML = `<div class="results-empty">Não foi possível carregar as chaves.</div>`;
+    body.innerHTML = `<div class="results-empty">${t("keys.loadFailed")}</div>`;
     return;
   }
   const active = keys.filter((k) => !k.revoked_at);
@@ -716,20 +769,20 @@ async function renderKeysList() {
   body.innerHTML = `
     <div class="page-col">
       <div class="section-head">
-        <span class="muted">${active.length} ativa(s) · ${revoked.length} revogada(s)</span>
-        ${isAdmin ? `<button class="btn primary" id="key-new">${icon("plus")}<span>Nova chave</span></button>` : ""}
+        <span class="muted">${t("keys.counts", { active: active.length, revoked: revoked.length })}</span>
+        ${isAdmin ? `<button class="btn primary" id="key-new">${icon("plus")}<span>${t("keys.new")}</span></button>` : ""}
       </div>
       ${isAdmin ? keysCreateForm(agents) : ""}
       <div id="key-banner"></div>
       <div class="data-table">
-        ${KEYS_HEAD}
-        ${active.map((k) => keyRow(k, isAdmin)).join("") || `<div class="results-empty">Nenhuma chave ativa.${isAdmin ? " Crie uma em “Nova chave”." : ""}</div>`}
+        ${keysHead()}
+        ${active.map((k) => keyRow(k, isAdmin)).join("") || `<div class="results-empty">${t("keys.noneActive")}${isAdmin ? t("keys.noneActiveHint") : ""}</div>`}
       </div>
       ${
         revoked.length
           ? `<details class="revoked-block" ${state.showRevoked ? "open" : ""}>
-              <summary>${icon("history", 14)} ${revoked.length} revogada(s) — mantidas para auditoria</summary>
-              <div class="data-table">${KEYS_HEAD}${revoked.map((k) => keyRow(k, isAdmin)).join("")}</div>
+              <summary>${icon("history", 14)} ${t("keys.revokedBlock", { count: revoked.length })}</summary>
+              <div class="data-table">${keysHead()}${revoked.map((k) => keyRow(k, isAdmin)).join("")}</div>
             </details>`
           : ""
       }
@@ -747,7 +800,7 @@ function bindKeysCreate() {
     e.preventDefault();
     const scopes = [...document.querySelectorAll("#key-scopes input:checked")].map((i) => i.value);
     if (!scopes.length) {
-      await uiAlert("Escolha um escopo", "A chave precisa de ao menos um escopo.");
+      await uiAlert(t("keys.pickScopeTitle"), t("keys.pickScopeMsg"));
       return;
     }
     try {
@@ -760,7 +813,7 @@ function bindKeysCreate() {
       await renderKeysList();
       showKeyBanner(key);
     } catch (err) {
-      await uiError("Não foi possível criar a chave", err);
+      await uiError(t("keys.createFailed"), err);
     }
   });
 }
@@ -776,9 +829,9 @@ function bindKeyActions() {
     try {
       if (renew) {
         const ok = await uiConfirm({
-          title: "Renovar chave?",
-          message: "A chave atual será revogada de imediato e uma nova será emitida. Atualize quem usa a chave antiga.",
-          confirmLabel: "Renovar",
+          title: t("keys.renewConfirmTitle"),
+          message: t("keys.renewConfirmMsg"),
+          confirmLabel: t("keys.renew"),
           iconName: "refresh-cw",
         });
         if (!ok) return;
@@ -787,9 +840,9 @@ function bindKeyActions() {
         showKeyBanner(key);
       } else if (revoke) {
         const ok = await uiConfirm({
-          title: "Revogar chave?",
-          message: "Agentes e integrações que usam esta chave perdem o acesso na hora. Não dá para desfazer.",
-          confirmLabel: "Revogar",
+          title: t("keys.revokeConfirmTitle"),
+          message: t("keys.revokeConfirmMsg"),
+          confirmLabel: t("keys.revoke"),
           tone: "danger",
         });
         if (!ok) return;
@@ -797,7 +850,7 @@ function bindKeyActions() {
         await renderKeysList();
       }
     } catch (err) {
-      await uiError("A operação falhou", err);
+      await uiError(t("common.opFailed"), err);
     }
   });
 }
@@ -807,19 +860,19 @@ function showKeyBanner(key) {
   box.innerHTML = `
     <div class="key-reveal">
       <div class="key-reveal-head">
-        ${icon("check")}<strong>Chave criada</strong>
-        <span class="muted">Copie agora — por segurança ela não será exibida de novo.</span>
+        ${icon("check")}<strong>${t("keys.created")}</strong>
+        <span class="muted">${t("keys.copyNow")}</span>
       </div>
       <div class="key-reveal-row">
         <code class="mono">${escHtml(key.api_key)}</code>
-        <button class="btn sm" id="copy-key" type="button">${icon("copy")}<span>Copiar</span></button>
+        <button class="btn sm" id="copy-key" type="button">${icon("copy")}<span>${t("common.copy")}</span></button>
       </div>
     </div>`;
   loadIcons(box);
   box.querySelector("#copy-key").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     await navigator.clipboard.writeText(key.api_key);
-    btn.innerHTML = `${icon("check")}<span>Copiado</span>`;
+    btn.innerHTML = `${icon("check")}<span>${t("common.copied")}</span>`;
     loadIcons(btn);
   });
 }
@@ -827,10 +880,10 @@ function showKeyBanner(key) {
 /* ---------------------------------------------------------------- tela: agents */
 
 const AGENT_SCOPES = [
-  ["read", "Consultar e buscar na base"],
-  ["write", "Inserir e atualizar documentos"],
-  ["agents:manage", "Cadastrar e configurar outros agentes"],
-  ["admin", "Acesso total, inclusive chaves"],
+  ["read", "scope.read"],
+  ["write", "scope.write"],
+  ["agents:manage", "scope.agentsManageAgent"],
+  ["admin", "scope.admin"],
 ];
 
 const slugify = (s) =>
@@ -850,17 +903,14 @@ const lines = (s) =>
 
 // mesmo roteiro do prompt design_agent do MCP: objetivo, tom, sempre/nunca, coleções
 function buildSystemPrompt(f) {
-  const parts = [`Você é ${f.name || "um agente"}.${f.goal ? " " + f.goal.trim() : ""}`];
-  if (f.tone.trim()) parts.push(`Tom e idioma: ${f.tone.trim()}.`);
+  const parts = [t("prompt.youAre", { name: f.name || t("prompt.anAgent") }) + (f.goal ? " " + f.goal.trim() : "")];
+  if (f.tone.trim()) parts.push(t("prompt.tone", { tone: f.tone.trim() }));
   const always = lines(f.always);
   const never = lines(f.never);
-  if (always.length) parts.push("Sempre:\n" + always.map((l) => `- ${l}`).join("\n"));
-  if (never.length) parts.push("Nunca:\n" + never.map((l) => `- ${l}`).join("\n"));
-  const scope = f.collections.length ? `nas coleções ${f.collections.join(", ")}` : "na base";
-  parts.push(
-    `Antes de responder, busque contexto ${scope} com search_knowledge e cite o documento de origem. ` +
-      "Registre aprendizados duradouros com add_agent_memory.",
-  );
+  if (always.length) parts.push(t("prompt.always") + "\n" + always.map((l) => `- ${l}`).join("\n"));
+  if (never.length) parts.push(t("prompt.never") + "\n" + never.map((l) => `- ${l}`).join("\n"));
+  const scope = f.collections.length ? t("prompt.scopeCollections", { collections: f.collections.join(", ") }) : t("prompt.scopeBase");
+  parts.push(t("prompt.search", { scope }) + t("prompt.memory"));
   return parts.join("\n\n");
 }
 
@@ -869,61 +919,61 @@ function agentCreateForm(collections) {
     ${modalShell({
       id: "agent",
       iconName: "bot",
-      title: "Novo agente",
-      subtitle: 'O mesmo cadastro do <span class="mono">create_agent</span> via MCP: gera a versão 1 e a chave do agente.',
-      submitLabel: "Criar agente",
+      title: t("agents.new"),
+      subtitle: t("agents.newSub", { tool: '<span class="mono">create_agent</span>' }),
+      submitLabel: t("agents.create"),
       submitIcon: "bot",
       body: `
       <div class="form-section">
-        <div class="form-section-title"><span class="step">1</span>Identidade</div>
+        <div class="form-section-title"><span class="step">1</span>${t("agents.identity")}</div>
         <div class="create-grid three">
           <label class="form-field">
-            <span class="form-label">Nome</span>
-            <input class="input" id="a-name" placeholder="ex.: Assistente de suporte" required />
+            <span class="form-label">${t("common.name")}</span>
+            <input class="input" id="a-name" placeholder="${t("agents.namePh")}" required />
           </label>
           <label class="form-field">
-            <span class="form-label">Slug <span class="muted">(usado na conexão MCP)</span></span>
-            <input class="input mono" id="a-slug" placeholder="assistente-suporte" pattern="[a-z0-9][a-z0-9-]{1,62}" required />
+            <span class="form-label">${t("agents.slug")} <span class="muted">${t("agents.slugHint")}</span></span>
+            <input class="input mono" id="a-slug" placeholder="${t("agents.slugPh")}" pattern="[a-z0-9][a-z0-9-]{1,62}" required />
           </label>
           <label class="form-field">
-            <span class="form-label">Descrição curta</span>
-            <input class="input" id="a-desc" placeholder="Responde dúvidas sobre o produto" />
+            <span class="form-label">${t("agents.desc")}</span>
+            <input class="input" id="a-desc" placeholder="${t("agents.descPh")}" />
           </label>
         </div>
       </div>
 
       <div class="form-section">
-        <div class="form-section-title"><span class="step">2</span>Comportamento</div>
+        <div class="form-section-title"><span class="step">2</span>${t("agents.behavior")}</div>
         <div class="create-grid">
           <label class="form-field">
-            <span class="form-label">Objetivo — o que faz e para quem</span>
-            <textarea class="input" id="a-goal" rows="3" placeholder="Você ajuda o time de suporte a responder clientes com base na documentação do produto."></textarea>
+            <span class="form-label">${t("agents.goal")}</span>
+            <textarea class="input" id="a-goal" rows="3" placeholder="${t("agents.goalPh")}"></textarea>
           </label>
           <label class="form-field">
-            <span class="form-label">Tom e idioma</span>
-            <textarea class="input" id="a-tone" rows="3">português do Brasil, direto e cordial</textarea>
+            <span class="form-label">${t("agents.tone")}</span>
+            <textarea class="input" id="a-tone" rows="3">${t("agents.toneDefault")}</textarea>
           </label>
           <label class="form-field">
-            <span class="form-label">Sempre <span class="muted">(uma regra por linha)</span></span>
-            <textarea class="input" id="a-always" rows="3" placeholder="confirmar o plano do cliente antes de responder"></textarea>
+            <span class="form-label">${t("agents.always")} <span class="muted">${t("agents.onePerLine")}</span></span>
+            <textarea class="input" id="a-always" rows="3" placeholder="${t("agents.alwaysPh")}"></textarea>
           </label>
           <label class="form-field">
-            <span class="form-label">Nunca <span class="muted">(uma regra por linha)</span></span>
-            <textarea class="input" id="a-never" rows="3" placeholder="prometer prazos ou descontos"></textarea>
+            <span class="form-label">${t("agents.never")} <span class="muted">${t("agents.onePerLine")}</span></span>
+            <textarea class="input" id="a-never" rows="3" placeholder="${t("agents.neverPh")}"></textarea>
           </label>
         </div>
         <label class="form-field">
           <span class="form-label prompt-label">System prompt
-            <span class="muted" id="a-prompt-state">montado automaticamente a partir dos campos acima</span>
-            <button class="link-btn hidden" type="button" id="a-prompt-regen">Remontar</button>
+            <span class="muted" id="a-prompt-state">${t("agents.promptAuto")}</span>
+            <button class="link-btn hidden" type="button" id="a-prompt-regen">${t("agents.regen")}</button>
           </span>
           <textarea class="input mono prompt-box" id="a-prompt" rows="9" required></textarea>
         </label>
       </div>
 
       <div class="form-section">
-        <div class="form-section-title"><span class="step">3</span>Acesso</div>
-        <span class="form-label">Coleções <span class="muted">(nenhuma marcada = todas)</span></span>
+        <div class="form-section-title"><span class="step">3</span>${t("agents.access")}</div>
+        <span class="form-label">${t("agents.collections")} <span class="muted">${t("agents.collectionsHint")}</span></span>
         <div class="chip-picks" id="a-cols">
           ${
             collections.length
@@ -935,22 +985,22 @@ function agentCreateForm(collections) {
               </label>`,
                   )
                   .join("")
-              : `<span class="muted">Nenhuma coleção ainda — o agente terá acesso a todas.</span>`
+              : `<span class="muted">${t("agents.noCollections")}</span>`
           }
         </div>
-        <span class="form-label">Permissões</span>
+        <span class="form-label">${t("agents.permissions")}</span>
         <div class="scope-grid" id="a-scopes">
           ${AGENT_SCOPES.map(
             ([s, desc]) => `
             <label class="scope-option">
               <input type="checkbox" value="${s}" ${s === "read" || s === "write" ? "checked" : ""} />
-              <span><span class="mono">${s}</span><span class="muted">${desc}</span></span>
+              <span><span class="mono">${s}</span><span class="muted">${t(desc)}</span></span>
             </label>`,
           ).join("")}
         </div>
         <label class="scope-option toggle-option">
           <input type="checkbox" id="a-auto" />
-          <span><span>Autonomia</span><span class="muted">O agente aplica as próprias propostas de mudança de perfil sem revisão humana. Recomendado: desligado.</span></span>
+          <span><span>${t("agents.autonomy")}</span><span class="muted">${t("agents.autonomyDesc")}</span></span>
         </label>
       </div>`,
     })}`;
@@ -964,18 +1014,18 @@ function agentCard(a, isAdmin) {
         <span class="row-icon">${icon("bot")}</span>
         <div class="grow">
           <div class="row-title">${escHtml(a.name)} <span class="muted mono">${escHtml(a.slug)}</span>
-            ${archived ? `<span class="chip danger-chip">arquivado</span>` : ""}
-            ${a.proposals ? `<span class="chip accent">${icon("git-pull-request-arrow", 12)} ${a.proposals} proposta(s)</span>` : ""}
+            ${archived ? `<span class="chip danger-chip">${t("agents.archived")}</span>` : ""}
+            ${a.proposals ? `<span class="chip accent">${icon("git-pull-request-arrow", 12)} ${t("agents.proposals", { count: a.proposals })}</span>` : ""}
           </div>
           ${a.description ? `<div class="muted">${escHtml(a.description)}</div>` : ""}
         </div>
         ${
           isAdmin && !archived
             ? `<button class="btn sm ${a.auto_apply_updates ? "primary" : "ghost"}" data-autonomy="${a.slug}" data-on="${a.auto_apply_updates}"
-                 title="Autonomia: aplicar propostas do próprio agente sem revisão">
-                 ${icon("zap", 14)}<span>Autonomia ${a.auto_apply_updates ? "ligada" : "desligada"}</span>
+                 title="${t("agents.autonomyBtnTitle")}">
+                 ${icon("zap", 14)}<span>${a.auto_apply_updates ? t("agents.autonomyOn") : t("agents.autonomyOff")}</span>
                </button>`
-            : `<span class="muted">${a.auto_apply_updates ? "autônomo" : "sob revisão"}</span>`
+            : `<span class="muted">${a.auto_apply_updates ? t("agents.autonomous") : t("agents.underReview")}</span>`
         }
       </div>
       <div class="agent-meta">
@@ -983,12 +1033,12 @@ function agentCard(a, isAdmin) {
         <span>${
           a.allowed_collections.length
             ? a.allowed_collections.map((c) => `<span class="chip"><span class="dot" style="background:${colorFor(c)}"></span>${escHtml(c)}</span>`).join(" ")
-            : `<span class="chip subtle">todas as coleções</span>`
+            : `<span class="chip subtle">${t("agents.allCollections")}</span>`
         }</span>
         <span class="grow"></span>
-        <span class="muted">${icon("key-round", 12)} ${a.active_keys} chave(s)</span>
+        <span class="muted">${icon("key-round", 12)} ${t("agents.keysCount", { count: a.active_keys })}</span>
         <span class="muted mono">v${a.version}</span>
-        <span class="muted" title="${fmtDate(a.updated_at)}">atualizado ${fmtAgo(a.updated_at)}</span>
+        <span class="muted" title="${fmtDate(a.updated_at)}">${t("agents.updatedAgo", { ago: fmtAgo(a.updated_at) })}</span>
       </div>
     </div>`;
 }
@@ -1000,15 +1050,15 @@ async function renderAgentsList(created) {
   try {
     [list, collections] = await Promise.all([api.get("/agents"), isAdmin ? api.get("/collections") : []]);
   } catch {
-    body.innerHTML = `<div class="results-empty">Não foi possível carregar os agents.</div>`;
+    body.innerHTML = `<div class="results-empty">${t("agents.loadFailed")}</div>`;
     return;
   }
   const active = list.filter((a) => a.status === "active").length;
   body.innerHTML = `
     <div class="page-col">
       <div class="section-head">
-        <span class="muted">${active} ativo(s) · ${list.length - active} arquivado(s)</span>
-        ${isAdmin ? `<button class="btn primary" id="agent-new">${icon("plus")}<span>Novo agente</span></button>` : ""}
+        <span class="muted">${t("agents.counts", { active, archived: list.length - active })}</span>
+        ${isAdmin ? `<button class="btn primary" id="agent-new">${icon("plus")}<span>${t("agents.new")}</span></button>` : ""}
       </div>
       ${isAdmin ? agentCreateForm(collections) : ""}
       <div id="agent-banner"></div>
@@ -1016,8 +1066,8 @@ async function renderAgentsList(created) {
         ${
           list.map((a) => agentCard(a, isAdmin)).join("") ||
           `<div class="results-empty">
-             <div class="results-empty-title">Nenhum agente ainda</div>
-             ${isAdmin ? "Crie o primeiro em “Novo agente” — ou peça a um Claude conectado via MCP (prompt <span class=\"mono\">design_agent</span>)." : "Peça a um administrador para cadastrar um agente."}
+             <div class="results-empty-title">${t("agents.emptyTitle")}</div>
+             ${isAdmin ? t("agents.emptyAdmin", { prompt: '<span class="mono">design_agent</span>' }) : t("agents.emptyViewer")}
            </div>`
         }
       </div>
@@ -1033,11 +1083,9 @@ async function renderAgentsList(created) {
     if (!btn) return;
     const turnOn = btn.dataset.on !== "true";
     const ok = await uiConfirm({
-      title: `${turnOn ? "Ligar" : "Desligar"} autonomia de ${btn.dataset.autonomy}?`,
-      message: turnOn
-        ? "Com autonomia, as propostas de mudança de perfil do próprio agente se aplicam sem revisão humana."
-        : "As próximas propostas do agente voltam a precisar de aprovação humana.",
-      confirmLabel: turnOn ? "Ligar autonomia" : "Desligar autonomia",
+      title: t(turnOn ? "agents.autonomyConfirmOn" : "agents.autonomyConfirmOff", { slug: btn.dataset.autonomy }),
+      message: turnOn ? t("agents.autonomyMsgOn") : t("agents.autonomyMsgOff"),
+      confirmLabel: turnOn ? t("agents.autonomyTurnOn") : t("agents.autonomyTurnOff"),
       tone: turnOn ? "danger" : "default",
       iconName: "zap",
     });
@@ -1046,7 +1094,7 @@ async function renderAgentsList(created) {
       await api.post(`/agents/${btn.dataset.autonomy}/autonomy`, { auto_apply_updates: turnOn });
       await renderAgentsList();
     } catch (err) {
-      await uiError("Não foi possível mudar a autonomia", err);
+      await uiError(t("agents.autonomyFailed"), err);
     }
   });
 }
@@ -1070,7 +1118,7 @@ function bindAgentCreate() {
   };
   const setPromptTouched = (v) => {
     promptTouched = v;
-    $("a-prompt-state").textContent = v ? "editado manualmente" : "montado automaticamente a partir dos campos acima";
+    $("a-prompt-state").textContent = v ? t("agents.promptManual") : t("agents.promptAuto");
     $("a-prompt-regen").classList.toggle("hidden", !v);
   };
   const setOpen = bindModal("agent", { trigger: $("agent-new"), onOpen: syncPrompt });
@@ -1092,7 +1140,7 @@ function bindAgentCreate() {
     e.preventDefault();
     const scopes = [...form.querySelectorAll("#a-scopes input:checked")].map((i) => i.value);
     if (!scopes.length) {
-      await uiAlert("Escolha uma permissão", "O agente precisa de ao menos uma permissão.");
+      await uiAlert(t("agents.pickScopeTitle"), t("agents.pickScopeMsg"));
       return;
     }
     const f = fields();
@@ -1109,7 +1157,7 @@ function bindAgentCreate() {
       setOpen(false);
       await renderAgentsList(created);
     } catch (err) {
-      await uiError("Não foi possível criar o agente", err);
+      await uiError(t("agents.createFailed"), err);
     }
   });
 }
@@ -1119,19 +1167,19 @@ function showAgentBanner(created) {
   const copyRow = (id, value) => `
     <div class="key-reveal-row">
       <code class="mono">${escHtml(value)}</code>
-      <button class="btn sm" type="button" data-copy="${id}">${icon("copy")}<span>Copiar</span></button>
+      <button class="btn sm" type="button" data-copy="${id}">${icon("copy")}<span>${t("common.copy")}</span></button>
     </div>`;
   box.innerHTML = `
     <div class="key-reveal">
       <div class="key-reveal-head">
-        ${icon("check")}<strong>Agente ${escHtml(created.agent.name)} criado</strong>
-        <span class="muted">Copie agora — a chave não será exibida de novo.</span>
+        ${icon("check")}<strong>${t("agents.createdTitle", { name: escHtml(created.agent.name) })}</strong>
+        <span class="muted">${t("agents.copyNow")}</span>
       </div>
-      <span class="form-label">API key do agente</span>
+      <span class="form-label">${t("agents.apiKey")}</span>
       ${copyRow("key", created.api_key)}
-      <span class="form-label">Conectar no Claude Code</span>
+      <span class="form-label">${t("agents.connectClaudeCode")}</span>
       ${copyRow("cmd", created.connect_command)}
-      <span class="muted">Depois, numa conversa nova, use o prompt <span class="mono">start_as_agent</span> com slug <span class="mono">${escHtml(created.agent.slug)}</span>.</span>
+      <span class="muted">${t("agents.nextStep", { prompt: '<span class="mono">start_as_agent</span>', slug: `<span class="mono">${escHtml(created.agent.slug)}</span>` })}</span>
     </div>`;
   loadIcons(box);
   const values = { key: created.api_key, cmd: created.connect_command };
@@ -1139,19 +1187,17 @@ function showAgentBanner(created) {
     const btn = e.target.closest("[data-copy]");
     if (!btn) return;
     await navigator.clipboard.writeText(values[btn.dataset.copy]);
-    btn.innerHTML = `${icon("check")}<span>Copiado</span>`;
+    btn.innerHTML = `${icon("check")}<span>${t("common.copied")}</span>`;
     loadIcons(btn);
   });
 }
 
 /* ---------------------------------------------------------------- tela: usuários */
 
-const ROLES = [
-  ["viewer", "Leitor", "Lê notas, busca, grafo, chaves e agents, sem alterar nada"],
-  ["editor", "Editor", "Cria, edita, move e arquiva notas e pastas"],
-  ["admin", "Administrador", "Tudo do editor + chaves, usuários, links e autonomia dos agents"],
-];
-const ROLE_LABELS = Object.fromEntries(ROLES.map(([value, label]) => [value, label]));
+const ROLES = ["viewer", "editor", "admin"];
+// papel desconhecido conta como leitor (o menos privilegiado)
+const roleId = (role) => (ROLES.includes(role) ? role : "viewer");
+const roleName = (role) => t(`role.${roleId(role)}`);
 
 function userRow(u) {
   const disabled = Boolean(u.disabled_at);
@@ -1161,32 +1207,32 @@ function userRow(u) {
       <div class="tcell-main">
         <span class="avatar">${escHtml(u.username.slice(0, 1).toUpperCase())}</span>
         <div class="grow">
-          <div class="row-title">${escHtml(u.username)} ${self ? `<span class="chip subtle">você</span>` : ""}</div>
+          <div class="row-title">${escHtml(u.username)} ${self ? `<span class="chip subtle">${t("users.you")}</span>` : ""}</div>
         </div>
       </div>
       <div class="tcell">
         <select class="input role-select" data-role="${u.id}" ${self || disabled ? "disabled" : ""}
-          title="${self ? "Você não pode mudar o próprio papel" : "Papel do usuário"}">
-          ${ROLES.map(([v, label]) => `<option value="${v}" ${u.role === v ? "selected" : ""}>${label}</option>`).join("")}
+          title="${self ? t("users.cantChangeOwn") : t("users.roleTitle")}">
+          ${ROLES.map((v) => `<option value="${v}" ${u.role === v ? "selected" : ""}>${roleName(v)}</option>`).join("")}
         </select>
       </div>
-      <div class="tcell"><span class="status ${disabled ? "" : "ok"}"><span class="status-dot"></span>${disabled ? "Desativado" : "Ativo"}</span></div>
-      <div class="tcell muted" title="Criado em ${fmtDate(u.created_at)}">${fmtAgo(u.created_at)}</div>
+      <div class="tcell"><span class="status ${disabled ? "" : "ok"}"><span class="status-dot"></span>${disabled ? t("users.disabled") : t("users.active")}</span></div>
+      <div class="tcell muted" title="${t("users.createdAt", { date: fmtDate(u.created_at) })}">${fmtAgo(u.created_at)}</div>
       <div class="tcell-actions">
-        ${disabled ? "" : `<button class="btn sm ghost" data-reset="${u.id}" title="Definir uma nova senha">${icon("key-round", 14)}<span>Senha</span></button>`}
+        ${disabled ? "" : `<button class="btn sm ghost" data-reset="${u.id}" title="${t("users.setPasswordTitle")}">${icon("key-round", 14)}<span>${t("users.password")}</span></button>`}
         ${
           self
             ? ""
             : `<button class="btn sm ghost ${disabled ? "" : "danger-text"}" data-toggle="${u.id}" data-disabled="${disabled}"
-                title="${disabled ? "Reativar acesso" : "Desativar e encerrar sessões"}">
-                ${icon(disabled ? "refresh-cw" : "ban", 14)}<span>${disabled ? "Reativar" : "Desativar"}</span>
+                title="${disabled ? t("users.reactivateTitle") : t("users.disableTitle")}">
+                ${icon(disabled ? "refresh-cw" : "ban", 14)}<span>${disabled ? t("users.reactivate") : t("users.disable")}</span>
               </button>`
         }
       </div>
       <div class="reset-row hidden" id="reset-${u.id}">
-        <input class="input" type="password" placeholder="Nova senha para ${escHtml(u.username)} (mín. 8 caracteres)" id="reset-pass-${u.id}" minlength="8" />
-        <button class="btn sm" type="button" data-reset="${u.id}">Cancelar</button>
-        <button class="btn sm primary" type="button" data-do-reset="${u.id}">${icon("check", 14)}<span>Salvar senha</span></button>
+        <input class="input" type="password" placeholder="${t("users.newPasswordPh", { name: escHtml(u.username) })}" id="reset-pass-${u.id}" minlength="8" />
+        <button class="btn sm" type="button" data-reset="${u.id}">${t("common.cancel")}</button>
+        <button class="btn sm primary" type="button" data-do-reset="${u.id}">${icon("check", 14)}<span>${t("users.savePassword")}</span></button>
       </div>
     </div>`;
 }
@@ -1195,29 +1241,29 @@ function usersCreateForm() {
   return modalShell({
     id: "user",
     iconName: "users",
-    title: "Novo usuário",
-    subtitle: "Acesso humano à dashboard. A pessoa pode trocar a senha depois com um admin.",
-    submitLabel: "Criar usuário",
+    title: t("users.new"),
+    subtitle: t("users.newSub"),
+    submitLabel: t("users.create"),
     width: 640,
     body: `
       <div class="create-grid">
         <label class="form-field">
-          <span class="form-label">Username</span>
-          <input class="input" type="text" id="u-username" placeholder="ex.: maria" autocomplete="off" required />
+          <span class="form-label">${t("users.username")}</span>
+          <input class="input" type="text" id="u-username" placeholder="${t("users.usernamePh")}" autocomplete="off" required />
         </label>
         <label class="form-field">
-          <span class="form-label">Senha inicial</span>
-          <input class="input" type="password" id="u-password" placeholder="mín. 8 caracteres" minlength="8" autocomplete="new-password" required />
+          <span class="form-label">${t("users.initialPassword")}</span>
+          <input class="input" type="password" id="u-password" placeholder="${t("users.passwordPh")}" minlength="8" autocomplete="new-password" required />
         </label>
       </div>
       <div class="form-field">
-        <span class="form-label">Papel</span>
+        <span class="form-label">${t("users.role")}</span>
         <div class="scope-grid two">
           ${ROLES.map(
-            ([v, label, desc]) => `
+            (v) => `
             <label class="scope-option">
               <input type="radio" name="u-role" value="${v}" ${v === "viewer" ? "checked" : ""} />
-              <span><span>${label}</span><span class="muted">${desc}</span></span>
+              <span><span>${roleName(v)}</span><span class="muted">${t(`role.${v}.desc`)}</span></span>
             </label>`,
           ).join("")}
         </div>
@@ -1225,9 +1271,9 @@ function usersCreateForm() {
   });
 }
 
-const USERS_HEAD = `
+const usersHead = () => `
   <div class="trow users thead">
-    <div>Usuário</div><div>Papel</div><div>Status</div><div>Criado</div><div></div>
+    <div>${t("users.col.user")}</div><div>${t("users.col.role")}</div><div>${t("users.col.status")}</div><div>${t("users.col.created")}</div><div></div>
   </div>`;
 
 async function renderUsersList() {
@@ -1236,7 +1282,7 @@ async function renderUsersList() {
   try {
     users = await api.get("/users");
   } catch (err) {
-    body.innerHTML = `<div class="results-empty">${err.status === 403 ? "Só administradores gerenciam usuários." : "Não foi possível carregar os usuários."}</div>`;
+    body.innerHTML = `<div class="results-empty">${err.status === 403 ? t("users.onlyAdmins") : t("users.loadFailed")}</div>`;
     return;
   }
   const active = users.filter((u) => !u.disabled_at).length;
@@ -1244,11 +1290,11 @@ async function renderUsersList() {
   body.innerHTML = `
     <div class="page-col">
       <div class="section-head">
-        <span class="muted">${active} ativo(s) · ${admins} admin(s) · ${users.length - active} desativado(s)</span>
-        <button class="btn primary" id="user-new">${icon("plus")}<span>Novo usuário</span></button>
+        <span class="muted">${t("users.counts", { active, admins, disabled: users.length - active })}</span>
+        <button class="btn primary" id="user-new">${icon("plus")}<span>${t("users.new")}</span></button>
       </div>
       ${usersCreateForm()}
-      <div class="data-table">${USERS_HEAD}${users.map(userRow).join("")}</div>
+      <div class="data-table">${usersHead()}${users.map(userRow).join("")}</div>
     </div>`;
   await loadIcons(body);
   bindUserActions();
@@ -1269,7 +1315,7 @@ function bindUserActions() {
       setOpen(false);
       await renderUsersList();
     } catch (err) {
-      await uiError("Não foi possível criar o usuário", err);
+      await uiError(t("users.createFailed"), err);
     }
   });
   // o form é recriado a cada render; os handlers delegados no #page-body, só uma vez
@@ -1282,7 +1328,7 @@ function bindUserActions() {
       await api.patch(`/users/${sel.dataset.role}`, { role: sel.value });
       await renderUsersList();
     } catch (err) {
-      await uiError("Não foi possível mudar o papel", err);
+      await uiError(t("users.roleFailed"), err);
       await renderUsersList();
     }
   });
@@ -1298,7 +1344,7 @@ function bindUserActions() {
       } else if (doReset) {
         const pass = document.getElementById(`reset-pass-${doReset.dataset.doReset}`).value;
         if (pass.length < 8) {
-          await uiAlert("Senha curta demais", "A senha precisa ter ao menos 8 caracteres.");
+          await uiAlert(t("users.shortPasswordTitle"), t("users.shortPasswordMsg"));
           return;
         }
         await api.patch(`/users/${doReset.dataset.doReset}`, { password: pass });
@@ -1308,9 +1354,9 @@ function bindUserActions() {
         if (
           disable &&
           !(await uiConfirm({
-            title: "Desativar usuário?",
-            message: "O usuário perde o acesso à dashboard e as sessões abertas são encerradas. Dá para reativar depois.",
-            confirmLabel: "Desativar",
+            title: t("users.disableConfirmTitle"),
+            message: t("users.disableConfirmMsg"),
+            confirmLabel: t("users.disable"),
             tone: "danger",
           }))
         )
@@ -1319,49 +1365,22 @@ function bindUserActions() {
         await renderUsersList();
       }
     } catch (err) {
-      await uiError("A operação falhou", err);
+      await uiError(t("common.opFailed"), err);
     }
   });
 }
 
 /* ---------------------------------------------------------------- tela: notas (plan-web-02) */
 
-// Modelos v1 estáticos: não poluem a busca RAG com documentos-modelo.
-const NOTE_TEMPLATES = [
-  { id: "blank", label: "Em branco", desc: "Comece do zero", content: "" },
-  {
-    id: "client",
-    label: "Perfil de cliente",
-    desc: "Quem é, contexto, contatos e histórico",
-    content:
-      "## Resumo\n\nQuem é o cliente, segmento e porte.\n\n## Contatos\n\n- Nome — cargo — e-mail/telefone\n\n" +
-      "## Contexto e dores\n\n- \n\n## O que já oferecemos\n\n- \n\n## Próximos passos\n\n- [ ] Próximo passo\n",
-  },
-  {
-    id: "meeting",
-    label: "Ata de reunião",
-    desc: "Participantes, decisões e próximos passos",
-    content:
-      "**Data:** \n**Participantes:** \n\n## Pauta\n\n- \n\n## Decisões\n\n- \n\n" +
-      "## Próximos passos\n\n- [ ] Responsável — tarefa — prazo\n",
-  },
-  {
-    id: "proposal",
-    label: "Proposta",
-    desc: "Problema, solução, escopo e investimento",
-    content:
-      "## Problema\n\n\n## Solução proposta\n\n\n## Escopo\n\n- Inclui:\n- Não inclui:\n\n" +
-      "## Investimento e prazos\n\n| Item | Valor | Prazo |\n| --- | --- | --- |\n|  |  |  |\n\n## Próximos passos\n\n- [ ] Próximo passo\n",
-  },
-  {
-    id: "objections",
-    label: "Playbook de objeções",
-    desc: "Objeção, resposta e prova",
-    content:
-      "## Objeção: \n\n**Quando aparece:** \n\n**Resposta curta:** \n\n**Prova / caso:** \n\n" +
-      "---\n\n## Objeção: \n\n**Quando aparece:** \n\n**Resposta curta:** \n\n**Prova / caso:** \n",
-  },
-];
+// Modelos v1 estáticos: não poluem a busca RAG com documentos-modelo. Textos no dicionário (tpl.<id>.*).
+const NOTE_TEMPLATE_IDS = ["blank", "client", "meeting", "proposal", "objections"];
+const noteTemplates = () =>
+  NOTE_TEMPLATE_IDS.map((id) => ({
+    id,
+    label: t(`tpl.${id}.label`),
+    desc: t(`tpl.${id}.desc`),
+    content: id === "blank" ? "" : t(`tpl.${id}.content`),
+  }));
 
 const IDLE_SAVE_MS = 20000; // salva sozinho depois de ~20 s sem digitar
 const DRAFT_PREFIX = "concilium:draft:";
@@ -1411,12 +1430,12 @@ function notesTemplate() {
     <div class="notes-layout">
       <aside class="notes-tree">
         <div class="notes-tree-head">
-          <div class="field notes-filter">${icon("search")}<input type="text" id="notes-filter" placeholder="Buscar nota…" autocomplete="off" /></div>
+          <div class="field notes-filter">${icon("search")}<input type="text" id="notes-filter" placeholder="${t("notes.filterPh")}" autocomplete="off" /></div>
           ${
             canEdit()
               ? `<div class="notes-tree-actions">
-                  <button class="btn sm primary" id="note-new" title="Nova nota (Alt+N)">${icon("plus", 14)}<span>Nota</span></button>
-                  <button class="btn sm ghost" id="folder-new" title="Nova pasta">${icon("folder", 14)}<span>Pasta</span></button>
+                  <button class="btn sm primary" id="note-new" title="${t("notes.newNoteTitle")}">${icon("plus", 14)}<span>${t("notes.newNoteBtn")}</span></button>
+                  <button class="btn sm ghost" id="folder-new" title="${t("notes.newFolderTitle")}">${icon("folder", 14)}<span>${t("notes.newFolderBtn")}</span></button>
                 </div>`
               : ""
           }
@@ -1511,14 +1530,14 @@ function renderNotesTree() {
             items
               .map(
                 (n) => `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}">
-                  <span class="grow">${escHtml(n.title)}</span>${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="Alterações não salvas"></span>` : ""}</button>`,
+                  <span class="grow">${escHtml(n.title)}</span>${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="${t("notes.unsaved")}"></span>` : ""}</button>`,
               )
-              .join("") || `<div class="tree-empty">Pasta vazia</div>`
+              .join("") || `<div class="tree-empty">${t("notes.emptyFolder")}</div>`
           }
         </div>
       </div>`;
       })
-      .join("") || `<div class="tree-empty">Nada encontrado para “${escHtml(notes.filter)}”.</div>`;
+      .join("") || `<div class="tree-empty">${t("notes.nothingFound", { query: escHtml(notes.filter) })}</div>`;
   loadIcons(box);
 }
 
@@ -1534,12 +1553,12 @@ function renderNotesEmpty() {
   const main = document.getElementById("note-main");
   main.innerHTML = `
     <div class="results-empty notes-empty">
-      <div class="results-empty-title">${canEdit() ? "Crie sua primeira nota" : "Nenhuma nota ainda"}</div>
+      <div class="results-empty-title">${canEdit() ? t("notes.firstNote") : t("notes.noneYet")}</div>
       ${
         canEdit()
-          ? `Tudo o que o time escreve aqui vira, na hora, base de conhecimento para os agentes.
-             <div class="template-pick">${NOTE_TEMPLATES.map((t) => `<button class="btn" type="button" data-template="${t.id}">${escHtml(t.label)}</button>`).join("")}</div>`
-          : "Peça a um editor ou admin para criar as primeiras notas."
+          ? `${t("notes.emptyBody")}
+             <div class="template-pick">${noteTemplates().map((tpl) => `<button class="btn" type="button" data-template="${tpl.id}">${escHtml(tpl.label)}</button>`).join("")}</div>`
+          : t("notes.askEditor")
       }
     </div>`;
   main.querySelectorAll("[data-template]").forEach((b) => b.addEventListener("click", () => openNewNoteModal(b.dataset.template)));
@@ -1551,9 +1570,9 @@ async function openNote(id) {
   if (notes.current?.id === id) return;
   if (notes.current && notes.dirty && !(await saveNote())) {
     const leave = await uiConfirm({
-      title: "Não foi possível salvar",
-      message: "Suas alterações continuam guardadas como rascunho neste navegador. Trocar de nota mesmo assim?",
-      confirmLabel: "Trocar mesmo assim",
+      title: t("notes.saveFailedTitle"),
+      message: t("notes.switchAnywayMsg"),
+      confirmLabel: t("notes.switchAnyway"),
     });
     if (!leave) return;
   }
@@ -1561,7 +1580,7 @@ async function openNote(id) {
   try {
     note = await api.get(`/notes/${id}`);
   } catch (err) {
-    await uiError("Não foi possível abrir a nota", err);
+    await uiError(t("notes.openFailed"), err);
     return;
   }
   notes.current = note;
@@ -1581,16 +1600,16 @@ function renderNoteMain() {
   const editable = canEdit();
   main.innerHTML = `
     <div class="note-head">
-      <input class="note-title" id="note-title" value="${escHtml(n.title)}" placeholder="Sem título" ${editable ? "" : "readonly"} />
+      <input class="note-title" id="note-title" value="${escHtml(n.title)}" placeholder="${t("notes.untitled")}" ${editable ? "" : "readonly"} />
       <div class="note-actions">
         <span class="save-state" id="save-state"></span>
-        <button class="btn sm ghost ${notes.side === "related" ? "active" : ""}" type="button" data-side="related">${icon("link", 14)}<span>Conexões</span></button>
-        <button class="btn sm ghost ${notes.side === "history" ? "active" : ""}" type="button" data-side="history">${icon("history", 14)}<span>Histórico</span></button>
+        <button class="btn sm ghost ${notes.side === "related" ? "active" : ""}" type="button" data-side="related">${icon("link", 14)}<span>${t("notes.connections")}</span></button>
+        <button class="btn sm ghost ${notes.side === "history" ? "active" : ""}" type="button" data-side="history">${icon("history", 14)}<span>${t("notes.history")}</span></button>
         ${
           editable
-            ? `<button class="icon-btn" type="button" id="note-move" title="Mover para outra pasta">${icon("folder-input", 16)}</button>
-               <button class="icon-btn danger" type="button" id="note-archive" title="Arquivar nota">${icon("archive", 16)}</button>
-               <button class="btn sm primary" type="button" id="note-save" title="Salvar (Ctrl+S)">${icon("save", 14)}<span>Salvar</span></button>`
+            ? `<button class="icon-btn" type="button" id="note-move" title="${t("notes.moveTitle")}">${icon("folder-input", 16)}</button>
+               <button class="icon-btn danger" type="button" id="note-archive" title="${t("notes.archiveTitle")}">${icon("archive", 16)}</button>
+               <button class="btn sm primary" type="button" id="note-save" title="${t("notes.saveTitle")}">${icon("save", 14)}<span>${t("notes.save")}</span></button>`
             : ""
         }
       </div>
@@ -1614,8 +1633,8 @@ function renderNoteMain() {
         height: "100%",
         initialEditType: "wysiwyg",
         previewStyle: "vertical",
-        language: "pt-BR",
-        placeholder: "Escreva aqui. Cite outra nota com [[Título]] para ligá-las.",
+        language: locale(),
+        placeholder: t("notes.editorPh"),
       })
     : toastui.Editor.factory({ ...common, viewer: true });
   if (editable) {
@@ -1638,7 +1657,7 @@ function renderNoteMain() {
 function renderVersionLine() {
   const n = notes.current;
   const box = document.getElementById("note-version");
-  if (box) box.textContent = `v${n.version} · atualizada ${fmtAgo(n.updated_at)}${n.updated_by ? ` por ${n.updated_by.replace(/^dash:/, "")}` : ""}`;
+  if (box) box.textContent = t("notes.versionLine", { version: n.version, ago: fmtAgo(n.updated_at) }) + (n.updated_by ? t("notes.versionBy", { name: n.updated_by.replace(/^dash:/, "") }) : "");
 }
 
 function renderTags() {
@@ -1647,8 +1666,8 @@ function renderTags() {
   const editable = canEdit();
   box.innerHTML =
     notes.tags
-      .map((t, i) => `<span class="chip tag-chip">#${escHtml(t)}${editable ? `<button type="button" data-tag-del="${i}" title="Remover tag">×</button>` : ""}</span>`)
-      .join("") + (editable ? `<input type="text" id="tag-add" placeholder="${notes.tags.length ? "+ tag" : "Adicionar tag…"}" />` : "");
+      .map((tag, i) => `<span class="chip tag-chip">#${escHtml(tag)}${editable ? `<button type="button" data-tag-del="${i}" title="${t("notes.removeTag")}">×</button>` : ""}</span>`)
+      .join("") + (editable ? `<input type="text" id="tag-add" placeholder="${notes.tags.length ? "+ tag" : t("notes.addTag")}" />` : "");
   if (!editable) return;
   const input = box.querySelector("#tag-add");
   input.addEventListener("keydown", (e) => {
@@ -1712,13 +1731,13 @@ function setSaveState(kind) {
   const box = document.getElementById("save-state");
   if (!box) return;
   const labels = {
-    saved: `Salvo · v${notes.current?.version}`,
-    dirty: "Alterações não salvas",
-    saving: "Salvando…",
-    error: "Erro ao salvar",
+    saved: t("save.saved", { version: notes.current?.version }),
+    dirty: t("save.dirty"),
+    saving: t("save.saving"),
+    error: t("save.error"),
   };
   box.className = `save-state ${kind}`;
-  box.textContent = canEdit() ? labels[kind] : "Somente leitura";
+  box.textContent = canEdit() ? labels[kind] : t("save.readOnly");
 }
 
 // Salva no banco (gera versão). Devolve true se não sobrou nada pendente.
@@ -1753,10 +1772,10 @@ async function saveNote(force = false) {
     if (err.status === 409 && err.detail?.current_version) {
       notes.saving = false;
       const overwrite = await uiDialog({
-        title: "Esta nota mudou enquanto você editava",
-        message: `${err.detail.message} Salvar a sua versão por cima, ou descartar suas alterações e carregar a versão nova?`,
-        confirmLabel: "Salvar a minha por cima",
-        cancelLabel: "Carregar a versão nova",
+        title: t("notes.conflictTitle"),
+        message: t("notes.conflictMsg", { message: err.detail.message }),
+        confirmLabel: t("notes.conflictOverwrite"),
+        cancelLabel: t("notes.conflictReload"),
         tone: "danger",
       });
       if (overwrite) return saveNote(err.detail.current_version);
@@ -1765,7 +1784,7 @@ async function saveNote(force = false) {
       await openNote(n.id);
       return true;
     }
-    await uiError("Não foi possível salvar a nota", err);
+    await uiError(t("notes.saveNoteFailed"), err);
     return false;
   } finally {
     notes.saving = false;
@@ -1783,11 +1802,9 @@ async function offerDraftRecovery() {
   }
   const stale = draft.base_version !== n.version;
   const recover = await uiConfirm({
-    title: "Recuperar rascunho não salvo?",
-    message:
-      `Há alterações desta nota guardadas neste navegador (${fmtAgo(draft.at)}) que não foram salvas.` +
-      (stale ? ` Atenção: a nota foi salva por outra pessoa depois disso (agora está na v${n.version}).` : ""),
-    confirmLabel: "Recuperar rascunho",
+    title: t("draft.title"),
+    message: t("draft.msg", { ago: fmtAgo(draft.at) }) + (stale ? t("draft.stale", { version: n.version }) : ""),
+    confirmLabel: t("draft.recover"),
   });
   if (!recover) {
     store.del(DRAFT_PREFIX + n.id);
@@ -1810,7 +1827,7 @@ function collectionOptions(selected) {
 
 async function openNewNoteModal(templateId = "blank") {
   if (!notes.tree.collections.length) {
-    await uiAlert("Crie uma pasta primeiro", "As notas ficam dentro de pastas (coleções). Use “Pasta” para criar a primeira.");
+    await uiAlert(t("notes.needFolderTitle"), t("notes.needFolderMsg"));
     return;
   }
   document.getElementById("note-new-modal")?.remove();
@@ -1818,29 +1835,29 @@ async function openNewNoteModal(templateId = "blank") {
   holder.innerHTML = modalShell({
     id: "note-new",
     iconName: "notebook-pen",
-    title: "Nova nota",
-    subtitle: "Ela vira conhecimento dos agentes assim que for criada.",
-    submitLabel: "Criar nota",
+    title: t("notes.new"),
+    subtitle: t("notes.newSub"),
+    submitLabel: t("notes.create"),
     width: 640,
     body: `
       <div class="create-grid">
         <label class="form-field">
-          <span class="form-label">Título</span>
-          <input class="input" id="nn-title" placeholder="ex.: Cliente Acme — perfil" required />
+          <span class="form-label">${t("notes.titleLabel")}</span>
+          <input class="input" id="nn-title" placeholder="${t("notes.titlePh")}" required />
         </label>
         <label class="form-field">
-          <span class="form-label">Pasta</span>
+          <span class="form-label">${t("notes.folder")}</span>
           <select class="input" id="nn-collection">${collectionOptions(notes.current?.collection || notes.tree.collections[0].name)}</select>
         </label>
       </div>
       <div class="form-field">
-        <span class="form-label">Modelo</span>
+        <span class="form-label">${t("notes.template")}</span>
         <div class="scope-grid two">
-          ${NOTE_TEMPLATES.map(
-            (t) => `
+          ${noteTemplates().map(
+            (tpl) => `
             <label class="scope-option">
-              <input type="radio" name="nn-template" value="${t.id}" ${t.id === templateId ? "checked" : ""} />
-              <span><span>${escHtml(t.label)}</span><span class="muted">${escHtml(t.desc)}</span></span>
+              <input type="radio" name="nn-template" value="${tpl.id}" ${tpl.id === templateId ? "checked" : ""} />
+              <span><span>${escHtml(tpl.label)}</span><span class="muted">${escHtml(tpl.desc)}</span></span>
             </label>`,
           ).join("")}
         </div>
@@ -1853,7 +1870,7 @@ async function openNewNoteModal(templateId = "blank") {
   modal.querySelector("#note-new-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const title = modal.querySelector("#nn-title").value.trim();
-    const template = NOTE_TEMPLATES.find((t) => t.id === modal.querySelector("input[name=nn-template]:checked").value);
+    const template = noteTemplates().find((tpl) => tpl.id === modal.querySelector("input[name=nn-template]:checked").value);
     const body = {
       collection: modal.querySelector("#nn-collection").value,
       title,
@@ -1864,9 +1881,9 @@ async function openNewNoteModal(templateId = "blank") {
       if (!created.created && created.reason === "duplicate_suspected") {
         const sim = created.similar_document;
         const go = await uiConfirm({
-          title: "Já existe uma nota parecida",
-          message: `“${sim.title}” tem conteúdo muito parecido (${Math.round(sim.similarity * 100)}%). Criar mesmo assim?`,
-          confirmLabel: "Criar mesmo assim",
+          title: t("notes.duplicateTitle"),
+          message: t("notes.duplicateMsg", { title: sim.title, pct: Math.round(sim.similarity * 100) }),
+          confirmLabel: t("notes.createAnyway"),
         });
         if (!go) return;
         created = await api.post("/notes", { ...body, force: true });
@@ -1878,7 +1895,7 @@ async function openNewNoteModal(templateId = "blank") {
       await openNote(created.document_id);
       notes.editor?.focus?.();
     } catch (err) {
-      await uiError("Não foi possível criar a nota", err);
+      await uiError(t("notes.createFailed"), err);
     }
   });
   setOpen(true);
@@ -1890,18 +1907,18 @@ async function openNewFolderModal() {
   holder.innerHTML = modalShell({
     id: "folder-new",
     iconName: "folder",
-    title: "Nova pasta",
-    subtitle: "Pastas organizam as notas e definem o que cada agente pode acessar.",
-    submitLabel: "Criar pasta",
+    title: t("folders.new"),
+    subtitle: t("folders.newSub"),
+    submitLabel: t("folders.create"),
     width: 520,
     body: `
       <label class="form-field">
-        <span class="form-label">Nome</span>
-        <input class="input" id="nf-name" placeholder="ex.: comercial, clientes, produto" required />
+        <span class="form-label">${t("common.name")}</span>
+        <input class="input" id="nf-name" placeholder="${t("folders.namePh")}" required />
       </label>
       <label class="form-field">
-        <span class="form-label">Descrição <span class="muted">(opcional)</span></span>
-        <input class="input" id="nf-desc" placeholder="O que entra nesta pasta" />
+        <span class="form-label">${t("folders.desc")} <span class="muted">${t("common.optional")}</span></span>
+        <input class="input" id="nf-desc" placeholder="${t("folders.descPh")}" />
       </label>`,
   });
   document.body.appendChild(holder.firstElementChild);
@@ -1919,7 +1936,7 @@ async function openNewFolderModal() {
       modal.remove();
       await loadNotesTree();
     } catch (err) {
-      await uiError("Não foi possível criar a pasta", err);
+      await uiError(t("folders.createFailed"), err);
     }
   });
   setOpen(true);
@@ -1933,14 +1950,14 @@ async function openMoveNoteModal() {
   holder.innerHTML = modalShell({
     id: "note-move",
     iconName: "folder-input",
-    title: "Mover nota",
-    subtitle: `“${escHtml(n.title)}” sai de <strong>${escHtml(n.collection)}</strong>.`,
-    submitLabel: "Mover",
+    title: t("move.title"),
+    subtitle: t("move.sub", { title: escHtml(n.title), folder: escHtml(n.collection) }),
+    submitLabel: t("move.submit"),
     submitIcon: "folder-input",
     width: 480,
     body: `
       <label class="form-field">
-        <span class="form-label">Para a pasta</span>
+        <span class="form-label">${t("move.to")}</span>
         <select class="input" id="nm-collection">${collectionOptions(n.collection)}</select>
       </label>`,
   });
@@ -1959,7 +1976,7 @@ async function openMoveNoteModal() {
       await loadNotesTree();
       renderNoteMain();
     } catch (err) {
-      await uiError("Não foi possível mover a nota", err);
+      await uiError(t("move.failed"), err);
     }
   });
   setOpen(true);
@@ -1968,9 +1985,9 @@ async function openMoveNoteModal() {
 async function archiveCurrentNote() {
   const n = notes.current;
   const ok = await uiConfirm({
-    title: "Arquivar nota?",
-    message: `“${n.title}” some da lista, da busca e dos agentes. O histórico é mantido e um admin pode recuperá-la.`,
-    confirmLabel: "Arquivar",
+    title: t("archive.title"),
+    message: t("archive.msg", { title: n.title }),
+    confirmLabel: t("archive.confirm"),
     tone: "danger",
   });
   if (!ok) return;
@@ -1986,7 +2003,7 @@ async function archiveCurrentNote() {
     if (notes.tree.notes.length) await openNote(notes.tree.notes[0].id);
     else renderNotesEmpty();
   } catch (err) {
-    await uiError("Não foi possível arquivar", err);
+    await uiError(t("archive.failed"), err);
   }
 }
 
@@ -1998,31 +2015,31 @@ async function renderNoteSide(kind) {
   side.classList.toggle("hidden", !kind);
   if (!kind || !notes.current) return;
   const n = notes.current;
-  side.innerHTML = `<div class="muted">Carregando…</div>`;
+  side.innerHTML = `<div class="muted">${t("common.loading")}</div>`;
   if (kind === "related") {
     let rel;
     try {
       rel = await api.get(`/notes/${n.id}/related`);
     } catch {
-      side.innerHTML = `<div class="muted">Não foi possível carregar as conexões.</div>`;
+      side.innerHTML = `<div class="muted">${t("side.relatedFailed")}</div>`;
       return;
     }
     const item = (d, extra = "") =>
       `<button class="side-item" type="button" data-open-note="${d.document_id}"><span class="dot" style="background:${colorFor(d.collection)}"></span><span class="grow">${escHtml(d.title)}</span>${extra}</button>`;
     side.innerHTML = `
-      <div class="side-head"><h3>${icon("link", 15)} Conexões</h3>
-        ${state.user?.role === "admin" ? `<button class="btn sm ghost" type="button" id="side-connect">${icon("plus", 13)}<span>Conectar a…</span></button>` : ""}
+      <div class="side-head"><h3>${icon("link", 15)} ${t("notes.connections")}</h3>
+        ${state.user?.role === "admin" ? `<button class="btn sm ghost" type="button" id="side-connect">${icon("plus", 13)}<span>${t("side.connectTo")}</span></button>` : ""}
       </div>
-      <div class="links-label">Links (${rel.links.length})</div>
+      <div class="links-label">${t("side.links", { count: rel.links.length })}</div>
       ${
         rel.links
-          .map((l) => (l.pending ? `<div class="side-item pending">${escHtml(l.target_title)} <span class="muted">· ainda não existe</span></div>` : item(l)))
-          .join("") || `<div class="muted links-empty">Escreva [[Título]] no texto para ligar outra nota.</div>`
+          .map((l) => (l.pending ? `<div class="side-item pending">${escHtml(l.target_title)} <span class="muted">${t("side.notYet")}</span></div>` : item(l)))
+          .join("") || `<div class="muted links-empty">${t("side.linksEmpty")}</div>`
       }
-      <div class="links-label">Backlinks (${rel.backlinks.length})</div>
-      ${rel.backlinks.map((b) => item(b)).join("") || `<div class="muted links-empty">Nenhuma nota aponta para esta.</div>`}
-      <div class="links-label">Parecidas (${rel.semantic.length})</div>
-      ${rel.semantic.map((s) => item(s, `<span class="muted">${Math.round(s.similarity * 100)}%</span>`)).join("") || `<div class="muted links-empty">Nenhuma ainda.</div>`}`;
+      <div class="links-label">${t("side.backlinks", { count: rel.backlinks.length })}</div>
+      ${rel.backlinks.map((b) => item(b)).join("") || `<div class="muted links-empty">${t("side.backlinksEmpty")}</div>`}
+      <div class="links-label">${t("side.similar", { count: rel.semantic.length })}</div>
+      ${rel.semantic.map((s) => item(s, `<span class="muted">${Math.round(s.similarity * 100)}%</span>`)).join("") || `<div class="muted links-empty">${t("side.similarEmpty")}</div>`}`;
     side.querySelector("#side-connect")?.addEventListener("click", () =>
       openConnectModal({ document_id: n.id, title: n.title }, null, () => renderNoteSide("related")),
     );
@@ -2031,18 +2048,18 @@ async function renderNoteSide(kind) {
     try {
       versions = await api.get(`/notes/${n.id}/versions`);
     } catch {
-      side.innerHTML = `<div class="muted">Não foi possível carregar o histórico.</div>`;
+      side.innerHTML = `<div class="muted">${t("side.historyFailed")}</div>`;
       return;
     }
     side.innerHTML = `
-      <div class="side-head"><h3>${icon("history", 15)} Histórico</h3></div>
+      <div class="side-head"><h3>${icon("history", 15)} ${t("notes.history")}</h3></div>
       ${versions
         .map(
           (v) => `
         <button class="side-version ${v.version === n.version ? "current" : ""}" type="button" data-version="${v.version}">
           <span class="idx">v${v.version}</span>
           <span class="grow">${escHtml(v.change_note || "")}<span class="muted">${escHtml((v.changed_by || "—").replace(/^dash:/, ""))} · ${fmtAgo(v.created_at)}</span></span>
-          ${v.version === n.version ? `<span class="chip subtle">atual</span>` : ""}
+          ${v.version === n.version ? `<span class="chip subtle">${t("side.current")}</span>` : ""}
         </button>`,
         )
         .join("")}`;
@@ -2058,7 +2075,7 @@ async function openVersionPreview(version) {
   try {
     v = await api.get(`/notes/${n.id}/versions/${version}`);
   } catch (err) {
-    await uiError("Não foi possível abrir a versão", err);
+    await uiError(t("version.openFailed"), err);
     return;
   }
   const isCurrent = version === n.version;
@@ -2069,7 +2086,7 @@ async function openVersionPreview(version) {
     iconName: "history",
     title: `${escHtml(v.title)} — v${version}`,
     subtitle: `${escHtml((v.changed_by || "—").replace(/^dash:/, ""))} · ${fmtDate(v.created_at)}${v.change_note ? ` · “${escHtml(v.change_note)}”` : ""}`,
-    submitLabel: isCurrent ? "Fechar" : "Restaurar esta versão",
+    submitLabel: isCurrent ? t("common.close") : t("version.restore"),
     submitIcon: isCurrent ? "check" : "refresh-cw",
     width: 820,
     body: `<div class="version-viewer" id="version-viewer"></div>`,
@@ -2088,9 +2105,9 @@ async function openVersionPreview(version) {
     }
     if (notes.dirty) {
       const discard = await uiConfirm({
-        title: "Descartar alterações não salvas?",
-        message: "Restaurar substitui o conteúdo atual pela v" + version + ". Suas alterações não salvas serão perdidas.",
-        confirmLabel: "Restaurar mesmo assim",
+        title: t("version.discardTitle"),
+        message: t("version.discardMsg", { version }),
+        confirmLabel: t("version.restoreAnyway"),
         tone: "danger",
       });
       if (!discard) return;
@@ -2106,7 +2123,7 @@ async function openVersionPreview(version) {
       await loadNotesTree();
       await openNote(n.id);
     } catch (err) {
-      await uiError("Não foi possível restaurar", err);
+      await uiError(t("version.restoreFailed"), err);
     }
   });
   setOpen(true);
@@ -2119,10 +2136,11 @@ async function openVersionPreview(version) {
 // tooltip por marca e alternância "Tabela" em todo gráfico (o tooltip nunca é o único caminho).
 
 const PERIODS = [7, 30, 90];
-const nf = new Intl.NumberFormat("pt-BR");
-const nfCompact = new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 });
+// formatadores seguem o idioma atual (criados na hora: a troca de idioma vale sem recarregar)
+const nf = { format: (v) => new Intl.NumberFormat(locale()).format(v) };
+const nfCompact = { format: (v) => new Intl.NumberFormat(locale(), { notation: "compact", maximumFractionDigits: 1 }).format(v) };
 const fmtDay = (iso, opts = { day: "numeric", month: "short" }) =>
-  new Date(`${iso}T12:00:00`).toLocaleDateString("pt-BR", opts).replace(".", "");
+  new Date(`${iso}T12:00:00`).toLocaleDateString(locale(), opts).replace(".", "");
 const actorName = (a) => (a || "—").replace(/^dash:/, "");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -2219,11 +2237,11 @@ function drawColumns(box, points, { valueName }) {
   const barW = Math.max(2, Math.min(24, slot - 2)); // 2px de superfície entre colunas vizinhas
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img" });
 
-  for (const t of ticks) {
-    const y = pad.top + plotH - (t / top) * plotH;
-    svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: y, y2: y, class: t === 0 ? "viz-axis" : "viz-gridline" }));
+  for (const tick of ticks) {
+    const y = pad.top + plotH - (tick / top) * plotH;
+    svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: y, y2: y, class: tick === 0 ? "viz-axis" : "viz-gridline" }));
     const label = svgEl("text", { x: pad.left - 8, y: y + 4, class: "viz-tick", "text-anchor": "end" });
-    label.textContent = nf.format(t);
+    label.textContent = nf.format(tick);
     svg.append(label);
   }
   // rótulos do eixo X esparsos: ~6 ao longo do período
@@ -2316,7 +2334,7 @@ function meter(label, value, total, hint) {
       <div class="meter-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${escHtml(label)}">
         <span style="width:${pct}%"></span>
       </div>
-      <div class="meter-foot muted">${nf.format(value)} de ${nf.format(total)} ${escHtml(hint)}</div>
+      <div class="meter-foot muted">${t("meter.foot", { value: nf.format(value), total: nf.format(total), hint: escHtml(hint) })}</div>
     </div>`;
 }
 
@@ -2327,7 +2345,7 @@ function chartCard(id, title, subtitle, { wide = false } = {}) {
     <section class="viz-card ${wide ? "wide" : ""}" id="${id}">
       <header class="viz-card-head">
         <div class="grow"><h2>${title}</h2>${subtitle ? `<span class="muted">${subtitle}</span>` : ""}</div>
-        <button class="btn sm ghost" type="button" data-table-toggle="${id}" title="Ver os dados em tabela">${icon("table-2", 13)}<span>Tabela</span></button>
+        <button class="btn sm ghost" type="button" data-table-toggle="${id}" title="${t("chart.tableTitle")}">${icon("table-2", 13)}<span>${t("chart.table")}</span></button>
       </header>
       <div class="viz-body"></div>
       <div class="viz-table hidden"></div>
@@ -2344,30 +2362,30 @@ function overviewTemplate() {
   return `
     <section class="page overview-page">
       <header class="page-header">
-        <h1>${icon("layout-dashboard", 18)} Painel</h1>
-        <span class="sub">Como a base de conhecimento está crescendo e sendo usada</span>
+        <h1>${icon("layout-dashboard", 18)} ${t("overview.title")}</h1>
+        <span class="sub">${t("overview.sub")}</span>
       </header>
       <div class="overview-col" id="overview">
         <div class="overview-filters">
-          <span class="filter-label">${icon("calendar", 14)}Período</span>
-          <div class="period-seg" id="period-seg" role="radiogroup" aria-label="Período">
-            ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${d === days}" data-days="${d}" class="${d === days ? "active" : ""}">${d} dias</button>`).join("")}
+          <span class="filter-label">${icon("calendar", 14)}${t("overview.period")}</span>
+          <div class="period-seg" id="period-seg" role="radiogroup" aria-label="${t("overview.period")}">
+            ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${d === days}" data-days="${d}" class="${d === days ? "active" : ""}">${t("overview.periodDays", { count: d })}</button>`).join("")}
           </div>
           <span class="grow"></span>
           <span class="muted overview-updated" id="overview-updated"></span>
-          <button class="icon-btn overview-refresh" type="button" id="overview-refresh" title="Atualizar agora">${icon("refresh-cw", 15)}</button>
+          <button class="icon-btn overview-refresh" type="button" id="overview-refresh" title="${t("overview.refresh")}">${icon("refresh-cw", 15)}</button>
         </div>
         <div class="kpis" id="kpis"></div>
         <div class="viz-grid">
-          ${chartCard("viz-activity", "Atividade", `Edições por dia nos últimos ${days} dias`, { wide: true })}
-          ${chartCard("viz-collections", "Notas por pasta", "Notas ativas em cada pasta")}
-          ${chartCard("viz-contributors", "Quem mais edita", `Edições nos últimos ${days} dias`)}
+          ${chartCard("viz-activity", t("overview.activity"), t("overview.activitySub", { days }), { wide: true })}
+          ${chartCard("viz-collections", t("overview.byFolder"), t("overview.byFolderSub"))}
+          ${chartCard("viz-contributors", t("overview.contributors"), t("overview.contributorsSub", { days }))}
           <section class="viz-card" id="viz-health">
-            <header class="viz-card-head"><div class="grow"><h2>Saúde da base</h2><span class="muted">O que deixa as notas mais úteis para o time e os agentes</span></div></header>
+            <header class="viz-card-head"><div class="grow"><h2>${t("overview.health")}</h2><span class="muted">${t("overview.healthSub")}</span></div></header>
             <div class="viz-body"></div>
           </section>
           <section class="viz-card" id="viz-recent">
-            <header class="viz-card-head"><div class="grow"><h2>Atualizadas recentemente</h2><span class="muted">Clique para abrir a nota</span></div></header>
+            <header class="viz-card-head"><div class="grow"><h2>${t("overview.recent")}</h2><span class="muted">${t("overview.recentSub")}</span></div></header>
             <div class="viz-body"></div>
           </section>
         </div>
@@ -2390,13 +2408,13 @@ async function renderOverview(main) {
   });
   main.querySelector("#overview-refresh").addEventListener("click", () => loadInsights());
   main.querySelector("#overview").addEventListener("click", (e) => {
-    const t = e.target.closest("[data-table-toggle]");
-    if (t) {
-      const card = document.getElementById(t.dataset.tableToggle);
+    const toggle = e.target.closest("[data-table-toggle]");
+    if (toggle) {
+      const card = document.getElementById(toggle.dataset.tableToggle);
       const showTable = card.querySelector(".viz-table").classList.toggle("hidden") === false;
       card.querySelector(".viz-body").classList.toggle("hidden", showTable);
-      t.classList.toggle("active", showTable);
-      t.querySelector("span").textContent = showTable ? "Gráfico" : "Tabela";
+      toggle.classList.toggle("active", showTable);
+      toggle.querySelector("span").textContent = showTable ? t("chart.chart") : t("chart.table");
       return;
     }
     const open = e.target.closest("[data-open-note]");
@@ -2420,16 +2438,18 @@ async function loadInsights() {
   } catch (err) {
     root.classList.remove("loading");
     stopSpin();
-    await uiError("Não foi possível carregar o painel", err);
+    await uiError(t("overview.loadFailed"), err);
     return;
   }
   if (!document.getElementById("overview")) return;
   state.insights = data;
   root.classList.remove("loading");
   stopSpin();
-  document.getElementById("overview-updated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
-  root.querySelector("#viz-activity .muted").textContent = `Edições por dia nos últimos ${data.days} dias`;
-  root.querySelector("#viz-contributors .muted").textContent = `Edições nos últimos ${data.days} dias`;
+  document.getElementById("overview-updated").textContent = t("overview.updatedAt", {
+    time: new Date().toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }),
+  });
+  root.querySelector("#viz-activity .muted").textContent = t("overview.activitySub", { days: data.days });
+  root.querySelector("#viz-contributors .muted").textContent = t("overview.contributorsSub", { days: data.days });
   renderKpis(data);
   renderOverviewCharts();
   renderHealth(data);
@@ -2437,19 +2457,24 @@ async function loadInsights() {
 }
 
 function renderKpis(d) {
-  const t = d.totals;
+  const totals = d.totals;
   const edits = d.activity.reduce((s, p) => s + p.edits, 0);
   const delta = d.created.current - d.created.previous;
   const newCount = d.created.current;
-  const notesSub = newCount ? `+${nf.format(newCount)} em ${d.days} dias` : `nenhuma nova em ${d.days} dias`;
-  const notesTip = `${nf.format(newCount)} nos últimos ${d.days} dias · ${nf.format(d.created.previous)} nos ${d.days} dias anteriores`;
+  const notesSub = newCount ? t("kpi.notesNew", { count: nf.format(newCount), days: d.days }) : t("kpi.notesNone", { days: d.days });
+  const notesTip = t("kpi.notesTip", { count: nf.format(newCount), previous: nf.format(d.created.previous), days: d.days });
   const tiles = [
-    { label: "Notas", iconName: "notebook-pen", value: t.documents, sub: notesSub, subTip: notesTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
-    { label: `Edições · ${d.days} dias`, iconName: "activity", value: edits, spark: d.activity.map((p) => p.edits) },
-    { label: "Pastas", iconName: "folder", value: t.collections },
-    { label: "Conexões", iconName: "link", value: t.links, sub: t.pending_links ? `${nf.format(t.pending_links)} pendente(s)` : "links entre notas" },
-    { label: "Agents", iconName: "bot", value: t.agents, sub: `${nf.format(t.memories)} memória(s)` },
-    { label: "Trechos", iconName: "file-text", value: t.chunks, sub: "indexados para busca", tech: true },
+    { label: t("kpi.notes"), iconName: "notebook-pen", value: totals.documents, sub: notesSub, subTip: notesTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
+    { label: t("kpi.edits", { days: d.days }), iconName: "activity", value: edits, spark: d.activity.map((p) => p.edits) },
+    { label: t("kpi.folders"), iconName: "folder", value: totals.collections },
+    {
+      label: t("kpi.links"),
+      iconName: "link",
+      value: totals.links,
+      sub: totals.pending_links ? t("kpi.pending", { count: nf.format(totals.pending_links) }) : t("kpi.linksSub"),
+    },
+    { label: t("kpi.agents"), iconName: "bot", value: totals.agents, sub: t("kpi.memories", { count: nf.format(totals.memories) }) },
+    { label: t("kpi.chunks"), iconName: "file-text", value: totals.chunks, sub: t("kpi.chunksSub"), tech: true },
   ];
   document.getElementById("kpis").innerHTML = tiles
     .map(
@@ -2474,49 +2499,49 @@ function renderOverviewCharts() {
   const activity = d.activity.map((p) => ({
     label: fmtDay(p.day),
     value: p.edits,
-    tip: `${fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" })}${p.created ? ` · ${p.created} nota(s) nova(s)` : ""}`,
+    tip: fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" }) + (p.created ? t("chart.newNotes", { count: p.created }) : ""),
   }));
   const card = (id) => document.querySelector(`#${id}`);
-  drawColumns(card("viz-activity").querySelector(".viz-body"), activity, { valueName: (v) => (v === 1 ? "edição" : "edições") });
+  drawColumns(card("viz-activity").querySelector(".viz-body"), activity, { valueName: (v) => t("unit.edit", { count: v }) });
   card("viz-activity").querySelector(".viz-table").innerHTML = dataTable(
-    ["Dia", "Edições", "Notas novas"],
+    [t("col.day"), t("col.edits"), t("col.newNotes")],
     d.activity.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), p.edits, p.created]),
   );
 
   drawBars(
     card("viz-collections").querySelector(".viz-body"),
     d.by_collection.map((c) => ({ label: c.name, value: c.documents, dot: colorFor(c.name) })),
-    { valueName: (v) => (v === 1 ? "nota" : "notas"), empty: "Nenhuma pasta ainda." },
+    { valueName: (v) => t("unit.note", { count: v }), empty: t("chart.noFolders") },
   );
   card("viz-collections").querySelector(".viz-table").innerHTML = dataTable(
-    ["Pasta", "Notas"],
+    [t("col.folder"), t("col.notes")],
     d.by_collection.map((c) => [c.name, c.documents]),
   );
 
   drawBars(
     card("viz-contributors").querySelector(".viz-body"),
     d.contributors.map((c) => ({ label: actorName(c.actor), value: c.edits })),
-    { valueName: (v) => (v === 1 ? "edição" : "edições"), empty: `Ninguém editou nos últimos ${d.days} dias.` },
+    { valueName: (v) => t("unit.edit", { count: v }), empty: t("chart.noEdits", { days: d.days }) },
   );
   card("viz-contributors").querySelector(".viz-table").innerHTML = dataTable(
-    ["Quem", "Edições"],
+    [t("col.who"), t("col.edits")],
     d.contributors.map((c) => [actorName(c.actor), c.edits]),
   );
 }
 
 function renderHealth(d) {
   const h = d.health;
-  const t = d.totals;
+  const totals = d.totals;
   document.querySelector("#viz-health .viz-body").innerHTML = `
     <div class="meters">
-      ${meter("Notas com tags", h.with_tags, h.documents, "notas têm ao menos uma tag")}
-      ${meter("Notas conectadas", h.with_links, h.documents, "notas têm link ou backlink")}
-      ${meter("Notas atualizadas nos últimos 90 dias", h.documents - h.stale, h.documents, "notas foram editadas há menos de 90 dias")}
+      ${meter(t("health.tags"), h.with_tags, h.documents, t("health.tagsHint"))}
+      ${meter(t("health.linked"), h.with_links, h.documents, t("health.linkedHint"))}
+      ${meter(t("health.fresh"), h.documents - h.stale, h.documents, t("health.freshHint"))}
     </div>
     <div class="health-facts">
-      <span>${icon("archive", 13)} ${nf.format(t.archived)} arquivada(s)</span>
-      <span>${icon("link", 13)} ${nf.format(t.pending_links)} link(s) pendente(s)</span>
-      <span>${icon("users", 13)} ${nf.format(t.users)} pessoa(s) com acesso</span>
+      <span>${icon("archive", 13)} ${t("health.archived", { count: nf.format(totals.archived) })}</span>
+      <span>${icon("link", 13)} ${t("health.pending", { count: nf.format(totals.pending_links) })}</span>
+      <span>${icon("users", 13)} ${t("health.people", { count: nf.format(totals.users) })}</span>
     </div>`;
   loadIcons(document.querySelector("#viz-health"));
 }
@@ -2534,7 +2559,7 @@ function renderRecent(d) {
         <span class="muted recent-when">${fmtAgo(n.updated_at)}</span>
       </button>`,
       )
-      .join("") || `<div class="viz-empty">Nenhuma nota ainda.</div>`;
+      .join("") || `<div class="viz-empty">${t("overview.recentEmpty")}</div>`;
 }
 
 const onOverviewResize = debounce(() => state.screen === "overview" && renderOverviewCharts(), 150);
@@ -2548,37 +2573,37 @@ function graphTemplate() {
     <div class="split">
       <section class="page">
         <header class="page-header">
-          <h1>${icon("network", 18)} Grafo da base</h1>
+          <h1>${icon("network", 18)} ${t("graph.title")}</h1>
           <span class="sub" id="graph-sub"></span>
         </header>
         <div class="toolbar">
-          <div class="field">${icon("folder")}<label for="f-collection">Collection</label><select id="f-collection"><option value="">Todas</option></select></div>
-          <div class="field">${icon("sliders-horizontal")}<label for="f-sim">Similaridade ≥ <span id="f-sim-val" class="mono">${state.minSimilarity.toFixed(2)}</span></label>
+          <div class="field">${icon("folder")}<label for="f-collection">${t("graph.collection")}</label><select id="f-collection"><option value="">${t("graph.all")}</option></select></div>
+          <div class="field">${icon("sliders-horizontal")}<label for="f-sim">${t("graph.similarity")} <span id="f-sim-val" class="mono">${state.minSimilarity.toFixed(2)}</span></label>
             <input type="range" id="f-sim" min="0" max="0.95" step="0.05" value="${state.minSimilarity}" />
           </div>
           <div class="field tech"><label for="f-k">Top-k</label>
             <select id="f-k">${[1, 2, 3, 5, 8, 12, 20].map((k) => `<option ${k === state.k ? "selected" : ""}>${k}</option>`).join("")}</select>
           </div>
           <div class="seg tech" id="f-level">
-            <button data-level="documents" class="${state.level === "documents" ? "active" : ""}">Documentos</button>
-            <button data-level="chunks" class="${state.level === "chunks" ? "active" : ""}">Chunks</button>
+            <button data-level="documents" class="${state.level === "documents" ? "active" : ""}">${t("graph.documents")}</button>
+            <button data-level="chunks" class="${state.level === "chunks" ? "active" : ""}">${t("graph.chunks")}</button>
           </div>
-          <button class="btn sm hidden" id="hl-clear">${icon("check")}<span>Limpar destaque</span></button>
+          <button class="btn sm hidden" id="hl-clear">${icon("check")}<span>${t("graph.clearHighlight")}</span></button>
           ${
             state.user?.role === "admin"
-              ? `<button class="btn sm ghost" id="connect-mode" title="Clique na origem e depois no destino para ligar dois documentos">${icon("link", 14)}<span>Conectar</span></button>`
+              ? `<button class="btn sm ghost" id="connect-mode" title="${t("graph.connectTitle")}">${icon("link", 14)}<span>${t("graph.connect")}</span></button>`
               : ""
           }
         </div>
         <div class="graph-wrap" id="graph-wrap">
           <!-- o force-graph limpa o elemento em que é montado: overlays ficam fora de #graph-canvas -->
           <div class="graph-canvas" id="graph-canvas"></div>
-          <div class="empty-state" id="graph-empty">Carregando grafo…</div>
+          <div class="empty-state" id="graph-empty">${t("graph.loading")}</div>
           <div class="legend hidden" id="graph-legend"></div>
           <div class="graph-notice hidden" id="graph-notice" role="status"></div>
-          <div class="graph-hint hidden" id="graph-hint">Clique num nó para ver o documento · arraste para mover · role para zoom</div>
+          <div class="graph-hint hidden" id="graph-hint">${t("graph.hint")}</div>
           <div class="graph-zoom hidden" id="graph-zoom">
-            <button class="icon-btn" id="zoom-fit" title="Sincronizar e enquadrar">${icon("refresh-cw")}</button>
+            <button class="icon-btn" id="zoom-fit" title="${t("graph.sync")}">${icon("refresh-cw")}</button>
           </div>
         </div>
       </section>
@@ -2587,10 +2612,10 @@ function graphTemplate() {
 }
 
 function debounce(fn, ms) {
-  let t;
+  let timer;
   return (...args) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...args), ms);
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
   };
 }
 
@@ -2671,8 +2696,8 @@ async function explainMissingEdges(data, req) {
   const target = Math.floor(strongest * 20) / 20;
   const fmt = (v) => v.toFixed(2);
   notice.innerHTML = `
-    <span>Nenhuma similaridade ≥ ${fmt(state.minSimilarity)}. A mais forte é <strong>${fmt(strongest)}</strong>.</span>
-    <button class="btn sm" type="button" id="notice-lower">Mostrar a partir de ${fmt(target)}</button>`;
+    <span>${t("graph.noEdges", { min: fmt(state.minSimilarity), max: fmt(strongest) })}</span>
+    <button class="btn sm" type="button" id="notice-lower">${t("graph.showFrom", { value: fmt(target) })}</button>`;
   notice.classList.remove("hidden");
   notice.querySelector("#notice-lower").addEventListener("click", () => {
     state.minSimilarity = target;
@@ -2721,14 +2746,14 @@ async function loadGraph() {
       k: state.k,
     });
   } catch {
-    if (req === graphRequest) graphMessage("Não foi possível carregar o grafo.");
+    if (req === graphRequest) graphMessage(t("graph.loadFailed"));
     return;
   }
   // resposta atrasada de um filtro anterior: descarta
   if (req !== graphRequest || !document.getElementById("graph-wrap")) return;
   fillCollectionFilter(data.collections);
   if (!data.nodes.length) {
-    graphMessage("Nenhum documento indexado ainda. Ingeste documentos pela API/MCP para ver o grafo.");
+    graphMessage(t("graph.empty"));
     return;
   }
   drawGraph(data);
@@ -2767,7 +2792,7 @@ function fillCollectionFilter(collections) {
   const sel = document.getElementById("f-collection");
   const current = state.collection;
   sel.innerHTML =
-    `<option value="">Todas</option>` +
+    `<option value="">${t("graph.all")}</option>` +
     collections.map((c) => `<option value="${c.name}" ${c.name === current ? "selected" : ""}>${c.name} (${c.count})</option>`).join("");
 }
 
@@ -2831,7 +2856,7 @@ function drawGraph(data) {
   const highlight = state.highlightDocs && state.highlightDocs.size ? state.highlightDocs : null;
   const clearBtn = document.getElementById("hl-clear");
   clearBtn.classList.toggle("hidden", !highlight);
-  if (highlight) clearBtn.querySelector("span").textContent = `Limpar destaque (${highlight.size})`;
+  if (highlight) clearBtn.querySelector("span").textContent = t("graph.clearHighlightN", { count: highlight.size });
 
   const nodeKey = (n) => (state.level === "documents" ? n.id : n.document_id);
   const isHl = (n) => Boolean(highlight && highlight.has(nodeKey(n)));
@@ -2844,9 +2869,12 @@ function drawGraph(data) {
   const linkEdges = data.edges.filter((e) => e.kind === "link");
   const semanticEdges = data.edges.filter((e) => e.kind === "semantic");
   const visibleEdges = state.showSemantic ? data.edges : linkEdges;
-  document.getElementById("graph-sub").textContent =
-    `${nodes.length} nós · ${linkEdges.length} link(s) · ${semanticEdges.length} por similaridade · ` +
-    `nível ${state.level === "documents" ? "documentos" : "chunks"}`;
+  document.getElementById("graph-sub").textContent = t("graph.sub", {
+    nodes: nodes.length,
+    links: linkEdges.length,
+    semantic: semanticEdges.length,
+    level: state.level === "documents" ? t("graph.levelDocuments") : t("graph.levelChunks"),
+  });
 
   if (!state.graphInstance) state.graphInstance = createGraph(el);
   const g = state.graphInstance;
@@ -2911,10 +2939,10 @@ function drawGraph(data) {
     .linkWidth((l) => (l.kind === "link" ? 2.2 : Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8)))
     .linkLineDash((l) => (l.kind === "link" ? null : [4, 3]))
     .linkLabel((l) => {
-      const sim = l.similarity != null ? `similaridade ${Number(l.similarity).toFixed(2)}` : "";
+      const sim = l.similarity != null ? t("edge.similarity", { value: Number(l.similarity).toFixed(2) }) : "";
       if (l.kind !== "link") return sim;
-      const how = l.link_kinds?.includes("wikilink") ? "[[wikilink]]" : "link manual";
-      return [`Link explícito (${how})`, l.note ? `“${escHtml(l.note)}”` : "", sim].filter(Boolean).join("<br>");
+      const how = l.link_kinds?.includes("wikilink") ? "[[wikilink]]" : t("edge.manual");
+      return [t("edge.explicit", { how }), l.note ? `“${escHtml(l.note)}”` : "", sim].filter(Boolean).join("<br>");
     });
   // documentos ligados explicitamente ficam mais perto que os só parecidos
   g.d3Force("link")
@@ -2925,31 +2953,30 @@ function drawGraph(data) {
   g.graphData({ nodes, links: visibleEdges.map((e) => ({ ...e })) });
 
   const legend = document.getElementById("graph-legend");
-  const unit = state.level === "documents" ? "doc" : "trecho";
-  const plural = (n) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  const plural = (count) => t(state.level === "documents" ? "legend.docs" : "legend.chunks", { count });
   legend.innerHTML = `
-    <div class="legend-head">Coleções</div>
+    <div class="legend-head">${t("legend.collections")}</div>
     ${data.collections
       .map(
         (c) => `
       <button class="legend-row ${state.collection === c.name ? "active" : ""}" type="button" data-col="${escHtml(c.name)}"
-        title="${state.collection === c.name ? "Coleção filtrada" : "Clique para ver só esta coleção"}">
+        title="${state.collection === c.name ? t("legend.filtered") : t("legend.clickToFilter")}">
         <span class="dot" style="background:${colorFor(c.name)}"></span>
         <span class="legend-name">${escHtml(c.name)}</span>
         <span class="count">${plural(c.count)}</span>
       </button>`,
       )
       .join("")}
-    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>Ver todas as coleções</span></button>` : ""}
+    ${state.collection ? `<button class="legend-all" type="button" data-col="">${icon("x", 12)}<span>${t("legend.allCollections")}</span></button>` : ""}
     ${
       state.level === "documents"
-        ? `<div class="legend-head legend-sep">Conexões</div>
-      <div class="legend-edge"><span class="edge-swatch link"></span><span class="legend-name">Link explícito</span>
+        ? `<div class="legend-head legend-sep">${t("legend.connections")}</div>
+      <div class="legend-edge"><span class="edge-swatch link"></span><span class="legend-name">${t("legend.explicit")}</span>
         <span class="count">${linkEdges.length}</span></div>
       <button class="legend-edge toggle ${state.showSemantic ? "" : "off"}" type="button" data-toggle-semantic
-        title="${state.showSemantic ? "Ocultar" : "Mostrar"} as arestas de similaridade">
-        <span class="edge-swatch semantic"></span><span class="legend-name">Similaridade</span>
-        <span class="count">${state.showSemantic ? semanticEdges.length : "oculta"}</span></button>`
+        title="${state.showSemantic ? t("legend.hideSemantic") : t("legend.showSemantic")}">
+        <span class="edge-swatch semantic"></span><span class="legend-name">${t("legend.similarity")}</span>
+        <span class="count">${state.showSemantic ? semanticEdges.length : t("legend.hidden")}</span></button>`
         : ""
     }`;
   loadIcons(legend);
@@ -2961,7 +2988,7 @@ function drawGraph(data) {
 async function openDocumentPanel(docId) {
   const panel = document.getElementById("panel");
   panel.classList.remove("hidden");
-  panel.innerHTML = `<div class="muted">Carregando…</div>`;
+  panel.innerHTML = `<div class="muted">${t("common.loading")}</div>`;
   let doc, docLinks;
   try {
     [doc, docLinks] = await Promise.all([
@@ -2969,34 +2996,34 @@ async function openDocumentPanel(docId) {
       api.get(`/documents/${docId}/links`).catch(() => ({ links: [], backlinks: [] })),
     ]);
   } catch {
-    panel.innerHTML = `<div class="muted">Não foi possível carregar o documento.</div>`;
+    panel.innerHTML = `<div class="muted">${t("doc.loadFailed")}</div>`;
     return;
   }
   state.docPanelId = docId;
   panel.innerHTML = `
     <div class="panel-head">
       <h2>${escHtml(doc.title)}</h2>
-      <button class="icon-btn" id="panel-close" title="Fechar">${icon("x", 16)}</button>
+      <button class="icon-btn" id="panel-close" title="${t("common.close")}">${icon("x", 16)}</button>
     </div>
     <div class="chip"><span class="dot" style="background:${colorFor(doc.collection)}"></span>${escHtml(doc.collection)}</div>
     <dl class="kv">
-      <dt>Versão</dt><dd>v${doc.version} · ${doc.status === "active" ? "ativo" : "arquivado"}</dd>
-      <dt>Criado por</dt><dd>${escHtml(doc.created_by ?? "—")}</dd>
-      <dt>Atualizado</dt><dd>${fmtDate(doc.updated_at)}</dd>
-      ${doc.source ? `<dt>Fonte</dt><dd>${escHtml(doc.source)}</dd>` : ""}
-      ${doc.tags?.length ? `<dt>Tags</dt><dd>${doc.tags.map((t) => `<span class="chip">${escHtml(t)}</span>`).join(" ")}</dd>` : ""}
+      <dt>${t("doc.version")}</dt><dd>v${doc.version} · ${doc.status === "active" ? t("doc.active") : t("doc.archived")}</dd>
+      <dt>${t("doc.createdBy")}</dt><dd>${escHtml(doc.created_by ?? "—")}</dd>
+      <dt>${t("doc.updated")}</dt><dd>${fmtDate(doc.updated_at)}</dd>
+      ${doc.source ? `<dt>${t("doc.source")}</dt><dd>${escHtml(doc.source)}</dd>` : ""}
+      ${doc.tags?.length ? `<dt>${t("doc.tags")}</dt><dd>${doc.tags.map((tag) => `<span class="chip">${escHtml(tag)}</span>`).join(" ")}</dd>` : ""}
     </dl>
     ${linksSection(doc, docLinks)}
     <div class="section">
-      <h3>${icon("file-text")} Conteúdo</h3>
+      <h3>${icon("file-text")} ${t("doc.content")}</h3>
       <div class="doc-content">${escHtml(doc.content)}</div>
     </div>
     <div class="section">
-      <h3>${icon("folder")} Chunks (${doc.chunks.length})</h3>
-      ${doc.chunks.map((c) => `<div class="chunk-item"><span class="idx">#${c.chunk_index}</span>${c.word_count} palavras<p>${escHtml(c.content.slice(0, 140))}${c.content.length > 140 ? "…" : ""}</p></div>`).join("")}
+      <h3>${icon("folder")} ${t("doc.chunks", { count: doc.chunks.length })}</h3>
+      ${doc.chunks.map((c) => `<div class="chunk-item"><span class="idx">#${c.chunk_index}</span>${t("doc.words", { count: c.word_count })}<p>${escHtml(c.content.slice(0, 140))}${c.content.length > 140 ? "…" : ""}</p></div>`).join("")}
     </div>
     <div class="section">
-      <h3>${icon("history")} Versões (${doc.versions.length})</h3>
+      <h3>${icon("history")} ${t("doc.versions", { count: doc.versions.length })}</h3>
       ${doc.versions.map((v) => `<div class="version-item"><span class="idx">v${v.version}</span>${escHtml(v.change_note ?? "")}<p>${escHtml(v.changed_by ?? "—")} · ${fmtDate(v.created_at)}</p></div>`).join("")}
     </div>`;
   await loadIcons(panel);
@@ -3012,9 +3039,9 @@ async function openDocumentPanel(docId) {
       openDocumentPanel(go.dataset.openDoc);
     } else if (del) {
       const ok = await uiConfirm({
-        title: "Remover link?",
-        message: `A ligação manual com “${del.dataset.title}” será removida. Os documentos continuam iguais.`,
-        confirmLabel: "Remover",
+        title: t("unlink.title"),
+        message: t("unlink.msg", { title: del.dataset.title }),
+        confirmLabel: t("unlink.confirm"),
         tone: "danger",
       });
       if (!ok) return;
@@ -3023,7 +3050,7 @@ async function openDocumentPanel(docId) {
         openDocumentPanel(docId);
         if (document.getElementById("graph-wrap")) loadGraph();
       } catch (err) {
-        await uiError("Não foi possível remover o link", err);
+        await uiError(t("unlink.failed"), err);
       }
     }
   });
@@ -3033,13 +3060,13 @@ async function openDocumentPanel(docId) {
 
 function linksSection(doc, data) {
   const isAdmin = state.user?.role === "admin";
-  const kindChip = (kind) => `<span class="chip subtle">${kind === "wikilink" ? "[[wikilink]]" : "manual"}</span>`;
+  const kindChip = (kind) => `<span class="chip subtle">${kind === "wikilink" ? "[[wikilink]]" : t("links.manual")}</span>`;
   const outgoing = data.links || [];
   const backlinks = data.backlinks || [];
   const outItem = (l) =>
     l.pending
-      ? `<div class="link-item pending" title="Nenhum documento com esse título ainda: o link se conecta sozinho quando ele for criado">
-           ${icon("link", 13)}<span class="grow">${escHtml(l.target_title)} <span class="muted">· ainda não existe</span></span>${kindChip(l.kind)}
+      ? `<div class="link-item pending" title="${t("links.pendingTitle")}">
+           ${icon("link", 13)}<span class="grow">${escHtml(l.target_title)} <span class="muted">${t("side.notYet")}</span></span>${kindChip(l.kind)}
          </div>`
       : `<div class="link-item">
            ${icon("link", 13)}
@@ -3048,7 +3075,7 @@ function linksSection(doc, data) {
            ${kindChip(l.kind)}
            ${
              isAdmin && l.kind === "manual"
-               ? `<button class="icon-btn danger" type="button" data-unlink="${l.id}" data-title="${escHtml(l.title)}" title="Remover link manual">${icon("x", 13)}</button>`
+               ? `<button class="icon-btn danger" type="button" data-unlink="${l.id}" data-title="${escHtml(l.title)}" title="${t("links.removeManual")}">${icon("x", 13)}</button>`
                : ""
            }
          </div>`;
@@ -3061,16 +3088,16 @@ function linksSection(doc, data) {
     </div>`;
   return `
     <div class="section links-section">
-      <h3>${icon("link")} Conexões
-        ${isAdmin && doc.status === "active" ? `<button class="btn sm ghost connect-btn" type="button" id="connect-open">${icon("plus", 13)}<span>Conectar a…</span></button>` : ""}
+      <h3>${icon("link")} ${t("links.connections")}
+        ${isAdmin && doc.status === "active" ? `<button class="btn sm ghost connect-btn" type="button" id="connect-open">${icon("plus", 13)}<span>${t("side.connectTo")}</span></button>` : ""}
       </h3>
       <div class="links-group">
-        <div class="links-label">Links (${outgoing.length})</div>
-        ${outgoing.map(outItem).join("") || `<div class="muted links-empty">Nenhum. Escreva [[Título]] no texto ou use “Conectar a…”.</div>`}
+        <div class="links-label">${t("side.links", { count: outgoing.length })}</div>
+        ${outgoing.map(outItem).join("") || `<div class="muted links-empty">${t("links.noneOutgoing")}</div>`}
       </div>
       <div class="links-group">
-        <div class="links-label">Backlinks (${backlinks.length})</div>
-        ${backlinks.map(backItem).join("") || `<div class="muted links-empty">Nenhum documento aponta para este.</div>`}
+        <div class="links-label">${t("side.backlinks", { count: backlinks.length })}</div>
+        ${backlinks.map(backItem).join("") || `<div class="muted links-empty">${t("links.noneBacklinks")}</div>`}
       </div>
     </div>`;
 }
@@ -3089,20 +3116,20 @@ async function openConnectModal(source, preselected = null, onDone = null) {
   holder.innerHTML = modalShell({
     id: "connect",
     iconName: "link",
-    title: "Conectar documentos",
-    subtitle: `Origem: <strong>${escHtml(source.title)}</strong> — o destino ganha um backlink.`,
-    submitLabel: "Conectar",
+    title: t("connect.title"),
+    subtitle: t("connect.sub", { title: escHtml(source.title) }),
+    submitLabel: t("connect.submit"),
     submitIcon: "link",
     width: 560,
     body: `
       <label class="form-field">
-        <span class="form-label">Destino</span>
-        <input class="input" type="text" id="connect-q" placeholder="Busque pelo título…" autocomplete="off" />
+        <span class="form-label">${t("connect.target")}</span>
+        <input class="input" type="text" id="connect-q" placeholder="${t("connect.searchPh")}" autocomplete="off" />
       </label>
       <div class="connect-results" id="connect-results" role="listbox"></div>
       <label class="form-field">
-        <span class="form-label">Por que estão ligados? <span class="muted">(opcional)</span></span>
-        <input class="input" type="text" id="connect-note" placeholder="ex.: o pitch usa os números desta análise" />
+        <span class="form-label">${t("connect.why")} <span class="muted">${t("common.optional")}</span></span>
+        <input class="input" type="text" id="connect-note" placeholder="${t("connect.notePh")}" />
       </label>`,
   });
   document.body.appendChild(holder.firstElementChild);
@@ -3122,7 +3149,7 @@ async function openConnectModal(source, preselected = null, onDone = null) {
           <span class="grow">${escHtml(d.title)}</span><span class="muted">${escHtml(d.collection)}</span>
         </button>`,
         )
-        .join("") || `<div class="muted links-empty">Nenhum documento encontrado.</div>`;
+        .join("") || `<div class="muted links-empty">${t("connect.noneFound")}</div>`;
   };
   const search = debounce(async (q) => render(await api.get("/documents/titles", { q, limit: 8 }).catch(() => [])), 180);
   modal.querySelector("#connect-q").addEventListener("input", (e) => search(e.target.value));
@@ -3135,7 +3162,7 @@ async function openConnectModal(source, preselected = null, onDone = null) {
   modal.querySelector("#connect-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!chosen) {
-      await uiAlert("Escolha o destino", "Selecione na lista o documento que será ligado.");
+      await uiAlert(t("connect.pickTitle"), t("connect.pickMsg"));
       return;
     }
     try {
@@ -3149,7 +3176,7 @@ async function openConnectModal(source, preselected = null, onDone = null) {
       if (document.getElementById("graph-wrap")) loadGraph();
       openDocumentPanel(source.document_id);
     } catch (err) {
-      await uiError("Não foi possível conectar", err);
+      await uiError(t("connect.failed"), err);
     }
   });
   setOpen(true);
@@ -3169,7 +3196,7 @@ function setConnectMode(on) {
   const btn = document.getElementById("connect-mode");
   btn?.classList.toggle("active", on);
   btn?.classList.toggle("ghost", !on);
-  connectNotice(on ? "Modo conectar: clique no documento de <strong>origem</strong>. Esc cancela." : null);
+  connectNotice(on ? t("connect.modeStart") : null);
   state.graphInstance?.autoPauseRedraw(!on);
   if (on) document.addEventListener("keydown", connectEsc);
   else document.removeEventListener("keydown", connectEsc);
@@ -3194,7 +3221,7 @@ function onGraphNodeClick(n) {
   }
   if (!state.connectFrom) {
     state.connectFrom = n;
-    connectNotice(`Origem: <strong>${escHtml(n.title)}</strong>. Agora clique no <strong>destino</strong>. Esc cancela.`);
+    connectNotice(t("connect.modeTarget", { title: escHtml(n.title) }));
     return;
   }
   if (state.connectFrom.id === n.id) return;
@@ -3224,15 +3251,15 @@ function enhancePasswordFields(root = document) {
     btn.type = "button";
     btn.className = "pw-toggle";
     btn.tabIndex = -1; // Tab segue do campo para o próximo controle do formulário
-    btn.title = "Mostrar senha";
-    btn.setAttribute("aria-label", "Mostrar senha");
+    btn.title = t("password.show");
+    btn.setAttribute("aria-label", t("password.show"));
     btn.innerHTML = icon("eye");
     wrap.appendChild(btn);
     loadIcons(btn);
     btn.addEventListener("click", () => {
       const show = input.type === "password";
       input.type = show ? "text" : "password";
-      btn.title = show ? "Ocultar senha" : "Mostrar senha";
+      btn.title = show ? t("password.hide") : t("password.show");
       btn.setAttribute("aria-label", btn.title);
       btn.innerHTML = icon(show ? "eye-off" : "eye");
       loadIcons(btn);

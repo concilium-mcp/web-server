@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Concilium — Dashboard</title>
     <script>
-      // aplica o tema antes do 1º paint (sem piscar escuro → claro); escolha salva > preferência do sistema
+      // aplica tema e idioma antes do 1º paint; tema: escolha salva > preferência do sistema
       (function () {
         var t = null;
         try {
@@ -13,6 +13,16 @@
         } catch (e) {}
         if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
         document.documentElement.dataset.theme = t;
+        // idioma: escolha salva > idioma do navegador (es*/en*) > pt-BR
+        var l = null;
+        try {
+          l = JSON.parse(localStorage.getItem("concilium:lang"));
+        } catch (e) {}
+        if (l !== "pt-BR" && l !== "en" && l !== "es") {
+          var nav = (navigator.language || "").toLowerCase();
+          l = nav.indexOf("es") === 0 ? "es" : nav.indexOf("en") === 0 ? "en" : "pt-BR";
+        }
+        document.documentElement.lang = l;
       })();
     </script>
     <link rel="icon" type="image/svg+xml" href="static/brand/logo.svg" />
@@ -25,6 +35,10 @@
     <script src="static/vendor/force-graph.min.js"></script>
     <script src="static/vendor/toastui/toastui-editor-all.min.js"></script>
     <script src="static/vendor/toastui/pt-br.min.js"></script>
+    <script src="static/vendor/toastui/es-es.min.js"></script>
+    <script src="static/i18n/pt-BR.js"></script>
+    <script src="static/i18n/en.js"></script>
+    <script src="static/i18n/es.js"></script>
     <script src="static/dashboard.js"></script>
   </body>
 </html>
