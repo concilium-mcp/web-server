@@ -4,6 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Concilium — Dashboard</title>
+    <script>
+      // aplica o tema antes do 1º paint (sem piscar escuro → claro); escolha salva > preferência do sistema
+      (function () {
+        var t = null;
+        try {
+          t = JSON.parse(localStorage.getItem("concilium:theme"));
+        } catch (e) {}
+        if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="static/brand/logo.svg" />
     <link rel="stylesheet" href="static/vendor/toastui/toastui-editor.min.css" />
     <link rel="stylesheet" href="static/vendor/toastui/toastui-editor-dark.min.css" />

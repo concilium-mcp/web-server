@@ -31,6 +31,37 @@ const api = {
   },
 };
 
+/* ---------------------------------------------------------------- tema (escuro/claro) */
+
+// a escolha fica no navegador; sem escolha salva, segue o sistema. O <head> aplica antes do 1º paint.
+const THEME_KEY = "concilium:theme";
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem(THEME_KEY, JSON.stringify(theme));
+  } catch {
+    /* sem armazenamento local: vale só nesta aba */
+  }
+}
+
+// cores do canvas do grafo vêm dos tokens CSS (lidas uma vez por render, não por frame)
+function graphTheme() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  return {
+    label: v("--graph-label"),
+    labelHover: v("--graph-label-hover"),
+    labelDim: v("--graph-label-dim"),
+    nodeStroke: v("--graph-node-stroke"),
+    edgeRgb: v("--graph-edge-rgb"),
+  };
+}
+
 /* ---------------------------------------------------------------- ícones Lucide (SVG inline) */
 
 const iconCache = new Map();
@@ -383,6 +414,7 @@ const NAV = [
   { id: "notes", label: "Notas", iconName: "notebook-pen" },
   { id: "search", label: "Busca", iconName: "search" },
   { id: "graph", label: "Grafo", iconName: "network" },
+  { id: "agents", label: "Agents", iconName: "bot" },
 ];
 
 function navForRole() {
@@ -434,10 +466,10 @@ function renderUserFooter() {
         <span class="muted">${roleLabel}</span>
       </div>
       <div class="menu-sep"></div>
-      ${item('data-goto="agents"', "bot", "Agents")}
       ${item('data-goto="keys"', "key-round", "Chaves API")}
       ${isAdmin ? item('data-goto="users"', "users", "Gerenciar usuários") : ""}
       <div class="menu-sep"></div>
+      ${item("data-theme-toggle", currentTheme() === "dark" ? "sun" : "moon", currentTheme() === "dark" ? "Tema claro" : "Tema escuro")}
       ${item('data-href="/docs"', "book-open", "Documentação da API", icon("external-link", 14))}
       <div class="menu-item static">${icon("activity")}<span class="grow">Status do servidor</span><span class="status" id="server-status"><span class="status-dot"></span>…</span></div>
       <div class="menu-sep"></div>
@@ -476,6 +508,10 @@ function renderUserFooter() {
     setOpen(false);
     if (el.dataset.goto) {
       goTo(el.dataset.goto);
+    } else if ("themeToggle" in el.dataset) {
+      setTheme(currentTheme() === "dark" ? "light" : "dark");
+      // re-renderiza a tela: editor e grafo leem o tema na criação
+      goTo(state.screen, notes.openId);
     } else if (el.dataset.href) {
       window.open(el.dataset.href, "_blank", "noopener");
     } else if ("logout" in el.dataset) {
@@ -1566,7 +1602,7 @@ function renderNoteMain() {
 
   notes.editor?.destroy();
   const el = main.querySelector("#note-editor");
-  const common = { el, initialValue: n.content, theme: "dark", usageStatistics: false };
+  const common = { el, initialValue: n.content, theme: currentTheme(), usageStatistics: false };
   notes.editor = editable
     ? new toastui.Editor({
         ...common,
@@ -2036,7 +2072,7 @@ async function openVersionPreview(version) {
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("version-modal");
   await loadIcons(modal);
-  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: "dark", usageStatistics: false });
+  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: currentTheme(), usageStatistics: false });
   const setOpen = bindModal("version");
   if (!canEdit() && !isCurrent) modal.querySelector("button[type=submit]").remove();
   modal.querySelector("#version-form").addEventListener("submit", async (e) => {
@@ -2786,6 +2822,7 @@ function drawGraph(data) {
   const el = document.getElementById("graph-canvas");
   document.getElementById("graph-empty").classList.add("hidden");
 
+  const colors = graphTheme();
   const highlight = state.highlightDocs && state.highlightDocs.size ? state.highlightDocs : null;
   const clearBtn = document.getElementById("hl-clear");
   clearBtn.classList.toggle("hidden", !highlight);
@@ -2840,7 +2877,7 @@ function drawGraph(data) {
       ctx.fillStyle = color;
       ctx.fill();
       ctx.lineWidth = 1.5 / scale;
-      ctx.strokeStyle = "rgba(23, 22, 20, 0.9)";
+      ctx.strokeStyle = colors.nodeStroke;
       ctx.stroke();
       // rótulo: tamanho fixo na tela; some quando o zoom está muito longe (exceto no hover)
       if (scale < 0.6 && !hovered) return;
@@ -2849,7 +2886,7 @@ function drawGraph(data) {
       ctx.font = `${hovered ? 600 : 500} ${fontSize}px system-ui, -apple-system, "Segoe UI", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillStyle = dim ? "rgba(155, 152, 147, 0.35)" : hovered ? "#ececec" : "#9b9893";
+      ctx.fillStyle = dim ? colors.labelDim : hovered ? colors.labelHover : colors.label;
       ctx.fillText(text, n.x, n.y + r + 6 / scale);
     })
     .nodePointerAreaPaint((n, color, ctx) => {
@@ -2860,10 +2897,10 @@ function drawGraph(data) {
     })
     // link explícito = sólido coral; similaridade = tracejado cinza
     .linkColor((l) => {
-      if (highlight && !(isHl(l.source) && isHl(l.target))) return "rgba(236, 236, 236, 0.04)";
+      if (highlight && !(isHl(l.source) && isHl(l.target))) return `rgba(${colors.edgeRgb}, 0.04)`;
       if (l.kind === "link") return highlight ? "rgba(217, 119, 87, 0.95)" : "rgba(217, 119, 87, 0.85)";
       if (highlight) return "rgba(217, 119, 87, 0.5)";
-      return `rgba(236, 236, 236, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`;
+      return `rgba(${colors.edgeRgb}, ${Math.min(0.7, 0.28 + Math.max(0, l.similarity - state.minSimilarity) * 1.5)})`;
     })
     // espessura mínima visível mesmo para arestas logo acima do threshold
     .linkWidth((l) => (l.kind === "link" ? 2.2 : Math.min(4, 1.2 + Math.max(0, l.similarity - state.minSimilarity) * 8)))

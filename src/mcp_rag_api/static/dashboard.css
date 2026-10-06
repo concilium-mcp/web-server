@@ -1,21 +1,63 @@
-/* Concilium Dashboard — look & feel Claude.ai (dark-only). Ver agents/web-server/references/README.md */
+/* Concilium Dashboard — look & feel Claude.ai (tema escuro padrão + claro via [data-theme="light"]). Ver agents/web-server/references/README.md */
 
 :root {
   --bg: #171614;
   --bg-sidebar: #1f1e1c;
   --bg-elevated: #262522;
-  --border: rgba(255, 255, 255, 0.08);
+  --border: rgba(var(--fg-rgb), 0.08);
   --text: #ececec;
   --text-dim: #9b9893;
   --accent: #d97757;
   --accent-soft: rgba(217, 119, 87, 0.14);
   --danger: #e06c5b;
   --danger-soft: rgba(224, 108, 91, 0.12);
+  --success: var(--success);
+  --success-rgb: 124, 198, 141;
+  --text-body: #c9c6c0;
+  /* canais RGB para sobreposições com alpha: fg = tinta sobre o fundo, surface = vidro, shadow = sombras */
+  --fg-rgb: 255, 255, 255;
+  --surface-rgb: 31, 30, 28;
+  --shadow-rgb: 0, 0, 0;
+  --backdrop: rgba(10, 9, 8, 0.66);
+  /* grafo (canvas lê via getComputedStyle) */
+  --graph-label: #9b9893;
+  --graph-label-hover: #ececec;
+  --graph-label-dim: rgba(155, 152, 147, 0.35);
+  --graph-node-stroke: rgba(23, 22, 20, 0.9);
+  --graph-edge-rgb: 236, 236, 236;
+  color-scheme: dark;
   --radius: 10px;
   --sidebar-w: 260px;
   --panel-w: 340px;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+/* tema claro (Claude.ai light): mesmos tokens, valores invertidos */
+:root[data-theme="light"] {
+  --bg: #faf9f5;
+  --bg-sidebar: #f3f1ea;
+  --bg-elevated: #ffffff;
+  --border: rgba(31, 30, 29, 0.12);
+  --text: #1f1e1d;
+  --text-dim: #6b6a65;
+  --accent: #c96442;
+  --accent-soft: rgba(201, 100, 66, 0.12);
+  --danger: #c4483a;
+  --danger-soft: rgba(196, 72, 58, 0.1);
+  --success: #2e8540;
+  --success-rgb: 46, 133, 64;
+  --text-body: #3d3c38;
+  --fg-rgb: 31, 30, 29;
+  --surface-rgb: 255, 255, 255;
+  --shadow-rgb: 60, 50, 40;
+  --backdrop: rgba(40, 35, 30, 0.35);
+  --graph-label: #6b6a65;
+  --graph-label-hover: #1f1e1d;
+  --graph-label-dim: rgba(107, 106, 101, 0.35);
+  --graph-node-stroke: rgba(var(--fg-rgb), 0.9);
+  --graph-edge-rgb: 60, 58, 54;
+  color-scheme: light;
 }
 
 * {
@@ -105,7 +147,7 @@ body {
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--fg-rgb), 0.04);
   color: var(--text);
 }
 
@@ -141,7 +183,7 @@ body {
 
 .user-trigger:hover,
 .user-trigger.open {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
 }
 
 .user-trigger > [data-icon] {
@@ -180,7 +222,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 6px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 16px 48px rgba(var(--shadow-rgb), 0.5);
 }
 
 .menu-head {
@@ -218,7 +260,7 @@ body {
 }
 
 .menu-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
 }
 
 .menu-item > [data-icon] {
@@ -249,12 +291,12 @@ body {
 }
 
 .status.ok {
-  color: #7cc68d;
+  color: var(--success);
 }
 
 .status.ok .status-dot {
-  background: #7cc68d;
-  box-shadow: 0 0 0 3px rgba(124, 198, 141, 0.15);
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.15);
 }
 
 .menu-item[data-logout]:hover {
@@ -276,7 +318,7 @@ body {
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
   color: var(--text);
 }
 
@@ -408,7 +450,7 @@ select option {
 }
 
 .btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
 }
 
 .btn.primary {
@@ -452,7 +494,7 @@ select option {
   border-radius: var(--radius);
   overflow: hidden;
   background:
-    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.02), transparent 60%),
+    radial-gradient(ellipse at top, rgba(var(--fg-rgb), 0.02), transparent 60%),
     var(--bg);
 }
 
@@ -469,7 +511,7 @@ select option {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  background: rgba(31, 30, 28, 0.85);
+  background: rgba(var(--surface-rgb), 0.85);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 2px;
@@ -489,7 +531,7 @@ select option {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: rgba(31, 30, 28, 0.85);
+  background: rgba(var(--surface-rgb), 0.85);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 8px 12px;
@@ -533,7 +575,7 @@ select option {
 }
 
 .legend-row:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
 }
 
 .legend-row.active {
@@ -563,7 +605,7 @@ select option {
 
 .legend-all:hover {
   color: var(--accent);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--fg-rgb), 0.04);
 }
 
 .dot {
@@ -577,7 +619,7 @@ select option {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: rgba(31, 30, 28, 0.85);
+  background: rgba(var(--surface-rgb), 0.85);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 5px 10px;
@@ -729,7 +771,7 @@ select option {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 40px rgba(var(--shadow-rgb), 0.35);
 }
 
 .login-card .brand {
@@ -936,7 +978,7 @@ select option {
 }
 
 .pw-toggle:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
   color: var(--text);
 }
 
@@ -1010,7 +1052,7 @@ select option {
   border-radius: 16px;
   padding: 10px 10px 10px 18px;
   color: var(--text-dim);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 6px 24px rgba(var(--shadow-rgb), 0.25);
   transition: border-color 0.15s;
 }
 
@@ -1039,7 +1081,7 @@ select option {
 }
 
 .composer-k:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
 }
 
 .composer-send {
@@ -1112,7 +1154,7 @@ select option {
 
 .result:hover {
   background: var(--bg-elevated);
-  border-color: rgba(255, 255, 255, 0.14);
+  border-color: rgba(var(--fg-rgb), 0.14);
 }
 
 .result.selected {
@@ -1128,7 +1170,7 @@ select option {
   height: 24px;
   flex: none;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: 12px;
@@ -1159,7 +1201,7 @@ select option {
 
 .snippet {
   margin: 6px 0 10px;
-  color: #c9c6c0;
+  color: var(--text-body);
   line-height: 1.6;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -1186,7 +1228,7 @@ select option {
   width: 80px;
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(var(--fg-rgb), 0.07);
   overflow: hidden;
 }
 
@@ -1211,7 +1253,7 @@ select option {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(var(--fg-rgb), 0.12);
   border-radius: 999px;
   border: 2px solid var(--bg);
 }
@@ -1351,7 +1393,7 @@ select option {
 }
 
 .trow:not(.thead):hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(var(--fg-rgb), 0.02);
 }
 
 .trow.thead {
@@ -1362,7 +1404,7 @@ select option {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.015);
+  background: rgba(var(--fg-rgb), 0.015);
 }
 
 .trow.revoked {
@@ -1416,7 +1458,7 @@ select option {
 }
 
 .btn.ghost:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
   color: var(--text);
 }
 
@@ -1449,9 +1491,9 @@ select option {
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
-  border: 1px solid rgba(124, 198, 141, 0.35);
+  border: 1px solid rgba(var(--success-rgb), 0.35);
   border-radius: 12px;
-  background: rgba(124, 198, 141, 0.07);
+  background: rgba(var(--success-rgb), 0.07);
 }
 
 .key-reveal-head {
@@ -1463,7 +1505,7 @@ select option {
 }
 
 .key-reveal-head > [data-icon] {
-  color: #7cc68d;
+  color: var(--success);
 }
 
 .key-reveal-row {
@@ -1660,7 +1702,7 @@ textarea.input {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(10, 9, 8, 0.66);
+  background: var(--backdrop);
   backdrop-filter: blur(3px);
   animation: fade-in 0.12s ease-out;
 }
@@ -1673,7 +1715,7 @@ textarea.input {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 16px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 24px 80px rgba(var(--shadow-rgb), 0.55);
   animation: pop-in 0.14s ease-out;
 }
 
@@ -1803,7 +1845,7 @@ textarea.input {
   height: 16px;
   flex: none;
   margin: 2px 0 0;
-  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  border: 1.5px solid rgba(var(--fg-rgb), 0.28);
   border-radius: 5px;
   background: transparent;
   cursor: pointer;
@@ -1816,7 +1858,7 @@ textarea.input {
 
 .scope-option:hover input:not(:checked),
 .check:hover input:not(:checked) {
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: rgba(var(--fg-rgb), 0.5);
 }
 
 .scope-option input:checked,
@@ -1851,7 +1893,7 @@ textarea.input {
 }
 
 .scope-option:hover {
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(var(--fg-rgb), 0.16);
 }
 
 @media (max-width: 1100px) {
@@ -1908,7 +1950,7 @@ textarea.input {
   flex-wrap: wrap;
   gap: 10px;
   padding: 7px 8px 7px 12px;
-  background: rgba(31, 30, 28, 0.92);
+  background: rgba(var(--surface-rgb), 0.92);
   border: 1px solid rgba(217, 119, 87, 0.35);
   border-radius: var(--radius);
   font-size: 12.5px;
@@ -1958,7 +2000,7 @@ textarea.input {
 }
 
 .legend-edge.toggle:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--fg-rgb), 0.06);
 }
 
 .legend-edge.off {
@@ -1976,12 +2018,12 @@ textarea.input {
 }
 
 .edge-swatch.semantic {
-  border-top: 2px dashed rgba(236, 236, 236, 0.55);
+  border-top: 2px dashed rgba(var(--fg-rgb), 0.55);
 }
 
 /* tooltip das arestas/nós do force-graph no tema */
 .graph-canvas .float-tooltip-kap {
-  background: rgba(31, 30, 28, 0.95) !important;
+  background: rgba(var(--surface-rgb), 0.95) !important;
   border: 1px solid var(--border);
   border-radius: 8px !important;
   color: var(--text) !important;
@@ -2035,7 +2077,7 @@ textarea.input {
 }
 
 .link-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--fg-rgb), 0.04);
 }
 
 .link-title {
@@ -2092,7 +2134,7 @@ textarea.input {
 }
 
 .connect-option:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
 }
 
 .connect-option.selected {
@@ -2194,7 +2236,7 @@ textarea.input {
 }
 
 .tree-folder-head:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--fg-rgb), 0.04);
 }
 
 .tree-folder-head .count {
@@ -2247,7 +2289,7 @@ textarea.input {
 }
 
 .tree-note:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--fg-rgb), 0.04);
   color: var(--text);
 }
 
@@ -2432,7 +2474,7 @@ textarea.input {
 
 .side-item:hover,
 .side-version:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
 }
 
 .side-item.pending {
@@ -2530,6 +2572,58 @@ textarea.input {
   color: var(--text-dim);
 }
 
+/* Toast UI (tema claro): mesmas regras, sobre o tema padrão do editor */
+:root[data-theme="light"] .toastui-editor-defaultUI {
+  border-color: var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+}
+
+:root[data-theme="light"] .toastui-editor-toolbar,
+:root[data-theme="light"] .toastui-editor-defaultUI-toolbar {
+  background-color: var(--bg-sidebar);
+  border-bottom-color: var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+:root[data-theme="light"] .toastui-editor-main,
+:root[data-theme="light"] .toastui-editor-ww-container,
+:root[data-theme="light"] .toastui-editor-md-container,
+:root[data-theme="light"] .ProseMirror {
+  background-color: var(--bg);
+}
+
+:root[data-theme="light"] .toastui-editor-contents,
+:root[data-theme="light"] .toastui-editor-contents p,
+:root[data-theme="light"] .ProseMirror {
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+:root[data-theme="light"] .toastui-editor-contents h1,
+:root[data-theme="light"] .toastui-editor-contents h2,
+:root[data-theme="light"] .toastui-editor-contents h3 {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+
+:root[data-theme="light"] .toastui-editor-mode-switch {
+  background-color: var(--bg-sidebar);
+  border-top-color: var(--border);
+}
+
+:root[data-theme="light"] .toastui-editor-mode-switch .tab-item.active {
+  background-color: var(--bg);
+  color: var(--accent);
+}
+
+:root[data-theme="light"] .toastui-editor-contents a {
+  color: var(--accent);
+}
+
+
 /* jargão técnico (chunks, top-k, score) só para admin; o resto do time vê a versão simples */
 body:not([data-role="admin"]) .tech {
   display: none !important;
@@ -2547,6 +2641,16 @@ body:not([data-role="admin"]) .tech {
   --viz-muted: #898781;
   --viz-good: #0ca30c;
   overflow-y: auto;
+}
+
+:root[data-theme="light"] .painel-page {
+  --viz-surface: #ffffff;
+  --viz-accent: #c96442;
+  --viz-accent-track: rgba(201, 100, 66, 0.15);
+  --viz-grid: #ecebe6;
+  --viz-axis: #d6d4cd;
+  --viz-muted: #6b6a65;
+  --viz-good: #2e8540;
 }
 
 .painel-col {
@@ -2602,7 +2706,7 @@ body:not([data-role="admin"]) .tech {
 
 .period-seg button:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
 }
 
 .period-seg button.active {
@@ -2815,8 +2919,8 @@ body:not([data-role="admin"]) .tech {
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(31, 30, 28, 0.97);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  background: rgba(var(--surface-rgb), 0.97);
+  box-shadow: 0 8px 24px rgba(var(--shadow-rgb), 0.45);
   font-size: 12px;
   color: var(--text-dim);
   pointer-events: none;
@@ -2920,7 +3024,7 @@ table.dt .num {
 }
 
 .recent-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(var(--fg-rgb), 0.04);
 }
 
 .recent-row .grow {
