@@ -31,6 +31,15 @@ class NotFound(KBError):
     pass
 
 
+class VersionConflict(KBError):
+    """Conflito de trava otimista: o recurso mudou desde a versão lida pelo cliente."""
+
+    def __init__(self, message: str, *, current_version: int, actor: str | None = None) -> None:
+        super().__init__(message)
+        self.current_version = current_version
+        self.actor = actor  # quem gravou a versão atual, quando conhecido
+
+
 @dataclass(frozen=True)
 class Principal:
     actor: str

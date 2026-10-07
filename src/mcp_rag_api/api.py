@@ -61,6 +61,7 @@ class DocumentPatch(BaseModel):
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
     source: str | None = None
+    base_version: int | None = None  # trava otimista opcional: conflito devolve 409 + current_version
 
 
 class LinkIn(BaseModel):
