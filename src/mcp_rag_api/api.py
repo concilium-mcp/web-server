@@ -287,9 +287,7 @@ async def clone_agent(slug: str, body: CloneIn, p: Principal = Auth) -> dict:
 
 
 @router.post("/agents/{slug}/restore/{version}")
-async def restore_agent_version(
-    slug: str, version: int, change_note: str | None = None, p: Principal = Auth
-) -> dict:
+async def restore_agent_version(slug: str, version: int, change_note: str | None = None, p: Principal = Auth) -> dict:
     """Volta o perfil do agente para uma versão anterior. Exige agents:manage (ou admin)."""
     return await agents.restore_agent_version(p, slug, version, change_note)
 
@@ -300,9 +298,7 @@ async def agent_context(slug: str, p: Principal = Auth) -> dict:
 
 
 @router.get("/agents/{slug}/memories")
-async def recall(
-    slug: str, query: str, include_shared: bool = True, limit: int = 8, p: Principal = Auth
-) -> list[dict]:
+async def recall(slug: str, query: str, include_shared: bool = True, limit: int = 8, p: Principal = Auth) -> list[dict]:
     return await memory.recall(p, query, slug, include_shared, limit)
 
 
@@ -312,9 +308,7 @@ async def remember(slug: str, body: MemoryIn, p: Principal = Auth) -> dict:
 
 
 @router.delete("/agents/{slug}/memories/{memory_id}")
-async def forget(
-    slug: str, memory_id: int, replacement: str | None = None, p: Principal = Auth
-) -> dict:
+async def forget(slug: str, memory_id: int, replacement: str | None = None, p: Principal = Auth) -> dict:
     """Apaga uma memória; com `replacement`, corrige o conteúdo em vez de apagar."""
     return await memory.forget(p, memory_id, replacement, slug)
 
