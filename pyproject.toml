@@ -3,7 +3,7 @@ name = "mcp-rag-api"
 version = "0.1.0"
 description = "Servidor MCP + API REST com RAG (PostgreSQL + pgvector) e registro de agentes"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
@@ -46,8 +46,16 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 ignore = ["B008", "ASYNC240"]  # Query()/Depends() em defaults é o idioma do FastAPI
+
+[tool.mypy]
+python_version = "3.12"
+# asyncpg e sentence_transformers não têm stubs nem py.typed; sem essa trava o mypy
+# falha no import e vira ruído constante no gate de tipos.
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "sentence_transformers.*"]
+ignore_missing_imports = true
