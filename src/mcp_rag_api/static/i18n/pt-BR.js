@@ -479,6 +479,45 @@ window.I18N["pt-BR"] = {
   "connect.modeStart": "Modo conectar: clique no documento de <strong>origem</strong>. Esc cancela.",
   "connect.modeTarget": "Origem: <strong>{title}</strong>. Agora clique no <strong>destino</strong>. Esc cancela.",
 
+  // importação de vault Obsidian
+  "import.toolbarBtn": "Importar",
+  "import.toolbarTitle": "Importar um vault Obsidian (.zip)",
+  "import.title": "Importar vault Obsidian",
+  "import.subtitle": "As pastas viram coleções e as notas .md viram documentos da base",
+  "import.help":
+    "Compacte a pasta do seu vault (botão direito → Compactar) e envie o .zip. A pasta .obsidian, arquivos ocultos e anexos são ignorados; os [[links]] entre notas são preservados. Re-importar o mesmo zip atualiza as notas em vez de duplicar.",
+  "import.fileLabel": "Arquivo .zip do vault",
+  "import.start": "Iniciar importação",
+  "import.closeTitle": "Importação em andamento",
+  "import.closeMsg":
+    "Fechar agora deixa o import rodando em segundo plano (a árvore de notas é atualizada ao final) — ou cancele o import.",
+  "import.keepInBackground": "Continuar em segundo plano",
+  "import.cancelImport": "Cancelar importação",
+  "import.notAZipTitle": "Arquivo inválido",
+  "import.notAZipMsg": "Escolha um arquivo .zip (compacte a pasta do vault antes).",
+  "import.alreadyRunningTitle": "Importação em andamento",
+  "import.alreadyRunningMsg": "Aguarde a importação atual terminar (ou cancele-a) antes de iniciar outra.",
+  "import.startFailed": "Não foi possível iniciar a importação",
+  "import.progressCount": "{done} / {total}",
+  "import.currentFile": "Importando: {file}",
+  "import.counterNotes": { one: "{count} nota importada", other: "{count} notas importadas" },
+  "import.counterCollections": { one: "{count} coleção", other: "{count} coleções" },
+  "import.counterErrors": { one: "{count} erro", other: "{count} erros" },
+  "import.errorFile": "Arquivo",
+  "import.errorDetail": "Erro",
+  "import.doneTitle": "Importação concluída",
+  "import.cancelledTitle": "Importação cancelada",
+  "import.errorTitle": "Importação falhou",
+  "import.doneSummary":
+    "{notes} nota(s) em {collections} coleção(ões) · {errors} erro(s). Notas com o mesmo caminho foram atualizadas, não duplicadas.",
+  "import.closeSummary": "Concluir",
+  "import.progressLostTitle": "Progresso perdido",
+  "import.progressLostMsg":
+    "Não foi possível acompanhar o status do import (erro de rede). A árvore de notas será atualizada de qualquer forma — se o import terminou, os dados já estão lá.",
+  "import.goneMsg":
+    "Este job não está mais disponível no servidor (os jobs ficam ~1h em memória; um restart os apaga). O que já foi importado permanece na base — re-importar o zip é seguro.",
+  "import.cancelFailed": "Não foi possível cancelar a importação",
+
   // campos de senha
   "password.show": "Mostrar senha",
   "password.hide": "Ocultar senha",
