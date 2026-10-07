@@ -237,6 +237,21 @@ const brandLogo = (size = 22) => `<img class="brand-logo" src="static/brand/logo
 const escHtml = (s) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+// sanitização do HTML renderizado pelo Toast UI (conteúdo de notas vem de editores
+// humanos e de agentes/chaves com escopo write — é entrada não confiável).
+// DOMPurify 3.x vendored em static/vendor/dompurify/ substitui o 2.3.3 embutido
+// no bundle do Toast UI via customHTMLSanitizer.
+// FORBID_TAGS espelha a postura do sanitizer padrão do Toast UI (sem form/button/
+// select/textarea/style etc.), mas sem proibir "input": task lists do markdown
+// precisam de <input type="checkbox" disabled>.
+const NOTE_FORBID_TAGS = ["form", "button", "select", "textarea", "meta", "style", "link", "title", "object", "base"];
+
+const sanitizeNoteHtml = (html) => {
+  if (window.DOMPurify) return window.DOMPurify.sanitize(String(html ?? ""), { FORBID_TAGS: NOTE_FORBID_TAGS });
+  console.error("[dashboard] DOMPurify não carregado; HTML da nota foi neutralizado");
+  return "";
+};
+
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(locale()) : "—");
 
 /* ---------------------------------------------------------------- estado */
@@ -1627,7 +1642,7 @@ function renderNoteMain() {
 
   notes.editor?.destroy();
   const el = main.querySelector("#note-editor");
-  const common = { el, initialValue: n.content, theme: currentTheme(), usageStatistics: false };
+  const common = { el, initialValue: n.content, theme: currentTheme(), usageStatistics: false, customHTMLSanitizer: sanitizeNoteHtml };
   notes.editor = editable
     ? new toastui.Editor({
         ...common,
@@ -2095,7 +2110,7 @@ async function openVersionPreview(version) {
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("version-modal");
   await loadIcons(modal);
-  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: currentTheme(), usageStatistics: false });
+  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: currentTheme(), usageStatistics: false, customHTMLSanitizer: sanitizeNoteHtml });
   const setOpen = bindModal("version");
   if (!canEdit() && !isCurrent) modal.querySelector("button[type=submit]").remove();
   modal.querySelector("#version-form").addEventListener("submit", async (e) => {
