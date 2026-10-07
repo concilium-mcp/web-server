@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     kb_api_key: str = ""
     kb_auth_disabled: bool = False
 
+    # Dashboard: falhas de login permitidas por (usuário, IP) antes do backoff exponencial.
+    # 0 desliga o rate limit (só para dev/testes controlados).
+    dash_login_rate_limit: int = 5
+
 
 @lru_cache
 def get_settings() -> Settings:
