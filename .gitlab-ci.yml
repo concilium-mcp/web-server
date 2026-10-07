@@ -45,6 +45,16 @@ test:pytest:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
+# Verificação de sintaxe dos módulos ES da dashboard (sem build de frontend; node:alpine é barato)
+test:dash-js:
+  stage: test
+  image: node:alpine
+  script:
+    - ./scripts/check-js.sh
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
 # ============================================
 # JOBS — BUILD E PUSH (Docker Registry)
 # ============================================
