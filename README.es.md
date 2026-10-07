@@ -41,6 +41,7 @@ Los agentes también tienen un hogar: perfil (system prompt), memoria persistent
 **📝 Espacio de notas del equipo**
 - Carpetas, editor visual con pestaña Markdown, etiquetas y plantillas de nota
 - `[[Wikilinks]]` y retroenlaces, al estilo de Obsidian. Los enlaces a notas que aún no existen se conectan solos cuando la nota se crea
+- **Importación de vaults de Obsidian**: sube el `.zip` desde el panel y sigue el progreso en tiempo real — las carpetas se convierten en colecciones, las notas en documentos completamente vectorizados, y re-importar actualiza en lugar de duplicar
 - Historial de versiones con restauración, detección de conflictos y borradores locales, para que no se pierda nada
 
 **🔎 RAG de verdad para agentes**
