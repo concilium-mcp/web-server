@@ -125,7 +125,7 @@ Para conferir se está no ar:
 curl http://localhost:8000/health        # {"status":"ok"}
 ```
 
-- Documentação interativa da API REST: http://localhost:8000/docs
+- Documentação interativa da API REST: http://localhost:8000/dash/docs (atrás do login da dashboard)
 - Endpoint MCP: http://localhost:8000/mcp
 
 ### Dashboard do time
@@ -202,6 +202,8 @@ Com o Claude Code conectado (passo 6), converse normalmente. Os exemplos abaixo 
 
 **5. Ligar documentos**
 Ao escrever um documento, cite outro pelo título entre colchetes duplos: `[[Política de reembolso]]` (também vale `[[Título|texto exibido]]`). Isso vira um **link explícito**: o documento citado ganha um *backlink*, e os dois aparecem ligados por uma linha sólida no grafo da dashboard. Maiúsculas e acentos não importam. Se o título ainda não existe, o link fica pendente e se conecta sozinho quando o documento for criado. Para ver tudo o que se relaciona a um documento (links, backlinks e vizinhos semânticos), use `get_related`; para ligar sem mexer no texto, `link_documents`.
+
+> **Quem pode ligar:** pela API REST e pelo MCP, `link_documents`/`unlink_documents` exigem o escopo `write`. Na dashboard, criar e remover links manuais é ação de **admin** (decisão de produto: quem conecta a base pela tela é quem a administra).
 
 **6. Sincronizar de outro sistema**
 Use `upsert_document` com um `external_id` (por exemplo, o id no CRM). Se o documento já existir, ele é atualizado; se não, é criado.
@@ -312,7 +314,7 @@ Pedidos no chat, com a chave admin:
 
 ## 10. Usar pela API REST
 
-Todas as rotas exigem `Authorization: Bearer <chave>`. A lista completa, com formulário de teste, está em http://localhost:8000/docs.
+Todas as rotas exigem `Authorization: Bearer <chave>`. A lista completa, com formulário de teste, está em http://localhost:8000/dash/docs (abra logado na dashboard).
 
 ```bash
 KEY=kb_sk_SUA_CHAVE

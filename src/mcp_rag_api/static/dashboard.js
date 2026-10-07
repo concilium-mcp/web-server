@@ -529,7 +529,7 @@ function renderUserFooter() {
           (l) => `<button type="button" role="radio" aria-checked="${l.id === currentLang()}" class="${l.id === currentLang() ? "active" : ""}" data-lang="${l.id}" title="${l.name}">${l.label}</button>`,
         ).join("")}</span>
       </div>
-      ${item('data-href="/docs"', "book-open", t("menu.docs"), icon("external-link", 14))}
+      ${item('data-href="/dash/docs"', "book-open", t("menu.docs"), icon("external-link", 14))}
       <div class="menu-item static">${icon("activity")}<span class="grow">${t("menu.status")}</span><span class="status" id="server-status"><span class="status-dot"></span>…</span></div>
       <div class="menu-sep"></div>
       ${item('data-logout', "log-out", t("menu.logout"))}
