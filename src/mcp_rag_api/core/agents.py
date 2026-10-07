@@ -245,6 +245,7 @@ async def set_agent_autonomy(p: Principal, slug: str, auto_apply_updates: bool, 
 
 
 async def get_agent(p: Principal, slug: str | None = None) -> dict:
+    p.require("read")
     async with pool().acquire() as conn:
         agent = await resolve_agent(conn, p, slug)
         versions = await conn.fetch(

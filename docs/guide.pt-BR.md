@@ -351,12 +351,12 @@ curl -s -X PUT $API/agents/suporte/autonomy -H "Authorization: Bearer $KEY" -H "
 
 | Escopo | Permite |
 |---|---|
-| `read` | consultar a base; ler e escrever a própria memória, as sessões e as tarefas |
-| `write` | inserir e atualizar documentos (inclui `read`) |
+| `read` | consultar a base e ler a própria memória, as sessões e as tarefas |
+| `write` | inserir e atualizar documentos; gravar memória, sessões e tarefas (inclui `read`) |
 | `agents:manage` | cadastrar e configurar agentes, aprovar propostas, ligar a autonomia |
 | `admin` | tudo, incluindo dar `agents:manage` ou `admin` a um agente |
 
-A chave de um agente herda os escopos e as coleções permitidas (`allowed_collections`; vazio = todas) do perfil dele. Alterações valem na hora.
+A chave de um agente herda os escopos e as coleções permitidas (`allowed_collections`; vazio = todas) do perfil dele. Alterações valem na hora. Tools que gravam memória/sessões/tarefas de um agente (`remember`, `forget`, `save_session`, `upsert_task`, e também `add_agent_memory`/`add_agent_task`) exigem o escopo `write` — `agents:manage` sozinho não basta.
 
 ### Tools MCP
 
