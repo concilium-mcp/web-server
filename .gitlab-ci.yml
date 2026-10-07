@@ -38,6 +38,8 @@ test:pytest:
   script:
     - uv sync --frozen --extra dev
     - uv run ruff check src tests
+    - uv run ruff format --check src tests
+    - uv run mypy src
     - uv run pytest -q
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
