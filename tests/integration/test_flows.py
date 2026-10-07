@@ -172,3 +172,16 @@ async def test_reindex_recomputes_chunks_and_centroids():
     assert row["has_centroid"] and row["n"] >= 1
 
 
+async def test_memory_merge_preserves_expiration():
+    """Merge de memória sem expires_in_days não pode zerar a expiração existente."""
+    created = await agents.create_agent(ADMIN, slug="memoria-exp", name="M", system_prompt="x")
+    agent = await principal_for(created["api_key"])
+
+    m1 = await memory.remember(agent, "Senha do VPN rotaciona a cada 90 dias", expires_in_days=30)
+    assert m1["action"] == "created"
+    # regrava sem expires_in_days: o merge deve manter a expiração já existente
+    m2 = await memory.remember(agent, "Senha do VPN rotaciona a cada 90 dias.", kind="procedure")
+    assert m2["action"] == "updated_existing" and m2["memory_id"] == m1["memory_id"]
+
+    row = await db.pool().fetchrow("SELECT expires_at FROM agent_memories WHERE id = $1", m1["memory_id"])
+    assert row["expires_at"] is not None

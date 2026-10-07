@@ -131,7 +131,8 @@ async def remember(
                 """
                 UPDATE agent_memories SET content = $2, embedding = $3, kind = $4,
                        importance = GREATEST(importance, $5), shared = shared OR $6,
-                       expires_at = $7, source = COALESCE($8, source), updated_at = now()
+                       expires_at = COALESCE($7, agent_memories.expires_at),
+                       source = COALESCE($8, source), updated_at = now()
                 WHERE id = $1
                 """,
                 similar["id"],
