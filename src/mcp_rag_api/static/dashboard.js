@@ -3285,7 +3285,33 @@ function enhancePasswordFields(root = document) {
   }
 }
 
-new MutationObserver(() => enhancePasswordFields()).observe(document.body, { childList: true, subtree: true });
+// Só varre a árvore quando entra um campo de senha novo (coalescido por requestAnimationFrame):
+// digitar no editor de notas (Toast UI) dispara mutação a cada tecla, e uma querySelectorAll
+// no documento a cada tecla travava a digitação.
+let pwScanQueued = false;
+function queuePasswordScan() {
+  if (pwScanQueued) return;
+  pwScanQueued = true;
+  requestAnimationFrame(() => {
+    pwScanQueued = false;
+    enhancePasswordFields();
+  });
+}
+
+new MutationObserver((mutations) => {
+  for (const m of mutations) {
+    for (const node of m.addedNodes) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (
+        node.matches('input[type="password"]:not([data-pw])') ||
+        node.querySelector('input[type="password"]:not([data-pw])')
+      ) {
+        queuePasswordScan();
+        return;
+      }
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true });
 
 /* ---------------------------------------------------------------- boot */
 
