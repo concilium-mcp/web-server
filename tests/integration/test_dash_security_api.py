@@ -37,7 +37,7 @@ async def admin():
 
 async def test_security_headers_on_all_responses():
     async with await _client() as c:
-        for path in ["/dashboard", "/static/dashboard.js", "/health"]:
+        for path in ["/dashboard", "/static/js/main.js", "/health"]:
             resp = await c.get(path)
             assert resp.status_code == 200
             assert resp.headers["X-Content-Type-Options"] == "nosniff"
