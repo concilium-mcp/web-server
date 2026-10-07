@@ -78,8 +78,7 @@ async def test_toda_tool_mcp_tem_rota_rest_ou_excecao() -> None:
     )
     extras = cobertas - tools
     assert not extras, (
-        "TOOL_ROUTES/MCP_ONLY mencionam tools que não existem no MCP "
-        f"(renomeadas ou removidas?): {sorted(extras)}"
+        f"TOOL_ROUTES/MCP_ONLY mencionam tools que não existem no MCP (renomeadas ou removidas?): {sorted(extras)}"
     )
 
 

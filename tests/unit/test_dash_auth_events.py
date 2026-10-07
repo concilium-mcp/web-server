@@ -38,9 +38,7 @@ def test_login_falho_loga_sem_senha(monkeypatch, caplog):
     _propaga_logs(monkeypatch)
     monkeypatch.setattr(dash_auth, "authenticate", AsyncMock(return_value=None))
     client = TestClient(app)
-    resp = client.post(
-        "/dash/api/auth/login", json={"username": "maria", "password": "senha-secreta"}, headers=CSRF
-    )
+    resp = client.post("/dash/api/auth/login", json={"username": "maria", "password": "senha-secreta"}, headers=CSRF)
     assert resp.status_code == 401
     mensagens = [r.getMessage() for r in caplog.records]
     assert any("login falhou" in m and "maria" in m for m in mensagens)
