@@ -1,5 +1,7 @@
 # Plano — MCP RAG API (Python + PostgreSQL + pgvector)
 
+> ⚠️ **Documento histórico do design original; a verdade atual é README + código + `agents/web-server/AGENTS.md`.**
+
 > Servidor MCP em Python que dá aos agentes de IA (Claude e nossos agentes) uma **memória/base de conhecimento compartilhada**: consultar (RAG), inserir e atualizar conhecimento, com PostgreSQL + pgvector como armazenamento.
 
 ---
