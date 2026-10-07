@@ -1,10 +1,10 @@
 """App HTTP: API REST (FastAPI) + endpoint MCP streamable HTTP em /mcp + dashboard web em /dashboard."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -34,6 +34,29 @@ app = FastAPI(title="MCP RAG API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
+
+# Headers de segurança em toda resposta. A CSP assume que a dash carrega tudo de
+# self/vendored (scripts e estilos locais; o Toast UI injeta <style> inline, por isso
+# style-src leva 'unsafe-inline'); não há fonte externa nem asset remoto.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "script-src 'self'; "
+        "connect-src 'self'"
+    ),
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
+    return response
 
 
 @app.exception_handler(KBError)
