@@ -46,7 +46,6 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    MIGRATIONS_DIR=/app/migrations \
     PORT=8000
 
 # Criar usuário não-root
@@ -55,9 +54,8 @@ RUN groupadd -g 1000 appuser \
 
 WORKDIR /app
 
-# Copia apenas o virtualenv pronto e as migrações SQL
+# Migrações SQL vêm embutidas no pacote (src/mcp_rag_api/migrations dentro do wheel)
 COPY --from=builder /opt/venv /opt/venv
-COPY --chown=appuser:appuser migrations ./migrations
 
 USER appuser
 
