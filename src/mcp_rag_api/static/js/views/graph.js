@@ -229,7 +229,7 @@ function fillCollectionFilter(collections) {
   const current = state.collection;
   sel.innerHTML =
     `<option value="">${t("graph.all")}</option>` +
-    collections.map((c) => `<option value="${c.name}" ${c.name === current ? "selected" : ""}>${c.name} (${c.count})</option>`).join("");
+    collections.map((c) => `<option value="${escHtml(c.name)}" ${c.name === current ? "selected" : ""}>${escHtml(c.name)} (${c.count})</option>`).join("");
 }
 
 function hexAlpha(hex, alpha) {

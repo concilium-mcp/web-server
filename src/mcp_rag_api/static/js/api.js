@@ -7,7 +7,8 @@ const api = {
   async req(method, path, body) {
     const r = await fetch(`/dash/api${path}`, {
       method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      // X-Requested-With é exigido pelo backend em toda mutação da dash (defesa CSRF)
+      headers: { "X-Requested-With": "fetch", ...(body ? { "Content-Type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401 && state.user) {

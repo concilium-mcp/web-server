@@ -35,7 +35,7 @@ function keysCreateForm(agents) {
           <span class="form-label">${t("keys.owner")}</span>
           <select class="input" id="key-agent">
             <option value="">${t("keys.humanKey")}</option>
-            ${agents.map((a) => `<option value="${a.slug}">agent: ${escHtml(a.slug)}</option>`).join("")}
+            ${agents.map((a) => `<option value="${escHtml(a.slug)}">agent: ${escHtml(a.slug)}</option>`).join("")}
           </select>
         </label>
       </div>

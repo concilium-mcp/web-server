@@ -149,7 +149,7 @@ function agentCard(a, isAdmin) {
         </div>
         ${
           isAdmin && !archived
-            ? `<button class="btn sm ${a.auto_apply_updates ? "primary" : "ghost"}" data-autonomy="${a.slug}" data-on="${a.auto_apply_updates}"
+            ? `<button class="btn sm ${a.auto_apply_updates ? "primary" : "ghost"}" data-autonomy="${escHtml(a.slug)}" data-on="${a.auto_apply_updates}"
                  title="${t("agents.autonomyBtnTitle")}">
                  ${icon("zap", 14)}<span>${a.auto_apply_updates ? t("agents.autonomyOn") : t("agents.autonomyOff")}</span>
                </button>`

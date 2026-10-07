@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import { t, locale } from "../i18n.js";
 import { currentTheme } from "../theme.js";
 import { icon, loadIcons } from "../icons.js";
-import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError } from "../ui.js";
+import { escHtml, sanitizeNoteHtml, fmtDate, fmtAgo, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError } from "../ui.js";
 import { state, colorFor, store } from "../state.js";
 import { openConnectModal } from "./docpanel.js";
 
@@ -236,7 +236,7 @@ function renderNoteMain() {
 
   notes.editor?.destroy();
   const el = main.querySelector("#note-editor");
-  const common = { el, initialValue: n.content, theme: currentTheme(), usageStatistics: false };
+  const common = { el, initialValue: n.content, theme: currentTheme(), usageStatistics: false, customHTMLSanitizer: sanitizeNoteHtml };
   notes.editor = editable
     ? new toastui.Editor({
         ...common,
@@ -704,7 +704,7 @@ async function openVersionPreview(version) {
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("version-modal");
   await loadIcons(modal);
-  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: currentTheme(), usageStatistics: false });
+  const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: currentTheme(), usageStatistics: false, customHTMLSanitizer: sanitizeNoteHtml });
   const setOpen = bindModal("version");
   if (!canEdit() && !isCurrent) modal.querySelector("button[type=submit]").remove();
   modal.querySelector("#version-form").addEventListener("submit", async (e) => {

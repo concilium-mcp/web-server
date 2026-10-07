@@ -3,7 +3,22 @@ import { t, locale } from "./i18n.js";
 import { icon, loadIcons } from "./icons.js";
 
 const escHtml = (s) =>
-  String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// sanitização do HTML renderizado pelo Toast UI (conteúdo de notas vem de editores
+// humanos e de agentes/chaves com escopo write — é entrada não confiável).
+// DOMPurify 3.x vendored em static/vendor/dompurify/ substitui o 2.3.3 embutido
+// no bundle do Toast UI via customHTMLSanitizer.
+// FORBID_TAGS espelha a postura do sanitizer padrão do Toast UI (sem form/button/
+// select/textarea/style etc.), mas sem proibir "input": task lists do markdown
+// precisam de <input type="checkbox" disabled>.
+const NOTE_FORBID_TAGS = ["form", "button", "select", "textarea", "meta", "style", "link", "title", "object", "base"];
+
+const sanitizeNoteHtml = (html) => {
+  if (window.DOMPurify) return window.DOMPurify.sanitize(String(html ?? ""), { FORBID_TAGS: NOTE_FORBID_TAGS });
+  console.error("[dashboard] DOMPurify não carregado; HTML da nota foi neutralizado");
+  return "";
+};
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(locale()) : "—");
 
@@ -164,4 +179,4 @@ function enhancePasswordFields(root = document) {
   }
 }
 
-export { escHtml, fmtDate, fmtAgo, debounce, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError, brandLogo, enhancePasswordFields };
+export { escHtml, sanitizeNoteHtml, fmtDate, fmtAgo, debounce, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError, brandLogo, enhancePasswordFields };
