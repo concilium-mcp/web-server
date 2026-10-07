@@ -11,11 +11,15 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import db
 from .api import router
-from .config import get_settings
+from .config import EMBEDDING_DIM, check_config, get_settings
+from .core.embeddings import close_embedder, get_embedder
 from .dashboard_api import auth_router
 from .dashboard_api import router as dashboard_router
+from .logging_config import get_logger, setup_logging
 from .mcp_server import mcp
 from .security import KBError, NotFound, PermissionDenied, VersionConflict, bearer_token, resolve_key
+
+logger = get_logger()
 
 # Precisa ser criado antes do lifespan: é aqui que o MCPServer instancia o session manager.
 # host="0.0.0.0" evita a proteção automática que só aceita Host localhost (atrás de proxy/domínio).
@@ -24,10 +28,34 @@ mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=Tr
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _log_boot_summary() -> None:
+    """Resumo de config no boot: provider, dim, auth, TTL da dash — nunca segredos."""
+    s = get_settings()
+    auth_mode = "DESABILITADA" if s.kb_auth_disabled else "api_keys (bearer)"
+    logger.info(
+        "boot: embedding_provider=%s embedding_dim=%d auth=%s dash_session_ttl=%dh public_url=%s",
+        s.embedding_provider,
+        EMBEDDING_DIM,
+        auth_mode,
+        s.dash_session_ttl_hours,
+        s.public_url,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    async with db.lifespan(), mcp.session_manager.run():
-        yield
+    setup_logging()
+    _log_boot_summary()
+    for warning in check_config():
+        logger.warning("%s", warning)
+    if get_settings().embedding_provider == "local":
+        # Pré-carrega o modelo (~2 GB) fora do caminho das requisições.
+        await get_embedder().warmup()
+    try:
+        async with db.lifespan(), mcp.session_manager.run():
+            yield
+    finally:
+        await close_embedder()
 
 
 app = FastAPI(title="MCP RAG API", version="0.1.0", lifespan=lifespan)
@@ -71,6 +99,13 @@ async def version_conflict_handler(_request: Request, exc: VersionConflict) -> J
         status_code=409,
         content={"detail": {"message": str(exc), "current_version": exc.current_version}},
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Loga 500s não tratados e responde JSON genérico (sem expor detalhes internos)."""
+    logger.exception("erro 500 não tratado em %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=500, content={"detail": "Erro interno do servidor."})
 
 
 class RequireApiKey:
