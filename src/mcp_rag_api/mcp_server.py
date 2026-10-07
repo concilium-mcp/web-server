@@ -51,6 +51,10 @@ async def current_principal(ctx: Context) -> Principal:
     except ValueError:
         pass
     if request is not None:  # HTTP
+        # O portão (RequireApiKey, em main.py) já resolveu esta chave neste request: reutiliza.
+        principal = request.scope.get("kb.principal")
+        if principal is not None:
+            return principal
         token = bearer_token(request.headers.get("authorization"))
     else:  # stdio
         token = settings.kb_api_key or None

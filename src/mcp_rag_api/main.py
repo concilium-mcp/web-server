@@ -60,7 +60,10 @@ class RequireApiKey:
             if token:
                 try:
                     async with db.pool().acquire() as conn:
-                        await resolve_key(conn, token)
+                        # Guarda o Principal no scope para as tools do /mcp reutilizarem (evita resolver
+                        # a mesma chave 2× por request). Não é cache entre requests: cada request
+                        # re-resolve no portão, então revogação continua imediata.
+                        scope["kb.principal"] = await resolve_key(conn, token)
                     valid = True
                 except PermissionDenied:
                     pass
