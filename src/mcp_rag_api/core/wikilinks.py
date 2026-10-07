@@ -34,27 +34,43 @@ def parse_wikilinks(content: str) -> list[str]:
     return titles
 
 
-async def resolve_title(conn: asyncpg.Connection, source_id: uuid.UUID, title: str) -> uuid.UUID | None:
-    """Documento ativo com esse título: prefere a mesma coleção da origem, depois o mais recente."""
-    return await conn.fetchval(
+async def resolve_titles(
+    conn: asyncpg.Connection, source_id: uuid.UUID, titles: list[str]
+) -> dict[str, uuid.UUID]:
+    """Resolve vários títulos de uma vez (1 query): mesma regra de `resolve_title`.
+
+    Retorna mapa title_key -> id do documento ativo encontrado.
+    """
+    if not titles:
+        return {}
+    rows = await conn.fetch(
         """
-        SELECT d.id FROM documents d
-        WHERE kb_title_key(d.title) = kb_title_key($2) AND d.status = 'active' AND d.id <> $1
-        ORDER BY (d.collection_id = (SELECT collection_id FROM documents WHERE id = $1)) DESC,
+        SELECT DISTINCT ON (kb_title_key(d.title)) kb_title_key(d.title) AS key, d.id
+        FROM documents d
+        WHERE kb_title_key(d.title) = ANY($2::text[]) AND d.status = 'active' AND d.id <> $1
+        ORDER BY kb_title_key(d.title),
+                 (d.collection_id = (SELECT collection_id FROM documents WHERE id = $1)) DESC,
                  d.updated_at DESC
-        LIMIT 1
         """,
         source_id,
-        title,
+        [title_key(t) for t in titles],
     )
+    return {r["key"]: r["id"] for r in rows}
+
+
+async def resolve_title(conn: asyncpg.Connection, source_id: uuid.UUID, title: str) -> uuid.UUID | None:
+    """Documento ativo com esse título: prefere a mesma coleção da origem, depois o mais recente."""
+    resolved = await resolve_titles(conn, source_id, [title])
+    return resolved.get(title_key(title))
 
 
 async def sync_wikilinks(conn: asyncpg.Connection, doc_id: uuid.UUID, content: str, actor: str) -> int:
     """Refaz os links kind='wikilink' do documento a partir do texto (links manuais não são tocados)."""
     await conn.execute("DELETE FROM document_links WHERE source_id = $1 AND kind = 'wikilink'", doc_id)
+    titles = parse_wikilinks(content)
+    resolved = await resolve_titles(conn, doc_id, titles)
     count = 0
-    for title in parse_wikilinks(content):
-        target = await resolve_title(conn, doc_id, title)
+    for title in titles:
         # ON CONFLICT: dois [[...]] diferentes podem cair no mesmo destino
         await conn.execute(
             """
@@ -62,7 +78,7 @@ async def sync_wikilinks(conn: asyncpg.Connection, doc_id: uuid.UUID, content: s
             VALUES ($1, $2, $3, 'wikilink', $4) ON CONFLICT DO NOTHING
             """,
             doc_id,
-            target,
+            resolved.get(title_key(title)),
             title,
             actor,
         )

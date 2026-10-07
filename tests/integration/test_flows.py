@@ -69,6 +69,23 @@ async def test_agent_lifecycle_via_services():
     with pytest.raises(PermissionDenied):
         await agents.create_agent(agent, "outro", "Outro", "x")
 
+    # memória, sessões e tarefas são escrita: exigem o escopo write
+    with pytest.raises(PermissionDenied):
+        await memory.remember(agent, "x")
+    with pytest.raises(PermissionDenied):
+        await memory.forget(agent, 1)
+    with pytest.raises(PermissionDenied):
+        await memory.upsert_task(agent, title="x")
+    with pytest.raises(PermissionDenied):
+        await memory.save_session(agent, "x")
+    # leitura segue liberada com read
+    assert (await memory.recall(agent, "ACME")) == []
+
+    # ganha o escopo write: o fluxo de memória segue normalmente
+    await agents.update_agent(ADMIN, "suporte", "habilitar escrita de memória", scopes=["read", "write"])
+    agent = await principal_for(created["api_key"])
+    assert agent.has("write")
+
     # memória: cria, deduplica, lembra
     m1 = await memory.remember(agent, "Cliente ACME prefere contato por WhatsApp", kind="preference", importance=4)
     assert m1["action"] == "created"
@@ -153,3 +170,65 @@ async def test_reindex_recomputes_chunks_and_centroids():
         doc_id,
     )
     assert row["has_centroid"] and row["n"] >= 1
+
+
+async def test_memory_merge_preserves_expiration():
+    """Merge de memória sem expires_in_days não pode zerar a expiração existente."""
+    created = await agents.create_agent(ADMIN, slug="memoria-exp", name="M", system_prompt="x")
+    agent = await principal_for(created["api_key"])
+
+    m1 = await memory.remember(agent, "Senha do VPN rotaciona a cada 90 dias", expires_in_days=30)
+    assert m1["action"] == "created"
+    # regrava sem expires_in_days: o merge deve manter a expiração já existente
+    m2 = await memory.remember(agent, "Senha do VPN rotaciona a cada 90 dias.", kind="procedure")
+    assert m2["action"] == "updated_existing" and m2["memory_id"] == m1["memory_id"]
+
+    row = await db.pool().fetchrow("SELECT expires_at FROM agent_memories WHERE id = $1", m1["memory_id"])
+    assert row["expires_at"] is not None
+
+P_DUP_1 = (
+    "O cliente pode pedir reembolso em ate sete dias apos a compra pelo portal "
+    "com o numero do pedido e o motivo do pedido deve ser informado no formulario do portal."
+)
+P_DUP_2 = (
+    "O suporte responde em ate vinte e quatro horas uteis e o cliente recebe a confirmacao "
+    "por e mail automaticamente quando o chamado e criado ou atualizado pela equipe de atendimento."
+)
+P_DUP_3 = (
+    "Trocas de produto com defeito sao gratuitas nos primeiros trinta dias e o cliente "
+    "deve guardar a nota fiscal para agilizar o atendimento na loja ou pelo site oficial."
+)
+P_DUP_OTHER = (
+    "A paisagem da serra catarinense impressiona visitantes durante o inverno quando a "
+    "geada cobre as hortensias e as estradas de terra ficam impraticaveis para carros baixos."
+)
+
+
+async def test_duplicate_detection_uses_document_centroid(monkeypatch):
+    """Primeiro chunk diferente, resto duplicado: o centroide do documento pega a duplicata.
+
+    Com o FakeProvider a similaridade do chunk 0 fica ~0,33 (abaixo de qualquer limiar
+    razoável) enquanto a do centroide fica ~0,83; o limiar 0,6 isola a métrica nova —
+    pela métrica antiga (chunk 0) este documento não seria detectado.
+    """
+    from mcp_rag_api.config import get_settings
+
+    monkeypatch.setenv("DUPLICATE_THRESHOLD", "0.6")
+    get_settings.cache_clear()
+    try:
+        await documents.create_collection(ADMIN, "dup-centroide")
+        base_content = "\n\n".join([P_DUP_1, P_DUP_2, P_DUP_3])
+        near_content = "\n\n".join([P_DUP_OTHER, P_DUP_2, P_DUP_3])
+        base = await documents.add_document(ADMIN, "dup-centroide", "Política de atendimento", base_content)
+        assert base["created"] is True
+
+        near = await documents.add_document(ADMIN, "dup-centroide", "Manual do atendimento", near_content)
+        assert near["created"] is False
+        assert near["similar_document"]["document_id"] == base["document_id"]
+
+        # controle: conteúdo realmente diferente não é marcado como duplicata
+        other = await documents.add_document(ADMIN, "dup-centroide", "Turismo", P_DUP_OTHER * 3)
+        assert other["created"] is True
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()

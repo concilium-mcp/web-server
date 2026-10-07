@@ -89,18 +89,23 @@ async def _embed_chunks(title: str, content: str) -> list[tuple[int, str, int, n
     return [(c.index, c.content, c.word_count, v) for c, v in zip(chunks, vectors, strict=True)]
 
 
+def _centroid(vectors: list[np.ndarray]) -> np.ndarray:
+    """Centroide (unitário) de um conjunto de embeddings: média normalizada."""
+    centroid = np.mean(vectors, axis=0)
+    norm = float(np.linalg.norm(centroid))
+    return centroid / norm if norm > 0 else centroid
+
+
 async def _write_chunks(conn: asyncpg.Connection, doc_id: uuid.UUID, chunks: list) -> None:
     await conn.execute("DELETE FROM chunks WHERE document_id = $1", doc_id)
     await conn.executemany(
         "INSERT INTO chunks (document_id, chunk_index, content, word_count, embedding) VALUES ($1, $2, $3, $4, $5)",
         [(doc_id, i, c, wc, v) for i, c, wc, v in chunks],
     )
-    # Centroide (unitário) = média dos embeddings: alimenta o grafo da dashboard via cosseno.
-    centroid = np.mean([v for _, _, _, v in chunks], axis=0)
-    norm = float(np.linalg.norm(centroid))
-    if norm > 0:
-        centroid = centroid / norm
-    await conn.execute("UPDATE documents SET centroid = $2 WHERE id = $1", doc_id, centroid)
+    # Centroide alimenta a detecção de duplicatas e o grafo da dashboard via cosseno.
+    await conn.execute(
+        "UPDATE documents SET centroid = $2 WHERE id = $1", doc_id, _centroid([v for _, _, _, v in chunks])
+    )
 
 
 async def _find_similar(
@@ -108,10 +113,11 @@ async def _find_similar(
 ) -> dict | None:
     row = await conn.fetchrow(
         """
-        SELECT d.id, d.title, 1 - (c.embedding <=> $2) AS similarity
-        FROM chunks c JOIN documents d ON d.id = c.document_id
-        WHERE d.collection_id = $1 AND d.status = 'active' AND ($3::uuid IS NULL OR d.id <> $3)
-        ORDER BY c.embedding <=> $2 LIMIT 1
+        SELECT d.id, d.title, 1 - (d.centroid <=> $2) AS similarity
+        FROM documents d
+        WHERE d.collection_id = $1 AND d.status = 'active' AND d.centroid IS NOT NULL
+          AND ($3::uuid IS NULL OR d.id <> $3)
+        ORDER BY d.centroid <=> $2 LIMIT 1
         """,
         collection_id,
         vector,
@@ -196,7 +202,9 @@ async def add_document(
     async with pool().acquire() as conn:
         cid = await _collection_id(conn, collection)
         if not force:
-            similar = await _find_similar(conn, cid, chunks[0][3], None)
+            # duplicata é avaliada pelo centroide do documento, não pelo chunk 0:
+            # o primeiro chunk pode ser o que mais difere (ex.: nova introdução).
+            similar = await _find_similar(conn, cid, _centroid([v for _, _, _, v in chunks]), None)
             if similar:
                 return {
                     "created": False,
