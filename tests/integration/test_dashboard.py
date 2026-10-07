@@ -64,9 +64,7 @@ async def test_auth_login_me_logout(seeded_docs, admin_client):
 
     # senha errada não loga
     async with await dash_client() as c:
-        resp = await c.post(
-            "/dash/api/auth/login", json={"username": ADMIN_USER["username"], "password": "errada"}
-        )
+        resp = await c.post("/dash/api/auth/login", json={"username": ADMIN_USER["username"], "password": "errada"})
         assert resp.status_code == 401
 
     # login → cookie HttpOnly → me → logout → sessão morre
@@ -119,9 +117,7 @@ async def test_centroid_written_on_ingest_and_reindex(seeded_docs):
 
 async def test_graph_endpoint_documents_level(seeded_docs, admin_client):
     client = admin_client
-    resp = await client.get(
-        "/dash/api/graph", params={"collection": "grafos", "min_similarity": 0.5, "k": 3}
-    )
+    resp = await client.get("/dash/api/graph", params={"collection": "grafos", "min_similarity": 0.5, "k": 3})
     assert resp.status_code == 200
     data = resp.json()
     assert data["level"] == "documents"
@@ -228,9 +224,7 @@ async def test_dash_create_agent(seeded_docs, admin_client):
 
 
 async def test_keys_list_create_renew_revoke(seeded_docs, admin_client):
-    resp = await admin_client.post(
-        "/dash/api/keys", json={"label": "dash-test", "scopes": ["read", "write"]}
-    )
+    resp = await admin_client.post("/dash/api/keys", json={"label": "dash-test", "scopes": ["read", "write"]})
     assert resp.status_code == 200
     created = resp.json()
     assert created["api_key"].startswith("kb_sk_")
@@ -288,16 +282,12 @@ async def test_users_management(seeded_docs, admin_client):
 
     # reset de senha derruba a sessão ativa do usuário
     client = await dash_client()
-    resp = await client.post(
-        "/dash/api/auth/login", json={"username": "novo-viewer", "password": "senha-12345"}
-    )
+    resp = await client.post("/dash/api/auth/login", json={"username": "novo-viewer", "password": "senha-12345"})
     assert resp.status_code == 200
     resp = await admin_client.patch(f"/dash/api/users/{uid}", json={"password": "outra-senha-999"})
     assert resp.status_code == 200
     assert (await client.get("/dash/api/auth/me")).status_code == 401
-    resp = await client.post(
-        "/dash/api/auth/login", json={"username": "novo-viewer", "password": "outra-senha-999"}
-    )
+    resp = await client.post("/dash/api/auth/login", json={"username": "novo-viewer", "password": "outra-senha-999"})
     assert resp.status_code == 200
     await client.aclose()
 
@@ -305,9 +295,7 @@ async def test_users_management(seeded_docs, admin_client):
     resp = await admin_client.patch(f"/dash/api/users/{uid}", json={"disabled": True})
     assert resp.status_code == 200 and resp.json()["disabled_at"] is not None
     client = await dash_client()
-    resp = await client.post(
-        "/dash/api/auth/login", json={"username": "novo-viewer", "password": "outra-senha-999"}
-    )
+    resp = await client.post("/dash/api/auth/login", json={"username": "novo-viewer", "password": "outra-senha-999"})
     assert resp.status_code == 401
     await client.aclose()
 
@@ -353,9 +341,7 @@ async def test_stats_endpoint(seeded_docs, admin_client):
 
 
 async def test_search_test_endpoint(seeded_docs, admin_client):
-    resp = await admin_client.post(
-        "/dash/api/search-test", json={"query": "alfa bravo", "top_k": 3}
-    )
+    resp = await admin_client.post("/dash/api/search-test", json={"query": "alfa bravo", "top_k": 3})
     assert resp.status_code == 200
     results = resp.json()["results"]
     assert results
@@ -363,9 +349,7 @@ async def test_search_test_endpoint(seeded_docs, admin_client):
     assert top["document_id"] in set(seeded_docs.values())
     assert {"title", "collection", "chunk_index", "content", "score", "similarity"} <= set(top)
     # busca distante das fontes dos fixtures ainda responde 200 (pode vir vazia)
-    resp = await admin_client.post(
-        "/dash/api/search-test", json={"query": "zzzz inexistente", "top_k": 3}
-    )
+    resp = await admin_client.post("/dash/api/search-test", json={"query": "zzzz inexistente", "top_k": 3})
     assert resp.status_code == 200
 
 

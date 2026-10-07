@@ -377,9 +377,7 @@ class AutonomyIn(BaseModel):
 
 
 @router.post("/agents/{slug}/autonomy")
-async def set_autonomy(
-    slug: str, body: AutonomyIn, user: DashUser = Depends(require_admin)
-) -> dict:
+async def set_autonomy(slug: str, body: AutonomyIn, user: DashUser = Depends(require_admin)) -> dict:
     """Liga/desliga a autonomia (auto_apply_updates) de um agente — ação de admin."""
     admin = Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
     return await agents.set_agent_autonomy(admin, slug, body.auto_apply_updates)
@@ -429,8 +427,7 @@ async def revoke_key(key_id: str, user: DashUser = Depends(require_admin)) -> di
     key_uuid = parse_uuid(key_id, "key_id")
     async with pool().acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
-            "UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL "
-            "RETURNING prefix, agent_id",
+            "UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL RETURNING prefix, agent_id",
             key_uuid,
         )
         if row is None:
@@ -450,9 +447,7 @@ async def renew_key(key_id: str, user: DashUser = Depends(require_admin)) -> dic
         if old["revoked_at"] is not None:
             raise KBError("A chave já está revogada; crie uma nova em vez de renovar.")
         await conn.execute("UPDATE api_keys SET revoked_at = now() WHERE id = $1", key_uuid)
-        key = await create_api_key(
-            conn, label=old["label"], scopes=list(old["scopes"]), agent_id=old["agent_id"]
-        )
+        key = await create_api_key(conn, label=old["label"], scopes=list(old["scopes"]), agent_id=old["agent_id"])
         await audit(conn, f"dash:{user.username}", "dash.key.renew", old["prefix"], new_prefix=key["prefix"])
     return {"revoked_key_id": str(key_uuid), **key}
 
@@ -462,9 +457,7 @@ async def renew_key(key_id: str, user: DashUser = Depends(require_admin)) -> dic
 
 @router.get("/users")
 async def list_users(_admin: DashUser = Depends(require_admin)) -> list[dict]:
-    rows = await pool().fetch(
-        "SELECT id, username, role, disabled_at, created_at FROM dash_users ORDER BY username"
-    )
+    rows = await pool().fetch("SELECT id, username, role, disabled_at, created_at FROM dash_users ORDER BY username")
     return records(rows)
 
 
@@ -489,18 +482,14 @@ class DashUserPatch(BaseModel):
 
 
 @router.patch("/users/{user_id}")
-async def update_dash_user(
-    user_id: str, body: DashUserPatch, admin: DashUser = Depends(require_admin)
-) -> dict:
+async def update_dash_user(user_id: str, body: DashUserPatch, admin: DashUser = Depends(require_admin)) -> dict:
     target = parse_uuid(user_id, "user_id")
     if not (body.role is not None or body.disabled is not None or body.password is not None):
         raise KBError("Nada para alterar: informe role, disabled ou password.")
     row = await pool().fetchrow("SELECT id, username FROM dash_users WHERE id = $1", target)
     if row is None:
         raise NotFound(f"Usuário {user_id} não encontrado.")
-    if str(row["id"]) == admin.id and (
-        (body.role is not None and body.role != "admin") or body.disabled
-    ):
+    if str(row["id"]) == admin.id and ((body.role is not None and body.role != "admin") or body.disabled):
         raise KBError("Use outra conta admin para rebaixar ou desativar a si mesmo.")
 
     sets, args = [], []
@@ -521,9 +510,7 @@ async def update_dash_user(
         add("password_hash = ${n}", dash_auth.hash_password(body.password))
     add("updated_at = now()")
     args.append(target)
-    await pool().execute(
-        f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args
-    )
+    await pool().execute(f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args)
     if body.disabled or body.password is not None:
         await dash_auth.revoke_user_sessions(str(row["id"]))
     async with pool().acquire() as conn:
