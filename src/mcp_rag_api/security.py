@@ -119,7 +119,14 @@ async def resolve_key(conn: asyncpg.Connection, raw: str) -> Principal:
     )
     if row is None:
         raise PermissionDenied("Chave de API inválida ou revogada.")
-    await conn.execute("UPDATE api_keys SET last_used_at = now() WHERE id = $1", row["id"])
+    # Throttle do last_used_at (a coluna é informativa; o portão do /mcp + cada tool resolviam a
+    # mesma chave 2× por request). A validade NÃO é cacheada: o SELECT acima roda toda vez, então
+    # a revogação continua imediata.
+    await conn.execute(
+        "UPDATE api_keys SET last_used_at = now() WHERE id = $1 "
+        "AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')",
+        row["id"],
+    )
     if row["agent_id"] is None:
         return Principal(actor=f"key:{row['prefix']}", scopes=frozenset(row["key_scopes"]))
     if row["agent_status"] != "active":

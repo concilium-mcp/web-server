@@ -1,13 +1,18 @@
 from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-# Dimensão fixa do vetor no schema (migrations/001_init.sql). Todos os provedores são configurados para ela.
+# Dimensão fixa do vetor no schema (migrations/001_init.sql, embutida no pacote). Todos os
+# provedores são configurados para ela.
 EMBEDDING_DIM = 1024
+
+
+def default_migrations_dir() -> Path:
+    """Diretório das migrações embutido no pacote (o wheel inclui src/mcp_rag_api/migrations)."""
+    return Path(str(files("mcp_rag_api").joinpath("migrations")))
 
 
 class Settings(BaseSettings):
@@ -15,7 +20,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://user:password@localhost:5432/kb"
     public_url: str = "http://localhost:8000"
-    migrations_dir: Path = PROJECT_ROOT / "migrations"
+    # None = usar as migrações embutidas no pacote; MIGRATIONS_DIR sobrescreve (deploys antigos).
+    migrations_dir: Path | None = None
 
     embedding_provider: Literal["voyage", "openai", "huggingface", "local", "fake"] = "voyage"
     embedding_model: str = ""

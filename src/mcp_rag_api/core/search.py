@@ -1,4 +1,11 @@
-"""Busca híbrida: vetorial (cosseno) + full-text (português), combinadas por Reciprocal Rank Fusion."""
+"""Busca híbrida: vetorial (cosseno) + full-text (português), combinadas por Reciprocal Rank Fusion.
+
+Requisito de banco: pgvector >= 0.8 (imagem pgvector/pgvector; o DB-DOCKER roda 0.8.6).
+A busca roda com `hnsw.iterative_scan = strict_order` (SET LOCAL na transação): sem ele, o
+planner ignora o índice HNSW quando há filtro de coleção/tags/metadata e avalia a distância em
+todo o conjunto filtrado (seq scan + sort). Em pgvector < 0.8 o GUC não existe (placeholder
+inofensivo) e o `hnsw.ef_search = 100`, enviado junto, assume o fallback.
+"""
 
 from ..db import pool, records
 from ..security import Principal
@@ -56,15 +63,24 @@ async def search_knowledge(
     effective = p.collection_filter(collections)
     top_k = min(max(top_k, 1), 50)
     vector = await get_embedder().embed_one(query, "query")
-    rows = await pool().fetch(
-        _SEARCH_SQL,
-        vector,
-        effective,
-        tags or None,
-        metadata or None,
-        max(top_k * 4, 20),  # candidatos por ramo antes da fusão
-        query,
-        RRF_K,
-        top_k,
-    )
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            # SET LOCAL só vale dentro da transação. iterative_scan='strict_order' (pgvector >= 0.8)
+            # faz o planner usar o índice HNSW mesmo com filtro, re-verificando candidatos a cada
+            # iteração, em vez de cair em seq scan + sort sobre todo o conjunto filtrado. Em pgvector
+            # < 0.8 o GUC não existe e o SET vira placeholder inofensivo — por isso o ef_search=100
+            # (fallback desde o 0.5.0) vai junto. Valores do enum em 0.8.x: off|relaxed_order|strict_order.
+            await conn.execute("SET LOCAL hnsw.iterative_scan = 'strict_order'")
+            await conn.execute("SET LOCAL hnsw.ef_search = 100")
+            rows = await conn.fetch(
+                _SEARCH_SQL,
+                vector,
+                effective,
+                tags or None,
+                metadata or None,
+                max(top_k * 4, 20),  # candidatos por ramo antes da fusão
+                query,
+                RRF_K,
+                top_k,
+            )
     return records(rows)
