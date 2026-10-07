@@ -15,7 +15,7 @@ from .config import get_settings
 from .dashboard_api import auth_router
 from .dashboard_api import router as dashboard_router
 from .mcp_server import mcp
-from .security import KBError, NotFound, PermissionDenied, bearer_token, resolve_key
+from .security import KBError, NotFound, PermissionDenied, VersionConflict, bearer_token, resolve_key
 
 # Precisa ser criado antes do lifespan: é aqui que o MCPServer instancia o session manager.
 # host="0.0.0.0" evita a proteção automática que só aceita Host localhost (atrás de proxy/domínio).
@@ -63,6 +63,14 @@ async def security_headers(request: Request, call_next: Callable[[Request], Awai
 async def kb_error_handler(_request: Request, exc: KBError) -> JSONResponse:
     status = 404 if isinstance(exc, NotFound) else 403 if isinstance(exc, PermissionDenied) else 400
     return JSONResponse(status_code=status, content={"detail": str(exc)})
+
+
+@app.exception_handler(VersionConflict)
+async def version_conflict_handler(_request: Request, exc: VersionConflict) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={"detail": {"message": str(exc), "current_version": exc.current_version}},
+    )
 
 
 class RequireApiKey:

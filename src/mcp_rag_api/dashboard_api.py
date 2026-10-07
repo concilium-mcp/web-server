@@ -13,7 +13,7 @@ from .core import agents, dash_auth, documents, graph, links, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
-from .security import KBError, NotFound, Principal, create_api_key, validate_scopes
+from .security import KBError, NotFound, Principal, VersionConflict, create_api_key, validate_scopes
 
 # ---------------------------------------------------------------- sessão
 
@@ -209,24 +209,26 @@ class NotePatch(BaseModel):
 
 @router.patch("/notes/{document_id}")
 async def update_note(document_id: str, body: NotePatch, user: DashUser = Depends(require_editor)) -> dict:
-    p = _writer(user)
-    current = await documents.get_document(p, document_id)
-    if current["version"] != body.base_version:
+    # Sem leitura prévia: a trava otimista é a própria query de UPDATE (base_version), e o
+    # conflito — inclusive em race — chega aqui como VersionConflict com a versão atual.
+    try:
+        return await documents.update_document(
+            _writer(user),
+            document_id,
+            (body.change_note or "").strip() or _DASH_CHANGE_NOTE,
+            content=body.content,
+            title=body.title,
+            tags=body.tags,
+            base_version=body.base_version,
+        )
+    except VersionConflict as exc:
         raise HTTPException(
             status_code=409,
             detail={
-                "message": f"A nota foi salva por {_who(current['updated_by'])} enquanto você editava.",
-                "current_version": current["version"],
+                "message": f"A nota foi salva por {_who(exc.actor)} enquanto você editava.",
+                "current_version": exc.current_version,
             },
-        )
-    return await documents.update_document(
-        p,
-        document_id,
-        (body.change_note or "").strip() or _DASH_CHANGE_NOTE,
-        content=body.content,
-        title=body.title,
-        tags=body.tags,
-    )
+        ) from exc
 
 
 class MoveIn(BaseModel):

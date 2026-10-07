@@ -9,7 +9,7 @@ import numpy as np
 
 from ..config import get_settings
 from ..db import audit, pool, record, records
-from ..security import KBError, NotFound, Principal
+from ..security import KBError, NotFound, Principal, VersionConflict
 from .chunking import chunk_text, content_hash, normalize
 from .embeddings import get_embedder
 from .wikilinks import resolve_pending, sync_wikilinks
@@ -251,7 +251,14 @@ async def update_document(
     tags: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
     source: str | None = None,
+    base_version: int | None = None,
 ) -> dict:
+    """Atualiza o documento criando uma versão nova.
+
+    Trava otimista: quando `base_version` vem informada, ela é a guarda do UPDATE
+    (`WHERE version = base_version`); conflito vira `VersionConflict` com a versão
+    atual. Sem `base_version`, a guarda é a versão lida — o conflito só aparece em race.
+    """
     p.require("write")
     if not change_note or not change_note.strip():
         raise KBError("change_note é obrigatório: descreva o que mudou e por quê.")
@@ -259,6 +266,12 @@ async def update_document(
         current = await _load_doc(conn, p, document_id, full=True)
         if current["status"] != "active":
             raise KBError("Documento arquivado não pode ser editado.")
+        if base_version is not None and base_version != current["version"]:
+            raise VersionConflict(
+                "O documento foi alterado por outro agente enquanto isso. Leia de novo e repita.",
+                current_version=current["version"],
+                actor=current["updated_by"],
+            )
         new_title = (title or current["title"]).strip()
         new_content = normalize(content) if content is not None else current["content"]
         new_tags = tags if tags is not None else current["tags"]
@@ -275,6 +288,7 @@ async def update_document(
 
     chunks = await _embed_chunks(new_title, new_content) if text_changed else None
     doc_uuid = parse_uuid(document_id)
+    expected_version = base_version if base_version is not None else current["version"]
     async with pool().acquire() as conn, conn.transaction():
         version = await conn.fetchval(
             """
@@ -290,10 +304,17 @@ async def update_document(
             new_meta,
             source,
             p.actor,
-            current["version"],
+            expected_version,
         )
         if version is None:
-            raise KBError("O documento foi alterado por outro agente enquanto isso. Leia de novo e repita.")
+            row = await conn.fetchrow("SELECT version, updated_by FROM documents WHERE id = $1", doc_uuid)
+            if row is None:
+                raise NotFound(f"Documento {document_id} não encontrado.")
+            raise VersionConflict(
+                "O documento foi alterado por outro agente enquanto isso. Leia de novo e repita.",
+                current_version=row["version"],
+                actor=row["updated_by"],
+            )
         await conn.execute(
             "INSERT INTO document_versions (document_id, version, title, content, metadata, tags, "
             "changed_by, change_note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
