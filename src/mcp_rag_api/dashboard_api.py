@@ -523,10 +523,14 @@ async def update_dash_user(user_id: str, body: DashUserPatch, admin: DashUser = 
             disabled=body.disabled,
             password_reset=body.password is not None,
         )
-    updated = await pool().fetchrow(
-        "SELECT id, username, role, disabled_at, created_at FROM dash_users WHERE id = $1", target
+    updated = record(
+        await pool().fetchrow(
+            "SELECT id, username, role, disabled_at, created_at FROM dash_users WHERE id = $1", target
+        )
     )
-    return record(updated)
+    if updated is None:  # narrow pro mypy: a linha já foi validada antes do UPDATE
+        raise NotFound(f"Usuário {user_id} não encontrado.")
+    return updated
 
 
 # ---------------------------------------------------------------- extras: stats e testador de busca

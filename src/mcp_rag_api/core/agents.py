@@ -39,7 +39,12 @@ def connect_command(slug: str, api_key: str) -> str:
 
 
 def _profile(row: asyncpg.Record | dict) -> dict:
-    r = record(row) if not isinstance(row, dict) else row
+    if isinstance(row, dict):
+        r: dict[str, Any] = row
+    else:
+        converted = record(row)
+        assert converted is not None  # a entrada é um Record; só None entraria None
+        r = converted
     keys = (
         "slug",
         "name",

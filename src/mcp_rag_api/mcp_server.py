@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, ParamSpec, TypeVar
+from typing import Any
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -62,11 +62,7 @@ async def current_principal(ctx: Context) -> Principal:
     raise PermissionDenied("Autenticação necessária: envie 'Authorization: Bearer <chave>' (ou KB_API_KEY no stdio).")
 
 
-P = ParamSpec("P")
-R = TypeVar("R")
-
-
-def _errors(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+def _errors[**P, R](fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     """Converte erros esperados em ToolError com mensagem limpa para o modelo."""
 
     @functools.wraps(fn)
@@ -79,7 +75,7 @@ def _errors(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     return wrapper
 
 
-def tool(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+def tool[**P, R](fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     return mcp.tool()(_errors(fn))
 
 
