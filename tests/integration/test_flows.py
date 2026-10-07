@@ -186,6 +186,7 @@ async def test_memory_merge_preserves_expiration():
     row = await db.pool().fetchrow("SELECT expires_at FROM agent_memories WHERE id = $1", m1["memory_id"])
     assert row["expires_at"] is not None
 
+
 P_DUP_1 = (
     "O cliente pode pedir reembolso em ate sete dias apos a compra pelo portal "
     "com o numero do pedido e o motivo do pedido deve ser informado no formulario do portal."

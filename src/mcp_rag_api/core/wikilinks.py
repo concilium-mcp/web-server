@@ -34,9 +34,7 @@ def parse_wikilinks(content: str) -> list[str]:
     return titles
 
 
-async def resolve_titles(
-    conn: asyncpg.Connection, source_id: uuid.UUID, titles: list[str]
-) -> dict[str, uuid.UUID]:
+async def resolve_titles(conn: asyncpg.Connection, source_id: uuid.UUID, titles: list[str]) -> dict[str, uuid.UUID]:
     """Resolve vários títulos de uma vez (1 query): mesma regra de `resolve_title`.
 
     Retorna mapa title_key -> id do documento ativo encontrado.

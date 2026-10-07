@@ -42,9 +42,7 @@ async def seeded_docs():
 
 
 async def dash_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://dash.test", headers=DASH_HEADERS
-    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://dash.test", headers=DASH_HEADERS)
 
 
 async def principal_for(api_key: str):
@@ -123,9 +121,7 @@ async def test_cleanup_sessions_remove_expiradas_e_revogadas(seeded_docs):
     assert result["dash_sessions_expired_deleted"] >= 1
     assert result["dash_sessions_revoked_deleted"] >= 1
     # só a sessão válida desse usuário sobrou (o banco é compartilhado entre os testes)
-    restantes = await db.pool().fetchval(
-        "SELECT count(*) FROM dash_sessions WHERE user_id = $1", uuid.UUID(user["id"])
-    )
+    restantes = await db.pool().fetchval("SELECT count(*) FROM dash_sessions WHERE user_id = $1", uuid.UUID(user["id"]))
     assert restantes == 1
     # rodar de novo sem nada a limpar não quebra
     again = await dash_auth.cleanup_sessions()
