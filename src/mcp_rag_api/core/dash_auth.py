@@ -19,9 +19,13 @@ from ..db import pool
 from ..security import KBError
 
 PBKDF2_ITERATIONS = 210_000  # recomendação OWASP para PBKDF2-HMAC-SHA256
-SESSION_TTL = timedelta(days=7)
 SESSION_COOKIE = "dash_session"
 ROLES = ("admin", "editor", "viewer")
+
+
+def session_ttl() -> timedelta:
+    """Duração de uma sessão da dash: DASH_SESSION_TTL_HOURS (padrão 7 dias)."""
+    return timedelta(hours=get_settings().dash_session_ttl_hours)
 
 
 @dataclass(frozen=True)
@@ -97,7 +101,7 @@ async def create_session(user_id: str) -> str:
         "INSERT INTO dash_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
         uuid.UUID(user_id),
         _hash_token(token),
-        datetime.now(UTC) + SESSION_TTL,
+        datetime.now(UTC) + session_ttl(),
     )
     return token
 
@@ -180,9 +184,7 @@ class LoginRateLimiter:
         self._failures[key] = (failures, blocked_until)
         if len(self._failures) > 10_000:  # sanity: não deixa o dict crescer para sempre
             now = time.monotonic()
-            self._failures = {
-                k: v for k, v in self._failures.items() if v[1] > now - LOGIN_BLOCK_MAX_SECONDS
-            }
+            self._failures = {k: v for k, v in self._failures.items() if v[1] > now - LOGIN_BLOCK_MAX_SECONDS}
 
     def reset(self, key: tuple[str, str]) -> None:
         self._failures.pop(key, None)
@@ -198,3 +200,15 @@ def login_rate_limiter() -> LoginRateLimiter:
     if _login_limiter is None or _login_limiter.max_failures != limit:
         _login_limiter = LoginRateLimiter(limit)
     return _login_limiter
+
+
+async def cleanup_sessions() -> dict:
+    """Higiene periódica (rodar via `mcp-rag-api cleanup`): apaga sessões da dash
+    expiradas ou revogadas — sem isso a tabela só cresce."""
+    expired = await pool().fetchval(
+        "WITH d AS (DELETE FROM dash_sessions WHERE expires_at <= now() RETURNING 1) SELECT count(*) FROM d"
+    )
+    revoked = await pool().fetchval(
+        "WITH d AS (DELETE FROM dash_sessions WHERE revoked_at IS NOT NULL RETURNING 1) SELECT count(*) FROM d"
+    )
+    return {"dash_sessions_expired_deleted": expired, "dash_sessions_revoked_deleted": revoked}

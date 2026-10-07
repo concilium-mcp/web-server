@@ -30,7 +30,11 @@ ORDER BY day
 @pytest.fixture(scope="module")
 async def viewer():
     await dash_auth.create_user("perf-leitora", "senha-segura-123", "viewer")
-    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://dash.test")
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://dash.test",
+        headers={"X-Requested-With": "fetch"},  # exigido em mutações da dash (CSRF)
+    )
     resp = await client.post("/dash/api/auth/login", json={"username": "perf-leitora", "password": "senha-segura-123"})
     assert resp.status_code == 200
     yield client

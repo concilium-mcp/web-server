@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from mcp_rag_api import db
+from mcp_rag_api.config import get_settings
 from mcp_rag_api.core import agents, dash_auth, documents
 from mcp_rag_api.main import app
 from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
@@ -104,6 +105,47 @@ async def test_session_expiration_and_disabled_user(seeded_docs):
     token2 = await dash_auth.create_session(user["id"])
     await db.pool().execute("UPDATE dash_users SET disabled_at = now() WHERE id = $1", uuid.UUID(user["id"]))
     assert (await dash_auth.resolve_session(token2)) is None
+
+
+async def test_cleanup_sessions_remove_expiradas_e_revogadas(seeded_docs):
+    user = await dash_auth.create_user("limpeza", "senha-muito-secreta", "viewer")
+    # uma sessão válida (fica), uma expirada e uma revogada (somem)
+    await dash_auth.create_session(user["id"])
+    token_exp = await dash_auth.create_session(user["id"])
+    token_rev = await dash_auth.create_session(user["id"])
+    await db.pool().execute(
+        "UPDATE dash_sessions SET expires_at = now() - interval '1 hour' WHERE token_hash = $1",
+        dash_auth._hash_token(token_exp),
+    )
+    await dash_auth.revoke_session(token_rev)
+
+    result = await dash_auth.cleanup_sessions()
+    assert result["dash_sessions_expired_deleted"] >= 1
+    assert result["dash_sessions_revoked_deleted"] >= 1
+    # só a sessão válida desse usuário sobrou (o banco é compartilhado entre os testes)
+    restantes = await db.pool().fetchval(
+        "SELECT count(*) FROM dash_sessions WHERE user_id = $1", uuid.UUID(user["id"])
+    )
+    assert restantes == 1
+    # rodar de novo sem nada a limpar não quebra
+    again = await dash_auth.cleanup_sessions()
+    assert again == {"dash_sessions_expired_deleted": 0, "dash_sessions_revoked_deleted": 0}
+
+
+async def test_session_expira_no_ttl_configurado(seeded_docs, monkeypatch):
+    monkeypatch.setenv("DASH_SESSION_TTL_HOURS", "1")
+    get_settings.cache_clear()
+    try:
+        user = await dash_auth.create_user("ttl-curto", "senha-muito-secreta", "viewer")
+        token = await dash_auth.create_session(user["id"])
+        row = await db.pool().fetchrow(
+            "SELECT expires_at, created_at FROM dash_sessions WHERE token_hash = $1",
+            dash_auth._hash_token(token),
+        )
+        vida = row["expires_at"] - row["created_at"]
+        assert vida.total_seconds() == pytest.approx(3600, abs=5)
+    finally:
+        get_settings.cache_clear()
 
 
 async def test_centroid_written_on_ingest_and_reindex(seeded_docs):

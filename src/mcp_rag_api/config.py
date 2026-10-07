@@ -3,11 +3,14 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Dimensão fixa do vetor no schema (migrations/001_init.sql, embutida no pacote). Todos os
 # provedores são configurados para ela.
 EMBEDDING_DIM = 1024
+if EMBEDDING_DIM <= 0:
+    raise ValueError("EMBEDDING_DIM deve ser positiva")
 
 
 def default_migrations_dir() -> Path:
@@ -47,7 +50,49 @@ class Settings(BaseSettings):
     # 0 desliga o rate limit (só para dev/testes controlados).
     dash_login_rate_limit: int = 5
 
+    kb_log_level: str = "INFO"
+    # tempo de vida das sessões da dashboard, em horas (padrão: 7 dias)
+    dash_session_ttl_hours: int = Field(default=168, gt=0)
+
+    @field_validator("duplicate_threshold", "memory_duplicate_threshold")
+    @classmethod
+    def _thresholds_entre_0_e_1(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("threshold de duplicata deve estar em [0, 1]")
+        return v
+
+    @model_validator(mode="after")
+    def _chunk_sem_conflito(self) -> "Settings":
+        # Sem isso, chunk_text explodiria com ValueError no meio de uma requisição (500).
+        if self.chunk_overlap_words >= self.chunk_words:
+            raise ValueError("CHUNK_OVERLAP_WORDS deve ser menor que CHUNK_WORDS")
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def check_config() -> list[str]:
+    """Validações de boot: falha rápido se faltar a chave do provedor de embeddings e
+    devolve os avisos (PUBLIC_URL padrão, auth desligada) para o lifespan logar.
+
+    Antes desta checagem a chave só era exigida na primeira chamada de embed (erro 500
+    em requisição); agora o servidor não sobe com configuração incompleta.
+    """
+    s = get_settings()
+    required_key = {
+        "voyage": ("VOYAGE_API_KEY", s.voyage_api_key),
+        "openai": ("OPENAI_API_KEY", s.openai_api_key),
+        "huggingface": ("HF_API_KEY", s.hf_api_key),
+    }
+    env_name, key = required_key.get(s.embedding_provider, ("", ""))
+    if env_name and not key:
+        raise RuntimeError(f"EMBEDDING_PROVIDER={s.embedding_provider} exige {env_name}: defina a variável no .env")
+    warnings: list[str] = []
+    if s.public_url == "http://localhost:8000":
+        warnings.append("PUBLIC_URL é o padrão http://localhost:8000 — defina a URL pública em produção")
+    if s.kb_auth_disabled:
+        warnings.append("KB_AUTH_DISABLED=true: AUTENTICAÇÃO DESLIGADA — use apenas em desenvolvimento!")
+    return warnings
