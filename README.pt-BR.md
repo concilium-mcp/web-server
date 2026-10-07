@@ -127,7 +127,7 @@ claude mcp add --transport http concilium http://localhost:8000/mcp \
 
 O **Claude Desktop** e outros clientes locais podem rodar o servidor via stdio: `uv run mcp-rag-api stdio` (a chave vem do `KB_API_KEY`).
 
-**Seus próprios agentes** (Claude Agent SDK ou qualquer cliente MCP) podem apontar para `https://seu-dominio/mcp` com o header `Authorization: Bearer`. O resto pode usar a API REST, documentada em `/docs`.
+**Seus próprios agentes** (Claude Agent SDK ou qualquer cliente MCP) podem apontar para `https://seu-dominio/mcp` com o header `Authorization: Bearer`. O resto pode usar a API REST, documentada em `/dash/docs` (exige login da dashboard).
 
 Depois é só conversar com o Claude:
 
@@ -160,7 +160,7 @@ Prompts: `design_agent`, `start_as_agent`, `answer_with_sources`, `save_learning
 ## Documentação
 
 - **[Guia completo](docs/guide.pt-BR.md)**: instalação, todas as tools MCP, escopos, exemplos REST, manutenção, problemas comuns e deploy em produção
-- Documentação interativa da API REST: `http://localhost:8000/docs`
+- Documentação interativa da API REST: `http://localhost:8000/dash/docs` (atrás do login da dashboard)
 - Arquitetura e decisões: [PLANO.md](PLANO.md)
 
 ## Perguntas frequentes
