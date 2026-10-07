@@ -4,16 +4,19 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import db
 from .api import router
 from .config import EMBEDDING_DIM, check_config, get_settings
+from .core.dash_auth import DashUser
 from .core.embeddings import close_embedder, get_embedder
-from .dashboard_api import auth_router
+from .dashboard_api import auth_router, current_user
 from .dashboard_api import router as dashboard_router
 from .logging_config import get_logger, setup_logging
 from .mcp_server import mcp
@@ -58,7 +61,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await close_embedder()
 
 
-app = FastAPI(title="MCP RAG API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="MCP RAG API",
+    version="0.1.0",
+    lifespan=lifespan,
+    # Sem /docs público: o Swagger fica em /dash/docs, atrás da sessão da dashboard.
+    docs_url=None,
+    openapi_url=None,
+)
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
@@ -147,6 +157,18 @@ class RequireApiKey:
 @app.get("/dashboard", include_in_schema=False)
 async def dashboard_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "dashboard.html")
+
+
+@app.get("/dash/docs", include_in_schema=False)
+async def dash_docs(_user: DashUser = Depends(current_user)) -> HTMLResponse:
+    """Swagger UI da API REST: só quem está logado na dashboard vê."""
+    return get_swagger_ui_html(openapi_url="/dash/api/openapi.json", title=f"{app.title} — documentação")
+
+
+@app.get("/dash/api/openapi.json", include_in_schema=False)
+async def dash_openapi(_user: DashUser = Depends(current_user)) -> JSONResponse:
+    """OpenAPI da API REST, protegido pela mesma sessão da dashboard."""
+    return JSONResponse(get_openapi(title=app.title, version=app.version, routes=app.routes))
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
