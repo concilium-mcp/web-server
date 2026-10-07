@@ -41,6 +41,7 @@ Agents also get a home: a profile (system prompt), persistent memory, session su
 **📝 Team notes workspace**
 - Folders, a WYSIWYG editor with a Markdown tab, tags and note templates
 - `[[Wikilinks]]` and backlinks, Obsidian style. Links to notes that don't exist yet resolve on their own once the note is created
+- **Obsidian vault import**: upload the `.zip` from the dashboard and watch real-time progress — folders become collections, notes become fully embedded documents, and re-importing updates instead of duplicating
 - Version history with restore, conflict detection and local drafts, so nothing gets lost
 
 **🔎 Real RAG for agents**

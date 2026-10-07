@@ -144,6 +144,26 @@ uv run mcp-rag-api create-user --username voce --role admin
 
 A tela inicial é **Notas**: pastas (coleções) à esquerda, editor visual (Toast UI, com aba Markdown) no centro e, sob demanda, as conexões e o histórico da nota. Tudo o que o time escreve vira, na hora, conhecimento dos agentes. O salvamento cria uma versão (Ctrl+S, botão, ~20 s parado ou ao trocar de nota); enquanto isso, um rascunho fica guardado no navegador. Atalhos: **Ctrl+S** salva, **Alt+N** cria nota.
 
+### Importar um vault Obsidian
+
+Quem tem um vault no Obsidian e quer migrar para a base: na tela Notas, clique em **Importar** (papel de editor ou admin), selecione o `.zip` do vault e acompanhe o progresso na tela — a vetorização (quebra em trechos + embeddings) roda em background e pode levar minutos em vaults grandes. O cancelamento é cooperativo: para entre uma nota e outra.
+
+**Como zipar o vault:** no gerenciador de arquivos, botão direito na pasta do vault → "Compactar"/"Comprimir" (ou `zip -r vault.zip minha-vault/`). Limites da v1: 100 MB de zip e 5.000 notas `.md`.
+
+**O que vira o quê:**
+
+| No vault | Na base |
+|---|---|
+| Pasta | Coleção (pastas aninhadas viram um nome único com " - ") |
+| Nota `.md` | Documento com chunking + vetorização completos |
+| `title`/`tags` do frontmatter | Título/tags do documento |
+| `[[Wikilink]]` entre notas | Link real (backlinks, grafo) — `![[embed]]` também vira link |
+| Caminho do arquivo no vault | `external_id` (a idempotência mora aqui) |
+
+**O que é ignorado:** a pasta `.obsidian/`, arquivos ocultos, anexos (imagens, PDFs) e o frontmatter no corpo do texto. Comentários Obsidian (`%%...%%`) são removidos.
+
+**Re-import é seguro:** importar o mesmo zip de novo atualiza as notas existentes (bump de versão só no que mudou) em vez de duplicar. Se o servidor reiniciar no meio do import, o job some da memória — basta importar de novo para completar.
+
 ## 6. Conectar ao Claude
 
 ### Claude Code

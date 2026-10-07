@@ -5,16 +5,18 @@ import { emit } from "./events.js";
 
 const api = {
   async req(method, path, body) {
+    const isForm = body instanceof FormData;
     const r = await fetch(`/dash/api${path}`, {
       method,
-      // X-Requested-With é exigido pelo backend em toda mutação da dash (defesa CSRF)
-      headers: { "X-Requested-With": "fetch", ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
+      // X-Requested-With é exigido pelo backend em toda mutação da dash (defesa CSRF);
+      // multipart (upload) vai sem Content-Type manual: o browser define o boundary
+      headers: { "X-Requested-With": "fetch", ...(body && !isForm ? { "Content-Type": "application/json" } : {}) },
+      body: isForm ? body : body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401 && state.user) {
       // sessão caiu (expirou/revogada): volta para o login (o handler é registrado no main)
       emit("session:end");
-      throw new Error(t("common.sessionExpired"));
+      throw Object.assign(new Error(t("common.sessionExpired")), { status: 401 });
     }
     if (!r.ok) throw Object.assign(new Error(`${r.status}`), { status: r.status, detail: (await r.json().catch(() => ({}))).detail });
     return r.status === 204 ? null : r.json();
@@ -31,6 +33,9 @@ const api = {
   },
   del(path) {
     return this.req("DELETE", path);
+  },
+  upload(path, formData) {
+    return this.req("POST", path, formData);
   },
 };
 

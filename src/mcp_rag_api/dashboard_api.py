@@ -4,12 +4,15 @@ Autenticação própria: sessão da dash via cookie HttpOnly (core/dash_auth.py)
 separada do Bearer da API pública (api_keys continua valendo para agentes/integrações).
 """
 
+import asyncio
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from .core import agents, dash_auth, documents, graph, links, search
+from .core import agents, dash_auth, documents, graph, links, obsidian_import, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -284,6 +287,169 @@ class CollectionIn(BaseModel):
 @router.post("/collections")
 async def create_collection(body: CollectionIn, user: DashUser = Depends(require_editor)) -> dict:
     return await documents.create_collection(_writer(user), body.name, body.description)
+
+
+# ---------------------------------------------------------------- importação Obsidian (plan-web-13)
+
+# Job assíncrono em memória (deploy é single-process; mesmo precedente do LoginRateLimiter).
+# Restart perde o job — aceitável porque o re-import é idempotente (external_id = path no vault).
+JOB_RETENTION = timedelta(hours=1)
+_IMPORT_CHUNK_SIZE = 1024 * 1024
+
+
+class ImportJob:
+    """Estado de um import: atualizado pela task em background, lido pelo poll da dash."""
+
+    def __init__(self, job_id: str, username: str, total: int) -> None:
+        self.id = job_id
+        self.username = username
+        self.status = "running"  # running | done | cancelled | error
+        self.total = total
+        self.done = 0
+        self.current_file: str | None = None
+        self.collections: set[str] = set()
+        self.notes = 0
+        self.errors: list[dict] = []
+        self.cancel_requested = False
+        self.finished_at: datetime | None = None
+
+    def snapshot(self) -> dict:
+        return {
+            "job_id": self.id,
+            "status": self.status,
+            "total": self.total,
+            "done": self.done,
+            "current_file": self.current_file,
+            "collections": len(self.collections),
+            "notes": self.notes,
+            "errors": self.errors,
+        }
+
+
+_import_jobs: dict[str, ImportJob] = {}
+_import_tasks: set[asyncio.Task[None]] = set()  # refs fortes: task pendente pode ser coletada pelo GC
+
+
+def _cleanup_finished_jobs() -> None:
+    """Jobs finalizados ficam ~1h em memória (o poll final lê o resumo) e depois evaporam."""
+    now = datetime.now(UTC)
+    for job_id, job in list(_import_jobs.items()):
+        if job.finished_at is not None and now - job.finished_at > JOB_RETENTION:
+            del _import_jobs[job_id]
+
+
+def _job_for(user: DashUser, job_id: str) -> ImportJob:
+    job = _import_jobs.get(job_id)
+    # 404 também para job de outra pessoa: não expõe a existência do job (id opaco, dono ou admin).
+    if job is None or (job.username != user.username and not user.is_admin):
+        raise NotFound("Importação não encontrada (os jobs ficam ~1h em memória).")
+    return job
+
+
+async def _read_upload_limited(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(_IMPORT_CHUNK_SIZE):
+        size += len(chunk)
+        if size > obsidian_import.MAX_ZIP_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"O zip passa de {obsidian_import.MAX_ZIP_BYTES // (1024 * 1024)} MB. "
+                "Divida o vault e importe em partes.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _run_import(job: ImportJob, user: DashUser, notes: list[obsidian_import.ParsedNote]) -> None:
+    """Vetorização sequencial (providers de embeddings dão 429 com concorrência).
+
+    Cada nota passa pelo upsert_document completo (chunk + embed + dedupe + sync de
+    wikilinks); o cancelamento é cooperativo, observado entre uma nota e outra.
+    """
+    writer = _writer(user)
+    try:
+        for note in notes:
+            if job.cancel_requested:
+                job.status = "cancelled"
+                break
+            job.current_file = note.path
+            try:
+                await documents.create_collection(writer, note.collection)
+                await documents.upsert_document(
+                    writer,
+                    note.collection,
+                    note.path,
+                    note.title,
+                    note.content,
+                    tags=note.tags or None,
+                    source="obsidian-import",
+                )
+            except Exception as exc:  # uma nota ruim não derruba o import inteiro
+                job.errors.append({"file": note.path, "error": str(exc)})
+            else:
+                job.collections.add(note.collection)
+                job.notes += 1
+            job.done += 1
+        else:
+            job.status = "done"
+    except asyncio.CancelledError:
+        # task derrubada (shutdown do processo/loop): não fica "running" para sempre
+        job.status = "cancelled"
+        raise
+    except Exception as exc:
+        job.status = "error"
+        job.errors.append({"file": None, "error": f"Falha inesperada do import: {exc}"})
+    finally:
+        job.current_file = None
+        job.finished_at = datetime.now(UTC)
+        logger.info(
+            "dash import: %s (username=%s, notes=%d/%d, collections=%d, errors=%d)",
+            job.status,
+            job.username,
+            job.notes,
+            job.total,
+            len(job.collections),
+            len(job.errors),
+        )
+
+
+@router.post("/import/obsidian")
+async def import_obsidian(file: UploadFile = File(...), user: DashUser = Depends(require_editor)) -> dict:
+    """Recebe o .zip do vault, valida e dispara o import em background (um ativo por usuário)."""
+    _cleanup_finished_jobs()
+    active = next(
+        (j for j in _import_jobs.values() if j.username == user.username and j.status == "running"),
+        None,
+    )
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Já existe uma importação em andamento ({active.done}/{active.total}). "
+            "Acompanhe-a ou cancele antes de iniciar outra.",
+        )
+    data = await _read_upload_limited(file)
+    notes = obsidian_import.parse_vault(data)  # KBError (zip inválido/sem notas/limites) vira 400
+    job = ImportJob(secrets.token_urlsafe(12), user.username, len(notes))
+    _import_jobs[job.id] = job
+    task = asyncio.create_task(_run_import(job, user, notes))
+    _import_tasks.add(task)
+    task.add_done_callback(_import_tasks.discard)
+    logger.info("dash import: iniciado (username=%s, total=%d)", user.username, job.total)
+    return {"job_id": job.id, "total": job.total}
+
+
+@router.get("/import/{job_id}")
+async def import_status(job_id: str, user: DashUser = Depends(current_user)) -> dict:
+    return _job_for(user, job_id).snapshot()
+
+
+@router.post("/import/{job_id}/cancel")
+async def import_cancel(job_id: str, user: DashUser = Depends(require_editor)) -> dict:
+    job = _job_for(user, job_id)
+    if job.status == "running":
+        job.cancel_requested = True
+    return {"status": job.status}
 
 
 @router.get("/documents/titles")

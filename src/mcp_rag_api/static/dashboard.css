@@ -3092,3 +3092,67 @@ table.dt .num {
     grid-template-columns: 1fr;
   }
 }
+
+/* importação Obsidian (plan-web-13): barra de progresso, contadores e erros do import */
+.import-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.import-progress {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.08);
+  overflow: hidden;
+}
+
+.import-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.import-current {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-height: 1em;
+}
+
+.import-counters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.import-cancel-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.import-errors {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* duas colunas (arquivo/erro) em vez do grid padrão de 6 das chaves API */
+.import-errors .trow {
+  grid-template-columns: minmax(160px, 1fr) 2fr;
+}
+
+.import-finished {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.import-finished h3 {
+  margin: 2px 0 6px;
+  font-size: 15.5px;
+  font-weight: 600;
+}

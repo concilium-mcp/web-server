@@ -41,6 +41,7 @@ Os agentes também ganham uma casa: perfil (system prompt), memória persistente
 **📝 Espaço de notas do time**
 - Pastas, editor visual com aba Markdown, tags e modelos de nota
 - `[[Wikilinks]]` e backlinks, no estilo do Obsidian. Links para notas que ainda não existem se conectam sozinhos quando a nota é criada
+- **Importação de vault Obsidian**: envie o `.zip` pela dashboard e acompanhe o progresso em tempo real — pastas viram coleções, notas viram documentos com vetorização completa, e re-importar atualiza em vez de duplicar
 - Histórico de versões com restauração, detecção de conflito e rascunho local, para nada se perder
 
 **🔎 RAG de verdade para agentes**

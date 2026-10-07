@@ -5,7 +5,14 @@ import { currentTheme } from "../theme.js";
 import { icon, loadIcons } from "../icons.js";
 import { escHtml, sanitizeNoteHtml, fmtDate, fmtAgo, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError } from "../ui.js";
 import { state, colorFor, store } from "../state.js";
+import { on } from "../events.js";
 import { openConnectModal } from "./docpanel.js";
+import { openImportModal } from "./import.js";
+
+// o import de vault (import.js) avisa quando a árvore precisa ser relida
+on("notes:changed", () => {
+  if (notes.tree) void loadNotesTree();
+});
 
 // Modelos v1 estáticos: não poluem a busca RAG com documentos-modelo. Textos no dicionário (tpl.<id>.*).
 const NOTE_TEMPLATE_IDS = ["blank", "client", "meeting", "proposal", "objections"];
@@ -46,6 +53,7 @@ function notesTemplate() {
               ? `<div class="notes-tree-actions">
                   <button class="btn sm primary" id="note-new" title="${t("notes.newNoteTitle")}">${icon("plus", 14)}<span>${t("notes.newNoteBtn")}</span></button>
                   <button class="btn sm ghost" id="folder-new" title="${t("notes.newFolderTitle")}">${icon("folder", 14)}<span>${t("notes.newFolderBtn")}</span></button>
+                  <button class="btn sm ghost" id="note-import" title="${t("import.toolbarTitle")}">${icon("folder-input", 14)}<span>${t("import.toolbarBtn")}</span></button>
                 </div>`
               : ""
           }
@@ -66,6 +74,7 @@ async function renderNotesScreen(main, openId) {
   });
   main.querySelector("#note-new")?.addEventListener("click", () => openNewNoteModal());
   main.querySelector("#folder-new")?.addEventListener("click", () => openNewFolderModal());
+  main.querySelector("#note-import")?.addEventListener("click", () => openImportModal());
   main.querySelector("#notes-tree-list").addEventListener("click", async (e) => {
     const folder = e.target.closest("[data-toggle-folder]");
     const note = e.target.closest("[data-note]");

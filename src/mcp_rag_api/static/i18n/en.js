@@ -478,6 +478,45 @@ window.I18N.en = {
   "connect.modeStart": "Connect mode: click the <strong>source</strong> document. Esc cancels.",
   "connect.modeTarget": "Source: <strong>{title}</strong>. Now click the <strong>target</strong>. Esc cancels.",
 
+  // Obsidian vault import
+  "import.toolbarBtn": "Import",
+  "import.toolbarTitle": "Import an Obsidian vault (.zip)",
+  "import.title": "Import Obsidian vault",
+  "import.subtitle": "Folders become collections and .md notes become documents",
+  "import.help":
+    "Zip your vault folder (right-click → Compress) and upload the .zip. The .obsidian folder, hidden files and attachments are ignored; [[links]] between notes are preserved. Re-importing the same zip updates notes instead of duplicating them.",
+  "import.fileLabel": "Vault .zip file",
+  "import.start": "Start import",
+  "import.closeTitle": "Import in progress",
+  "import.closeMsg":
+    "Closing now keeps the import running in the background (the notes tree is updated when it finishes) — or cancel the import.",
+  "import.keepInBackground": "Keep running in background",
+  "import.cancelImport": "Cancel import",
+  "import.notAZipTitle": "Invalid file",
+  "import.notAZipMsg": "Choose a .zip file (compress the vault folder first).",
+  "import.alreadyRunningTitle": "Import already running",
+  "import.alreadyRunningMsg": "Wait for the current import to finish (or cancel it) before starting another one.",
+  "import.startFailed": "Could not start the import",
+  "import.progressCount": "{done} / {total}",
+  "import.currentFile": "Importing: {file}",
+  "import.counterNotes": { one: "{count} note imported", other: "{count} notes imported" },
+  "import.counterCollections": { one: "{count} collection", other: "{count} collections" },
+  "import.counterErrors": { one: "{count} error", other: "{count} errors" },
+  "import.errorFile": "File",
+  "import.errorDetail": "Error",
+  "import.doneTitle": "Import finished",
+  "import.cancelledTitle": "Import cancelled",
+  "import.errorTitle": "Import failed",
+  "import.doneSummary":
+    "{notes} note(s) across {collections} collection(s) · {errors} error(s). Notes with the same path were updated, not duplicated.",
+  "import.closeSummary": "Done",
+  "import.progressLostTitle": "Progress lost",
+  "import.progressLostMsg":
+    "Could not reach the import status (network error). The notes tree will be refreshed anyway — if the import finished, the data is already there.",
+  "import.goneMsg":
+    "This job is no longer available on the server (jobs live in memory for ~1 hour; a restart clears them). Whatever was imported stays in the knowledge base — re-importing the zip is safe.",
+  "import.cancelFailed": "Could not cancel the import",
+
   // campos de senha
   "password.show": "Show password",
   "password.hide": "Hide password",
