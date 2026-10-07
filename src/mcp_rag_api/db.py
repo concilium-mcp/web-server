@@ -1,4 +1,8 @@
-"""Pool de conexões asyncpg + migrações SQL simples (arquivos NNN_*.sql aplicados em ordem)."""
+"""Pool de conexões asyncpg + migrações SQL simples (arquivos NNN_*.sql aplicados em ordem).
+
+Regras das migrações: TODA migração nova usa IF NOT EXISTS / IF EXISTS onde aplicável;
+migrações já aplicadas (registradas em schema_migrations) não se editam — criar arquivo novo.
+"""
 
 import json
 import uuid
@@ -9,9 +13,13 @@ from typing import Any
 import asyncpg
 from pgvector.asyncpg import register_vector
 
-from .config import get_settings
+from .config import default_migrations_dir, get_settings
 
 _pool: asyncpg.Pool | None = None
+
+# Lock global de migração (advisory): dois processos subindo juntos (rolling deploy, --workers > 1)
+# serializam em vez de aplicar a mesma migração em corrida.
+_MIGRATION_LOCK_ID = 727_474
 
 
 async def _init_connection(conn: asyncpg.Connection) -> None:
@@ -24,18 +32,23 @@ async def run_migrations(database_url: str | None = None) -> list[str]:
     conn = await asyncpg.connect(database_url or settings.database_url)
     applied: list[str] = []
     try:
-        await conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations "
-            "(name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
-        )
-        done = {r["name"] for r in await conn.fetch("SELECT name FROM schema_migrations")}
-        for path in sorted(settings.migrations_dir.glob("*.sql")):
-            if path.name in done:
-                continue
-            async with conn.transaction():
-                await conn.execute(path.read_text(encoding="utf-8"))
-                await conn.execute("INSERT INTO schema_migrations (name) VALUES ($1)", path.name)
-            applied.append(path.name)
+        await conn.execute("SELECT pg_advisory_lock($1)", _MIGRATION_LOCK_ID)
+        try:
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+            )
+            done = {r["name"] for r in await conn.fetch("SELECT name FROM schema_migrations")}
+            migrations_dir = settings.migrations_dir or default_migrations_dir()
+            for path in sorted(migrations_dir.glob("*.sql")):
+                if path.name in done:
+                    continue
+                async with conn.transaction():
+                    await conn.execute(path.read_text(encoding="utf-8"))
+                    await conn.execute("INSERT INTO schema_migrations (name) VALUES ($1)", path.name)
+                applied.append(path.name)
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock($1)", _MIGRATION_LOCK_ID)
     finally:
         await conn.close()
     return applied
