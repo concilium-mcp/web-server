@@ -57,11 +57,14 @@ async def _sync_agents(out_dir: Path) -> list[Path]:
 
 
 async def _cleanup() -> dict:
+    from .core import dash_auth
     from .core.memory import cleanup_memories
 
     await db.init_pool()
     try:
-        return await cleanup_memories()
+        result = await cleanup_memories()
+        result.update(await dash_auth.cleanup_sessions())
+        return result
     finally:
         await db.close_pool()
 
@@ -110,7 +113,7 @@ def main() -> None:
     sync = sub.add_parser("sync-agents", help="Gera .claude/agents/<slug>.md a partir do banco")
     sync.add_argument("--out", type=Path, default=Path(".claude/agents"))
 
-    sub.add_parser("cleanup", help="Remove memórias expiradas")
+    sub.add_parser("cleanup", help="Remove memórias e sessões da dash expiradas")
     sub.add_parser("relink", help="Reprocessa os [[wikilinks]] de todos os documentos (backfill/importação)")
     sub.add_parser("reindex", help="Recalcula todos os embeddings com o provedor atual (após trocar de provedor)")
 
@@ -119,6 +122,9 @@ def main() -> None:
         case "serve":
             import uvicorn
 
+            from .logging_config import setup_logging
+
+            setup_logging()
             uvicorn.run("mcp_rag_api.main:app", host=args.host, port=args.port, reload=args.reload)
         case "stdio":
             from .mcp_server import mcp

@@ -13,7 +13,10 @@ from .core import agents, dash_auth, documents, graph, links, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
+from .logging_config import get_logger
 from .security import KBError, NotFound, Principal, VersionConflict, create_api_key, validate_scopes
+
+logger = get_logger()
 
 # ---------------------------------------------------------------- sessão
 
@@ -76,6 +79,7 @@ async def login(body: LoginIn, request: Request, response: Response) -> dict:
     user = await dash_auth.authenticate(body.username, body.password)
     if user is None:
         limiter.register_failure(rate_key)
+        logger.warning("dash auth: login falhou (username=%s)", body.username.strip().lower())
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
     limiter.reset(rate_key)
     token = await dash_auth.create_session(user.id)
@@ -84,10 +88,11 @@ async def login(body: LoginIn, request: Request, response: Response) -> dict:
     # o cookie continua funcionando sem Secure.
     forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
     secure = request.url.scheme == "https" or forwarded_proto == "https"
+    logger.info("dash auth: login ok (username=%s role=%s)", user.username, user.role)
     response.set_cookie(
         dash_auth.SESSION_COOKIE,
         token,
-        max_age=int(dash_auth.SESSION_TTL.total_seconds()),
+        max_age=int(dash_auth.session_ttl().total_seconds()),
         httponly=True,
         samesite="lax",
         secure=secure,
@@ -100,6 +105,7 @@ async def login(body: LoginIn, request: Request, response: Response) -> dict:
 async def logout(request: Request, response: Response, _user: DashUser = Depends(current_user)) -> dict:
     token = request.cookies.get(dash_auth.SESSION_COOKIE, "")
     await dash_auth.revoke_session(token)
+    logger.info("dash auth: logout (username=%s)", _user.username)
     response.delete_cookie(dash_auth.SESSION_COOKIE, path="/")
     return {"ok": True}
 
