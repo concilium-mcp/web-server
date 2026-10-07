@@ -234,7 +234,7 @@ const uiError = (title, err) => uiDialog({ title, message: err?.detail || err?.m
 const brandLogo = (size = 22) => `<img class="brand-logo" src="static/brand/logo.svg" width="${size}" height="${size}" alt="" />`;
 
 const escHtml = (s) =>
-  String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString(locale()) : "—");
 
@@ -611,7 +611,8 @@ window.addEventListener("hashchange", () => {
   else goTo("notes", m[1]);
 });
 
-// alterações pendentes ao fechar a aba: o rascunho já está no navegador; tenta salvar também
+// alterações pendentes ao fechar a aba: só persiste o rascunho local (store = localStorage).
+// o salvamento no servidor não acontece aqui — ele fica com o botão Salvar/autosave.
 window.addEventListener("pagehide", () => {
   if (notes.dirty && notes.current) {
     store.set(DRAFT_PREFIX + notes.current.id, { base_version: notes.current.version, at: new Date().toISOString(), ...editedNote() });
