@@ -105,6 +105,12 @@ class AutonomyIn(BaseModel):
     note: str | None = None
 
 
+class CloneIn(BaseModel):
+    new_slug: str
+    name: str
+    overrides: dict[str, Any] | None = None
+
+
 class ReviewIn(BaseModel):
     approve: bool
     note: str | None = None
@@ -268,19 +274,49 @@ async def issue_key(slug: str, label: str | None = None, p: Principal = Auth) ->
     return await agents.issue_agent_key(p, slug, label)
 
 
+@router.delete("/keys/{key_prefix}")
+async def revoke_agent_key(key_prefix: str, p: Principal = Auth) -> dict:
+    """Revoga uma chave pelo prefixo (ex.: 'kb_sk_AbCdE'). Exige agents:manage (ou admin)."""
+    return await agents.revoke_agent_key(p, key_prefix)
+
+
+@router.post("/agents/{slug}/clone")
+async def clone_agent(slug: str, body: CloneIn, p: Principal = Auth) -> dict:
+    """Cria um agente novo copiando outro. Exige agents:manage (ou admin)."""
+    return await agents.clone_agent(p, slug, body.new_slug, body.name, body.overrides)
+
+
+@router.post("/agents/{slug}/restore/{version}")
+async def restore_agent_version(
+    slug: str, version: int, change_note: str | None = None, p: Principal = Auth
+) -> dict:
+    """Volta o perfil do agente para uma versão anterior. Exige agents:manage (ou admin)."""
+    return await agents.restore_agent_version(p, slug, version, change_note)
+
+
 @router.get("/agents/{slug}/context")
 async def agent_context(slug: str, p: Principal = Auth) -> dict:
     return await memory.load_agent(p, slug)
 
 
 @router.get("/agents/{slug}/memories")
-async def recall(slug: str, query: str, limit: int = 8, p: Principal = Auth) -> list[dict]:
-    return await memory.recall(p, query, slug, limit=limit)
+async def recall(
+    slug: str, query: str, include_shared: bool = True, limit: int = 8, p: Principal = Auth
+) -> list[dict]:
+    return await memory.recall(p, query, slug, include_shared, limit)
 
 
 @router.post("/agents/{slug}/memories")
 async def remember(slug: str, body: MemoryIn, p: Principal = Auth) -> dict:
     return await memory.remember(p, agent_slug=slug, **body.model_dump())
+
+
+@router.delete("/agents/{slug}/memories/{memory_id}")
+async def forget(
+    slug: str, memory_id: int, replacement: str | None = None, p: Principal = Auth
+) -> dict:
+    """Apaga uma memória; com `replacement`, corrige o conteúdo em vez de apagar."""
+    return await memory.forget(p, memory_id, replacement, slug)
 
 
 @router.get("/agents/{slug}/sessions")
