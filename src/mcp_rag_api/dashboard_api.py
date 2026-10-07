@@ -598,14 +598,26 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
             """,
             days,
         )
-        # uma linha por dia do período, inclusive os sem edição (zeros explícitos para o gráfico)
+        # uma linha por dia do período, inclusive os sem edição (zeros explícitos para o gráfico).
+        # Agregação única por dia (GROUP BY) em vez de ~2×days subconsultas correlatas.
         edits = await conn.fetch(
             """
-            SELECT d::date AS day,
-                   (SELECT count(*) FROM document_versions v WHERE v.created_at::date = d::date) AS edits,
-                   (SELECT count(*) FROM document_versions v
-                     WHERE v.created_at::date = d::date AND v.version = 1) AS created
-            FROM generate_series(current_date - ($1 - 1), current_date, interval '1 day') AS d
+            WITH days AS (
+                SELECT d::date AS day
+                FROM generate_series(current_date - ($1 - 1), current_date, interval '1 day') AS d
+            ),
+            counts AS (
+                SELECT created_at::date AS day,
+                       count(*) AS edits,
+                       count(*) FILTER (WHERE version = 1) AS created
+                FROM document_versions
+                WHERE created_at >= current_date - ($1 - 1)
+                GROUP BY 1
+            )
+            SELECT days.day,
+                   coalesce(counts.edits, 0) AS edits,
+                   coalesce(counts.created, 0) AS created
+            FROM days LEFT JOIN counts USING (day)
             ORDER BY day
             """,
             days,
