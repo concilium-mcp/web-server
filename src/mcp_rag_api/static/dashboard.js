@@ -4,7 +4,8 @@ const api = {
   async req(method, path, body) {
     const r = await fetch(`/dash/api${path}`, {
       method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      // X-Requested-With é exigido pelo backend em toda mutação da dash (defesa CSRF)
+      headers: { "X-Requested-With": "fetch", ...(body ? { "Content-Type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 401 && state.user) {
@@ -704,7 +705,7 @@ function keysCreateForm(agents) {
           <span class="form-label">${t("keys.owner")}</span>
           <select class="input" id="key-agent">
             <option value="">${t("keys.humanKey")}</option>
-            ${agents.map((a) => `<option value="${a.slug}">agent: ${escHtml(a.slug)}</option>`).join("")}
+            ${agents.map((a) => `<option value="${escHtml(a.slug)}">agent: ${escHtml(a.slug)}</option>`).join("")}
           </select>
         </label>
       </div>
@@ -1021,7 +1022,7 @@ function agentCard(a, isAdmin) {
         </div>
         ${
           isAdmin && !archived
-            ? `<button class="btn sm ${a.auto_apply_updates ? "primary" : "ghost"}" data-autonomy="${a.slug}" data-on="${a.auto_apply_updates}"
+            ? `<button class="btn sm ${a.auto_apply_updates ? "primary" : "ghost"}" data-autonomy="${escHtml(a.slug)}" data-on="${a.auto_apply_updates}"
                  title="${t("agents.autonomyBtnTitle")}">
                  ${icon("zap", 14)}<span>${a.auto_apply_updates ? t("agents.autonomyOn") : t("agents.autonomyOff")}</span>
                </button>`
@@ -2793,7 +2794,7 @@ function fillCollectionFilter(collections) {
   const current = state.collection;
   sel.innerHTML =
     `<option value="">${t("graph.all")}</option>` +
-    collections.map((c) => `<option value="${c.name}" ${c.name === current ? "selected" : ""}>${c.name} (${c.count})</option>`).join("");
+    collections.map((c) => `<option value="${escHtml(c.name)}" ${c.name === current ? "selected" : ""}>${escHtml(c.name)} (${c.count})</option>`).join("");
 }
 
 function hexAlpha(hex, alpha) {

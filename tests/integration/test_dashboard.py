@@ -27,6 +27,9 @@ FONTE_C = "mike november oscar papa quebec romeo"
 
 ADMIN_USER = {"username": "dash-admin", "password": "senha-muito-secreta"}
 
+# o dashboard.js envia X-Requested-With em todo fetch; as mutações sem ele viram 403
+DASH_HEADERS = {"X-Requested-With": "fetch"}
+
 
 @pytest.fixture(scope="module")
 async def seeded_docs():
@@ -38,7 +41,9 @@ async def seeded_docs():
 
 
 async def dash_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://dash.test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://dash.test", headers=DASH_HEADERS
+    )
 
 
 async def principal_for(api_key: str):

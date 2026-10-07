@@ -17,6 +17,17 @@ from .security import KBError, NotFound, Principal, create_api_key, validate_sco
 
 # ---------------------------------------------------------------- sessão
 
+# Defesa CSRF em profundidade: além do cookie SameSite=Lax, toda mutação da dash precisa
+# deste header customizado (o dashboard.js o envia em todos os fetch). Form/simple request
+# cross-site não consegue setar header, então o POST forjado morre aqui com 403.
+CSRF_HEADER = "x-requested-with"
+CSRF_VALUE = "fetch"
+
+
+async def require_csrf_header(request: Request) -> None:
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.headers.get(CSRF_HEADER) != CSRF_VALUE:
+        raise HTTPException(status_code=403, detail="Requisição sem o cabeçalho X-Requested-With.")
+
 
 async def current_user(request: Request) -> DashUser:
     token = request.cookies.get(dash_auth.SESSION_COOKIE)
@@ -45,21 +56,41 @@ class LoginIn(BaseModel):
     password: str
 
 
-auth_router = APIRouter(prefix="/dash/api/auth", tags=["dashboard-auth"])
+auth_router = APIRouter(
+    prefix="/dash/api/auth",
+    tags=["dashboard-auth"],
+    dependencies=[Depends(require_csrf_header)],
+)
 
 
 @auth_router.post("/login")
-async def login(body: LoginIn, response: Response) -> dict:
+async def login(body: LoginIn, request: Request, response: Response) -> dict:
+    limiter = dash_auth.login_rate_limiter()
+    rate_key = (body.username.strip().lower(), request.client.host if request.client else "?")
+    blocked = limiter.blocked_for(rate_key)
+    if blocked:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Muitas tentativas de login. Tente novamente em {int(blocked) + 1}s.",
+        )
     user = await dash_auth.authenticate(body.username, body.password)
     if user is None:
+        limiter.register_failure(rate_key)
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+    limiter.reset(rate_key)
     token = await dash_auth.create_session(user.id)
+    # cookie Secure só em HTTPS: em produção o uvicorn roda atrás de proxy com
+    # --proxy-headers (X-Forwarded-Proto chega no scheme da request); em dev local (HTTP)
+    # o cookie continua funcionando sem Secure.
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    secure = request.url.scheme == "https" or forwarded_proto == "https"
     response.set_cookie(
         dash_auth.SESSION_COOKIE,
         token,
         max_age=int(dash_auth.SESSION_TTL.total_seconds()),
         httponly=True,
         samesite="lax",
+        secure=secure,
         path="/",
     )
     return {"id": user.id, "username": user.username, "role": user.role}
@@ -84,7 +115,7 @@ async def me(user: DashUser = Depends(current_user)) -> dict:
 router = APIRouter(
     prefix="/dash/api",
     tags=["dashboard"],
-    dependencies=[Depends(current_user)],
+    dependencies=[Depends(require_csrf_header), Depends(current_user)],
 )
 
 
@@ -510,8 +541,12 @@ async def update_dash_user(user_id: str, body: DashUserPatch, admin: DashUser = 
         add("password_hash = ${n}", dash_auth.hash_password(body.password))
     add("updated_at = now()")
     args.append(target)
-    await pool().execute(f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args)
-    if body.disabled or body.password is not None:
+    await pool().execute(
+        f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args
+    )
+    # desativação, troca de senha OU troca de papel derrubam as sessões ativas —
+    # sem isso um admin rebaixado a viewer seguiria operando com o papel antigo
+    if body.disabled or body.password is not None or body.role is not None:
         await dash_auth.revoke_user_sessions(str(row["id"]))
     async with pool().acquire() as conn:
         await audit(

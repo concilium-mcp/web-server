@@ -7,12 +7,14 @@ em cookie HttpOnly. Só o hash do token vai para o banco (igual ao padrão das a
 import hashlib
 import hmac
 import secrets
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
 
+from ..config import get_settings
 from ..db import pool
 from ..security import KBError
 
@@ -127,8 +129,72 @@ async def revoke_session(token: str) -> None:
 
 
 async def revoke_user_sessions(user_id: str) -> None:
-    """Usado ao desativar/resetar um usuário: derruba todas as sessões dele."""
+    """Usado ao desativar/resetar/rebaixar um usuário: derruba todas as sessões dele."""
     await pool().execute(
         "UPDATE dash_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
         uuid.UUID(user_id),
     )
+
+
+# ---------------------------------------------------------------- rate limit do login
+
+# Backoff exponencial: a 1ª falha acima do limite bloqueia ~2 s e dobra a cada nova
+# tentativa, até o teto de 15 min. Contagem em memória (um processo só); uma falha
+# contra um usuário inexistente também conta — senão o limite seria trivial de furar.
+LOGIN_BLOCK_BASE_SECONDS = 2.0
+LOGIN_BLOCK_MAX_SECONDS = 900.0
+
+
+class LoginRateLimiter:
+    """Contador de falhas de login por chave (username, IP), com bloqueio crescente.
+
+    Não persiste nada: o objetivo é apenas frear força bruta online. Desligado
+    quando max_failures == 0 (DASH_LOGIN_RATE_LIMIT=0).
+    """
+
+    def __init__(self, max_failures: int, base_seconds: float = LOGIN_BLOCK_BASE_SECONDS) -> None:
+        self.max_failures = max_failures
+        self.base_seconds = base_seconds
+        self._failures: dict[tuple[str, str], tuple[int, float]] = {}
+
+    def blocked_for(self, key: tuple[str, str]) -> float:
+        """Segundos restantes de bloqueio para a chave (0 = pode tentar)."""
+        if self.max_failures <= 0:
+            return 0.0
+        entry = self._failures.get(key)
+        if not entry:
+            return 0.0
+        _, blocked_until = entry
+        return max(0.0, blocked_until - time.monotonic())
+
+    def register_failure(self, key: tuple[str, str]) -> None:
+        if self.max_failures <= 0:
+            return
+        failures, _ = self._failures.get(key, (0, 0.0))
+        failures += 1
+        blocked_until = 0.0
+        # atingiu o limite: bloqueia a próxima tentativa; cada nova falha dobra a espera
+        if failures >= self.max_failures:
+            delay = min(self.base_seconds * 2 ** (failures - self.max_failures), LOGIN_BLOCK_MAX_SECONDS)
+            blocked_until = time.monotonic() + delay
+        self._failures[key] = (failures, blocked_until)
+        if len(self._failures) > 10_000:  # sanity: não deixa o dict crescer para sempre
+            now = time.monotonic()
+            self._failures = {
+                k: v for k, v in self._failures.items() if v[1] > now - LOGIN_BLOCK_MAX_SECONDS
+            }
+
+    def reset(self, key: tuple[str, str]) -> None:
+        self._failures.pop(key, None)
+
+
+_login_limiter: LoginRateLimiter | None = None
+
+
+def login_rate_limiter() -> LoginRateLimiter:
+    """Instância única do limiter, reconstruída se o env mudar (ex.: testes)."""
+    global _login_limiter
+    limit = get_settings().dash_login_rate_limit
+    if _login_limiter is None or _login_limiter.max_failures != limit:
+        _login_limiter = LoginRateLimiter(limit)
+    return _login_limiter
