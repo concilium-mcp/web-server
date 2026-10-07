@@ -184,9 +184,7 @@ class LoginRateLimiter:
         self._failures[key] = (failures, blocked_until)
         if len(self._failures) > 10_000:  # sanity: não deixa o dict crescer para sempre
             now = time.monotonic()
-            self._failures = {
-                k: v for k, v in self._failures.items() if v[1] > now - LOGIN_BLOCK_MAX_SECONDS
-            }
+            self._failures = {k: v for k, v in self._failures.items() if v[1] > now - LOGIN_BLOCK_MAX_SECONDS}
 
     def reset(self, key: tuple[str, str]) -> None:
         self._failures.pop(key, None)

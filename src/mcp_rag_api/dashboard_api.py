@@ -549,9 +549,7 @@ async def update_dash_user(user_id: str, body: DashUserPatch, admin: DashUser = 
         add("password_hash = ${n}", dash_auth.hash_password(body.password))
     add("updated_at = now()")
     args.append(target)
-    await pool().execute(
-        f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args
-    )
+    await pool().execute(f"UPDATE dash_users SET {', '.join(sets)} WHERE id = ${len(args)}", *args)
     # desativação, troca de senha OU troca de papel derrubam as sessões ativas —
     # sem isso um admin rebaixado a viewer seguiria operando com o papel antigo
     if body.disabled or body.password is not None or body.role is not None:
