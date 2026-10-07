@@ -1,5 +1,6 @@
 """Coleções e documentos: CRUD, versionamento, indexação em chunks e detecção de duplicatas."""
 
+import re
 import uuid
 from typing import Any
 
@@ -23,6 +24,21 @@ def parse_uuid(value: str, what: str = "id") -> uuid.UUID:
 
 # ---------------------------------------------------------------- coleções
 
+# Nome de coleção aparece em URLs, atributos data-* e <option> da dash: sem HTML/JS,
+# só letras (unicode), dígitos, "_" , "-" e espaço; começa em letra/dígito/_; até 80 chars.
+COLLECTION_NAME_RE = re.compile(r"^[\w][\w \-]{0,79}$", re.UNICODE)
+
+
+def validate_collection_name(name: str) -> str:
+    """Normaliza e valida o nome de uma coleção. Rejeita com KBError (400) o que não serve."""
+    cleaned = name.strip()
+    if not COLLECTION_NAME_RE.fullmatch(cleaned):
+        raise KBError(
+            "Nome de coleção inválido: use de 1 a 80 caracteres, começando com letra, "
+            "número ou '_' — permitidos também espaço e '-'."
+        )
+    return cleaned
+
 
 async def list_collections(p: Principal) -> list[dict]:
     p.require("read")
@@ -39,13 +55,14 @@ async def list_collections(p: Principal) -> list[dict]:
 
 async def create_collection(p: Principal, name: str, description: str | None = None) -> dict:
     p.require("write")
+    name = validate_collection_name(name)
     p.require_collection(name)
     async with pool().acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
             "INSERT INTO collections (name, description) VALUES ($1, $2) "
             "ON CONFLICT (name) DO UPDATE SET description = COALESCE(EXCLUDED.description, collections.description) "
             "RETURNING name, description, created_at",
-            name.strip(),
+            name,
             description,
         )
         await audit(conn, p.actor, "collection.upsert", name)
