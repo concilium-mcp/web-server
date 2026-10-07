@@ -3,6 +3,8 @@
 Coleções com prefixo "nt-" (o banco é compartilhado entre os módulos de integração).
 """
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -68,6 +70,29 @@ async def test_save_versions_conflict_and_restore(editor):
     assert restored["version"] == 3 and restored["restored_from"] == 1
     note = (await editor.get(f"/dash/api/notes/{note_id}")).json()
     assert "zulu yankee" in note["content"] and note["version"] == 3
+
+
+async def test_simultaneous_saves_with_same_base_version_one_wins(editor):
+    """Race real (plan-web-08): dois PATCH ao mesmo tempo com a mesma base_version — um 200 e um 409."""
+    await editor.post("/dash/api/collections", json={"name": "nt-corrida"})  # tolera duplicata
+    created = await editor.post(
+        "/dash/api/notes",
+        json={"collection": "nt-corrida", "title": "Corrida", "content": "linha de base"},
+    )
+    assert created.status_code == 200 and created.json()["created"]
+    note_id = created.json()["document_id"]
+
+    first, second = await asyncio.gather(
+        editor.patch(f"/dash/api/notes/{note_id}", json={"base_version": 1, "content": "ramo alfa"}),
+        editor.patch(f"/dash/api/notes/{note_id}", json={"base_version": 1, "content": "ramo beta"}),
+    )
+    assert sorted([first.status_code, second.status_code]) == [200, 409]
+    loser = first if first.status_code == 409 else second
+    winner = second if loser is first else first
+    assert loser.json()["detail"]["current_version"] == 2
+    assert winner.json()["version"] == 2
+    note = (await editor.get(f"/dash/api/notes/{note_id}")).json()
+    assert note["version"] == 2  # um ramo sobreviveu, o outro nunca sobrescreveu
 
 
 async def test_move_and_archive(editor):

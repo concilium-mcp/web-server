@@ -330,6 +330,15 @@ curl -s -X POST $API/documents -H "Authorization: Bearer $KEY" -H "Content-Type:
 curl -s -X PUT $API/documents/upsert -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"collection": "manuais", "external_id": "crm-42", "title": "Contato", "content": "Ramal 200."}'
 
+# atualizar um documento (versão nova no histórico)
+curl -s -X PATCH $API/documents/DOC_ID -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"change_note": "horário atualizado", "content": "Atendimento de 9h às 18h."}'
+
+# trava otimista opcional: envie base_version (a versão que você leu);
+# se outra pessoa salvou antes, a resposta é 409 {"detail": {"message": ..., "current_version": 2}}
+curl -s -X PATCH $API/documents/DOC_ID -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"change_note": "horário atualizado", "content": "Atendimento de 9h às 18h.", "base_version": 1}'
+
 # links, backlinks e vizinhos semânticos de um documento
 curl -s "$API/documents/DOC_ID/related?k=5" -H "Authorization: Bearer $KEY"
 
