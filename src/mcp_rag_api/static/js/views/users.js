@@ -24,7 +24,7 @@ function userRow(u) {
         </div>
       </div>
       <div class="tcell">
-        <select class="input role-select" data-role="${u.id}" ${self || disabled ? "disabled" : ""}
+        <select class="input role-select" data-user-id="${u.id}" ${self || disabled ? "disabled" : ""}
           title="${self ? t("users.cantChangeOwn") : t("users.roleTitle")}">
           ${ROLES.map((v) => `<option value="${v}" ${u.role === v ? "selected" : ""}>${roleName(v)}</option>`).join("")}
         </select>
@@ -135,10 +135,13 @@ function bindUserActions() {
   if (body.dataset.usersBound) return;
   body.dataset.usersBound = "1";
   body.addEventListener("change", async (e) => {
-    const sel = e.target.closest("[data-role]");
+    // seletor específico do select da lista de usuários: um closest("[data-role]") genérico
+    // casaria com o <body data-role="..."> em changes vindos de outras telas (handler delegado
+    // fica ativo no #page-body para sempre) e chamaria PATCH /users/<papel>.
+    const sel = e.target.closest("select.role-select[data-user-id]");
     if (!sel) return;
     try {
-      await api.patch(`/users/${sel.dataset.role}`, { role: sel.value });
+      await api.patch(`/users/${sel.dataset.userId}`, { role: sel.value });
       await renderUsersList();
     } catch (err) {
       await uiError(t("users.roleFailed"), err);
