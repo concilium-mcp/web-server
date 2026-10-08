@@ -94,6 +94,11 @@ SECURITY_HEADERS = {
 async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     response = await call_next(request)
     response.headers.update(SECURITY_HEADERS)
+    if request.url.path == "/dashboard" or request.url.path.startswith("/static/"):
+        # Estáticos sem fingerprint: no-cache força revalidação por ETag a cada navegação
+        # (304 barato quando nada mudou). Com cache longo, navegador/CDN segura JS velho
+        # depois de um deploy e a dash quebra mesmo com hard refresh.
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
