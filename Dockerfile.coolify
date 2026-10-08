@@ -35,6 +35,13 @@ RUN EXTRAS=$([ "$INSTALL_LOCAL_EMBEDDINGS" = "true" ] && echo "--extra local" ||
 
 # 2) o projeto
 COPY src ./src
+# Hash de conteúdo dos estáticos da dash: vira a versão da URL imutável (/static/<hash>/...).
+# Muda exatamente quando algum arquivo da static muda — deploy novo, URL nova, zero stale cache.
+RUN python -c "import hashlib, pathlib; \
+    files = sorted(p for p in pathlib.Path('src/mcp_rag_api/static').rglob('*') if p.is_file()); \
+    h = hashlib.sha256(); \
+    [h.update(p.read_bytes()) for p in files]; \
+    pathlib.Path('src/mcp_rag_api/static_version.txt').write_text(h.hexdigest()[:12])"
 RUN EXTRAS=$([ "$INSTALL_LOCAL_EMBEDDINGS" = "true" ] && echo "--extra local" || echo "") \
     && uv sync --frozen --no-dev --no-editable $EXTRAS
 

@@ -31,6 +31,21 @@ mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=Tr
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _static_version() -> str | None:
+    """Versão dos estáticos: hash de conteúdo gravado no build da imagem (Dockerfile.coolify).
+
+    Em dev (sem o arquivo) a dash roda sem URL versionada e tudo fica no-cache.
+    """
+    try:
+        return (Path(__file__).resolve().parent / "static_version.txt").read_text().strip() or None
+    except OSError:
+        return None
+
+
+APP_VERSION = _static_version()
+VERSIONED_STATIC_PREFIX = f"/static/{APP_VERSION}" if APP_VERSION else None
+
+
 def _log_boot_summary() -> None:
     """Resumo de config no boot: provider, dim, auth, TTL da dash — nunca segredos."""
     s = get_settings()
@@ -94,10 +109,14 @@ SECURITY_HEADERS = {
 async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     response = await call_next(request)
     response.headers.update(SECURITY_HEADERS)
-    if request.url.path == "/dashboard" or request.url.path.startswith("/static/"):
-        # Estáticos sem fingerprint: no-cache força revalidação por ETag a cada navegação
-        # (304 barato quando nada mudou). Com cache longo, navegador/CDN segura JS velho
-        # depois de um deploy e a dash quebra mesmo com hard refresh.
+    path = request.url.path
+    if VERSIONED_STATIC_PREFIX and path.startswith(VERSIONED_STATIC_PREFIX + "/"):
+        # URL com hash de conteúdo: muda a cada build que toca os estáticos, então pode
+        # cachear para sempre (navegador e CDN). Deploy novo = URL nova = sem stale.
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path == "/dashboard" or path.startswith("/static/"):
+        # HTML e estáticos sem versão (dev, ícones via fetch relativo): no-cache força
+        # revalidação por ETag (304 barato quando nada mudou).
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -160,8 +179,16 @@ class RequireApiKey:
 
 
 @app.get("/dashboard", include_in_schema=False)
-async def dashboard_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html")
+async def dashboard_page() -> Response:
+    if VERSIONED_STATIC_PREFIX is None:
+        return FileResponse(STATIC_DIR / "dashboard.html")
+    # Reescreve as referências do HTML para as URLs versionadas (imutáveis). O HTML em si
+    # segue no-cache: cada navegação busca o HTML novo, que aponta para os assets do build atual.
+    html = (STATIC_DIR / "dashboard.html").read_text(encoding="utf-8")
+    html = html.replace('src="static/', f'src="{VERSIONED_STATIC_PREFIX}/').replace(
+        'href="static/', f'href="{VERSIONED_STATIC_PREFIX}/'
+    )
+    return HTMLResponse(html)
 
 
 @app.get("/dash/docs", include_in_schema=False)
@@ -175,6 +202,10 @@ async def dash_openapi(_user: DashUser = Depends(current_user)) -> JSONResponse:
     """OpenAPI da API REST, protegido pela mesma sessão da dashboard."""
     return JSONResponse(get_openapi(title=app.title, version=app.version, routes=app.routes))
 
+
+if VERSIONED_STATIC_PREFIX is not None:
+    # Montado antes do /static sem versão: /static/<hash>/... tem precedência por ser mais específico.
+    app.mount(VERSIONED_STATIC_PREFIX, StaticFiles(directory=STATIC_DIR), name="static-versioned")
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
