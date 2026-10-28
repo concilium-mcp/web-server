@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from mcp_rag_api import db
+from mcp_rag_api.config import default_migrations_dir
 from mcp_rag_api.core import dash_auth, documents
 from mcp_rag_api.main import app
 from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
@@ -105,7 +106,7 @@ async def test_run_migrations_concurrent_applies_once():
     assert sum("005_versions_created_at_idx.sql" in applied for applied in results) == 1
     async with db.pool().acquire() as conn:
         total = await conn.fetchval("SELECT count(*) FROM schema_migrations")
-    assert total == 5  # 001..005, sem duplicatas
+    assert total == len(list(default_migrations_dir().glob("*.sql")))  # todas, sem duplicatas
 
 
 async def test_resolve_key_throttles_last_used_at():

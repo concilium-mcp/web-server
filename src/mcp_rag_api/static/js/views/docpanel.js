@@ -3,15 +3,27 @@ import { api } from "../api.js";
 import { t } from "../i18n.js";
 import { icon, loadIcons } from "../icons.js";
 import { escHtml, fmtDate, debounce, modalShell, bindModal, uiConfirm, uiAlert, uiError } from "../ui.js";
-import { state, colorFor } from "../state.js";
+import { state, colorFor, store } from "../state.js";
 import { emit } from "../events.js";
+import { loaderHtml } from "../loader.js";
 
 /* ---------------------------------------------------------------- painel do documento */
+
+// largura do painel: estreito (padrão) ou largo para ler melhor — preferência por navegador
+const PANEL_WIDE_KEY = "concilium:panel-wide";
+const panelWide = () => store.get(PANEL_WIDE_KEY) === true;
+
+function expandButton() {
+  const wide = panelWide();
+  return `<button class="icon-btn panel-expand" id="panel-expand" type="button" aria-pressed="${wide}"
+      title="${wide ? t("doc.collapsePanel") : t("doc.expandPanel")}">${icon(wide ? "chevron-right" : "chevron-left", 16)}</button>`;
+}
 
 async function openDocumentPanel(docId) {
   const panel = document.getElementById("panel");
   panel.classList.remove("hidden");
-  panel.innerHTML = `<div class="muted">${t("common.loading")}</div>`;
+  panel.classList.toggle("wide", panelWide());
+  panel.innerHTML = `<div class="cl-pad">${loaderHtml(t("common.loading"), "sm")}</div>`;
   let doc, docLinks;
   try {
     [doc, docLinks] = await Promise.all([
@@ -26,9 +38,13 @@ async function openDocumentPanel(docId) {
   panel.innerHTML = `
     <div class="panel-head">
       <h2>${escHtml(doc.title)}</h2>
+      ${expandButton()}
       <button class="icon-btn" id="panel-close" title="${t("common.close")}">${icon("x", 16)}</button>
     </div>
-    <div class="chip"><span class="dot" style="background:${colorFor(doc.collection)}"></span>${escHtml(doc.collection)}</div>
+    <div class="panel-actions">
+      <div class="chip"><span class="dot" style="background:${colorFor(doc.collection)}"></span>${escHtml(doc.collection)}</div>
+      <a class="btn sm primary" id="panel-open-note" href="#/notes/${encodeURIComponent(doc.id)}">${icon("pencil", 14)}<span>${t("doc.openNote")}</span></a>
+    </div>
     <dl class="kv">
       <dt>${t("doc.version")}</dt><dd>v${doc.version} · ${doc.status === "active" ? t("doc.active") : t("doc.archived")}</dd>
       <dt>${t("doc.createdBy")}</dt><dd>${escHtml(doc.created_by ?? "—")}</dd>
@@ -51,6 +67,16 @@ async function openDocumentPanel(docId) {
     </div>`;
   await loadIcons(panel);
   panel.querySelector("#panel-close").addEventListener("click", closePanel);
+  panel.querySelector("#panel-expand").addEventListener("click", (e) => {
+    const wide = !panelWide();
+    store.set(PANEL_WIDE_KEY, wide);
+    panel.classList.toggle("wide", wide);
+    const btn = e.currentTarget;
+    btn.setAttribute("aria-pressed", String(wide));
+    btn.title = wide ? t("doc.collapsePanel") : t("doc.expandPanel");
+    btn.innerHTML = icon(wide ? "chevron-right" : "chevron-left", 16);
+    loadIcons(btn);
+  });
   panel.querySelector("#connect-open")?.addEventListener("click", () =>
     openConnectModal({ document_id: docId, title: doc.title }),
   );

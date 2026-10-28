@@ -355,7 +355,11 @@ async def test_viewer_restrictions(seeded_docs, admin_client):
     client = await dash_client()
     await client.post("/dash/api/auth/login", json={"username": "um-viewer", "password": "senha-viewer-1"})
     # viewer lê, mas não gerencia
-    assert (await client.get("/dash/api/keys")).status_code == 200
+    keys = await client.get("/dash/api/keys")
+    assert keys.status_code == 200
+    # prefixo identifica a chave na revogação pela API/MCP: viewer não recebe
+    assert keys.json() and all(k["prefix"] is None for k in keys.json())
+    assert all(k["prefix"] for k in (await admin_client.get("/dash/api/keys")).json())
     assert (await client.get("/dash/api/agents")).status_code == 200
     assert (await client.post("/dash/api/keys", json={"label": "x", "scopes": ["read"]})).status_code == 403
     assert (await client.get("/dash/api/users")).status_code == 403

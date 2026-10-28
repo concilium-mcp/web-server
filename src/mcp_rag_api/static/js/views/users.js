@@ -20,7 +20,8 @@ function userRow(u) {
       <div class="tcell-main">
         <span class="avatar">${escHtml(u.username.slice(0, 1).toUpperCase())}</span>
         <div class="grow">
-          <div class="row-title">${escHtml(u.username)} ${self ? `<span class="chip subtle">${t("users.you")}</span>` : ""}</div>
+          <div class="row-title">${escHtml(u.username)} ${self ? `<span class="chip subtle">${t("users.you")}</span>` : ""}
+            ${u.totp_enabled ? `<span class="chip subtle" title="${t("users.mfaOnTitle")}">${icon("shield-check", 12)}<span class="chip-text">2FA</span></span>` : ""}</div>
         </div>
       </div>
       <div class="tcell">
@@ -33,6 +34,7 @@ function userRow(u) {
       <div class="tcell muted" title="${t("users.createdAt", { date: fmtDate(u.created_at) })}">${fmtAgo(u.created_at)}</div>
       <div class="tcell-actions">
         ${disabled ? "" : `<button class="btn sm ghost" data-reset="${u.id}" title="${t("users.setPasswordTitle")}">${icon("key-round", 14)}<span>${t("users.password")}</span></button>`}
+        ${u.totp_enabled && !self ? `<button class="btn sm ghost" data-reset-mfa="${u.id}" data-name="${escHtml(u.username)}" title="${t("users.resetMfaTitle")}">${icon("shield-check", 14)}<span>${t("users.resetMfa")}</span></button>` : ""}
         ${
           self
             ? ""
@@ -152,6 +154,7 @@ function bindUserActions() {
     const reset = e.target.closest("[data-reset]");
     const doReset = e.target.closest("[data-do-reset]");
     const toggle = e.target.closest("[data-toggle]");
+    const resetMfa = e.target.closest("[data-reset-mfa]");
     try {
       if (reset) {
         const row = document.getElementById(`reset-${reset.dataset.reset}`);
@@ -164,6 +167,18 @@ function bindUserActions() {
           return;
         }
         await api.patch(`/users/${doReset.dataset.doReset}`, { password: pass });
+        await renderUsersList();
+      } else if (resetMfa) {
+        if (
+          !(await uiConfirm({
+            title: t("users.resetMfaConfirmTitle"),
+            message: t("users.resetMfaConfirmMsg", { name: resetMfa.dataset.name }),
+            confirmLabel: t("users.resetMfa"),
+            tone: "danger",
+          }))
+        )
+          return;
+        await api.del(`/users/${resetMfa.dataset.resetMfa}/2fa`);
         await renderUsersList();
       } else if (toggle) {
         const disable = toggle.dataset.disabled !== "true";

@@ -39,7 +39,7 @@ Os agentes também ganham uma casa: perfil (system prompt), memória persistente
 ## Recursos
 
 **📝 Espaço de notas do time**
-- Pastas, editor visual com aba Markdown, tags e modelos de nota
+- Pastas dentro de pastas, sem limite de profundidade (como no Notion), editor visual com aba Markdown, tags e modelos de nota
 - `[[Wikilinks]]` e backlinks, no estilo do Obsidian. Links para notas que ainda não existem se conectam sozinhos quando a nota é criada
 - **Importação de vault Obsidian**: envie o `.zip` pela dashboard e acompanhe o progresso em tempo real — pastas viram coleções, notas viram documentos com vetorização completa, e re-importar atualiza em vez de duplicar
 - Histórico de versões com restauração, detecção de conflito e rascunho local, para nada se perder
@@ -96,7 +96,7 @@ Os agentes também ganham uma casa: perfil (system prompt), memória persistente
 ```bash
 # 1. PostgreSQL com pgvector (pule se você já tem um)
 docker run -d --name concilium-db -p 5432:5432 \
-  -e POSTGRES_USER=user -e POSTGRES_PASSWORD=password -e POSTGRES_DB=kb \
+  -e POSTGRES_USER=user -e POSTGRES_PASSWORD=change-me -e POSTGRES_DB=kb \
   pgvector/pgvector:pg16
 
 # 2. Instalar
@@ -115,13 +115,42 @@ uv run mcp-rag-api create-user --username voce --role admin
 uv run mcp-rag-api create-key --label eu --scopes admin
 ```
 
-Prefere Docker? O `Dockerfile.coolify` gera a imagem de produção. O `docker-compose.yml` é um exemplo que roda a API ao lado de um container Postgres já existente (rede externa `db_network`).
+**Autenticação em dois fatores**: cada pessoa ativa em *menu do usuário → Segurança (2FA)*, com Google Authenticator, Authy, 1Password ou outro app TOTP, e guarda os códigos de recuperação. Perdeu o celular e os códigos? Um admin reseta em **Usuários**, ou pela CLI: `uv run mcp-rag-api reset-2fa --username voce`. Para guardar os segredos do 2FA cifrados no banco, defina `DASH_TOTP_ENCRYPTION_KEY` (opcional; veja o `.env.example`).
+
+**Prefere Docker?** Uma imagem pública (linux/amd64 e arm64) é publicada a cada mudança na `main`: `ghcr.io/concilium-mcp/web-server`, tags `latest` e `sha-<commit>`. Passe as mesmas variáveis do `.env.example` com `-e` ou `--env-file`:
+
+```bash
+docker run -d --name concilium -p 8000:8000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e DATABASE_URL=postgresql://user:change-me@host.docker.internal:5432/kb \
+  -e EMBEDDING_PROVIDER=voyage -e VOYAGE_API_KEY=your-key \
+  ghcr.io/concilium-mcp/web-server:latest
+docker exec -it concilium mcp-rag-api create-user --username you --role admin
+```
+
+Para buildar você mesmo, o `Dockerfile.coolify` é a mesma imagem de produção. O `docker-compose.yml` é um exemplo que roda a API ao lado de um container Postgres já existente (rede externa `db_network`).
 
 ## Conectar seus agentes
+
+**Claude (claude.ai, Desktop, celular)**: *Configurações → Conectores → Adicionar conector personalizado* com `https://seu-dominio/mcp`. O Claude abre a tela **Autorizar** do Concilium: entre com sua conta da dashboard, marque o que ele pode fazer (consultar, escrever, gerenciar agentes) e quais pastas vê, e clique em Autorizar. Nada de copiar chave; revogue quando quiser em **Conexões**, no menu do usuário.
+
+**ChatGPT**: *Plugins → criar* (modo desenvolvedor) com a URL do servidor `https://seu-dominio/mcp` e autenticação **OAuth**; o ChatGPT se registra sozinho e abre a mesma tela Autorizar.
+
+**Cursor / VS Code**: adicione `https://seu-dominio/mcp` como servidor MCP HTTP; o editor abre o navegador para autorizar.
+
+<details>
+<summary>Quais clientes conseguem conectar por OAuth?</summary>
+
+Qualquer cliente pode se registrar sozinho (registro dinâmico), mas só se devolver a pessoa para um endereço confiável: `https` em `OAUTH_REDIRECT_ALLOWLIST` (padrão `claude.ai, claude.com, chatgpt.com, openai.com, vscode.dev, mistral.ai`, subdomínios inclusos), um esquema de app nativo em `OAUTH_REDIRECT_SCHEMES` (padrão `cursor, vscode, vscode-insiders`) ou `http://localhost`. Se um cliente falhar com "configurações rejeitadas", o log do servidor mostra `oauth: registro recusado (redirect fora da allowlist): [...]`: some esse host (ou esquema) à variável e reinicie. Definir a variável **substitui** a lista padrão, então repita os que ainda quiser.
+</details>
 
 **Claude Code**
 
 ```bash
+# OAuth: abre o navegador para autorizar (se não abrir, rode /mcp dentro do Claude Code)
+claude mcp add --transport http concilium https://seu-dominio/mcp
+
+# ou com chave de API
 claude mcp add --transport http concilium http://localhost:8000/mcp \
   --header "Authorization: Bearer kb_sk_SUA_CHAVE"
 ```
@@ -151,7 +180,7 @@ flowchart LR
 
 | Grupo de tools MCP | Tools |
 |---|---|
-| Base de conhecimento | `search_knowledge`, `get_document`, `list_documents`, `add_document`, `update_document`, `upsert_document`, `archive_document`, `document_history`, coleções |
+| Base de conhecimento | `search_knowledge`, `get_document`, `list_documents`, `add_document`, `update_document`, `edit_document`, `upsert_document`, `archive_document`, `document_history`, coleções |
 | Links | `get_related`, `link_documents`, `unlink_documents`, além de `[[Título]]` no conteúdo |
 | Agente (sobre si mesmo) | `load_agent`, `recall`, `remember`, `forget`, `save_session`, `upsert_task`, `propose_agent_update`, … |
 | Gestão | `create_agent`, `update_agent`, `set_agent_autonomy`, `review_agent_update`, `issue_agent_key`, … |

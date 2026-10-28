@@ -1,8 +1,10 @@
 /* Bootstrap da dashboard — login, observers e inicialização. Módulo de entrada. */
 import { api } from "./api.js";
+import { syncFavicon } from "./brand.js";
 import { t } from "./i18n.js";
 import { icon, loadIcons } from "./icons.js";
 import { brandLogo, enhancePasswordFields } from "./ui.js";
+import { mfaStepHtml, bindMfaStep } from "./mfa-step.js";
 import { state, store } from "./state.js";
 import { on } from "./events.js";
 import { notes, editedNote, DRAFT_PREFIX } from "./views/notes.js";
@@ -10,7 +12,7 @@ import { matchNoteRoute, renderShell, renderScreen } from "./router.js";
 
 /* ---------------------------------------------------------------- login */
 
-function renderLogin() {
+function renderLogin(message = "") {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="login-wrap">
@@ -21,27 +23,48 @@ function renderLogin() {
         <input class="input" id="login-user" type="text" autocomplete="username" required />
         <label class="form-label" for="login-pass">${t("login.password")}</label>
         <input class="input" id="login-pass" type="password" autocomplete="current-password" required />
-        <div class="form-error hidden" id="login-error"></div>
+        <div class="form-error ${message ? "" : "hidden"}" id="login-error"></div>
         <button class="btn primary" type="submit">${icon("log-in")}<span>${t("login.submit")}</span></button>
       </form>
     </div>`;
   loadIcons(app);
   const form = document.getElementById("login-form");
   const error = document.getElementById("login-error");
+  error.textContent = message;
+  const enter = (user) => {
+    state.user = user;
+    renderShell();
+    renderScreen();
+  };
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     error.classList.add("hidden");
     try {
-      state.user = await api.post("/auth/login", {
+      const result = await api.post("/auth/login", {
         username: document.getElementById("login-user").value,
         password: document.getElementById("login-pass").value,
       });
-      renderShell();
-      renderScreen();
+      if (result.mfa_required) renderMfaStep(result.mfa_token, enter);
+      else enter(result);
     } catch (err) {
-      error.textContent = err.status === 401 ? t("login.invalid") : t("login.failed");
+      error.textContent = err.status === 401 ? t("login.invalid") : err.status === 429 ? err.detail : t("login.failed");
       error.classList.remove("hidden");
     }
+  });
+}
+
+function renderMfaStep(mfaToken, enter) {
+  // o cartão do login é um <form>: o passo do código entra num cartão novo no lugar dele
+  // (form dentro de form é descartado pelo parser e o envio cairia no form da senha)
+  const card = document.createElement("div");
+  card.className = "login-card";
+  card.innerHTML = `<div class="brand">${brandLogo(30)}<span>Concilium</span></div>${mfaStepHtml()}`;
+  document.getElementById("login-form").replaceWith(card);
+  bindMfaStep(card, {
+    mfaToken,
+    post: (body) => api.post("/auth/login/mfa", body),
+    onDone: enter,
+    onBack: renderLogin,
   });
 }
 
@@ -82,6 +105,8 @@ new MutationObserver((mutations) => {
 }).observe(document.body, { childList: true, subtree: true });
 
 /* ---------------------------------------------------------------- boot */
+
+syncFavicon(); // ícone da aba na cor do tema aplicado pelo boot.js
 
 (async function boot() {
   try {

@@ -77,7 +77,7 @@ Abra o `.env` e defina **pelo menos** o provedor de embeddings:
 Exemplo:
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/kb
+DATABASE_URL=postgresql://user:change-me@localhost:5432/kb
 PUBLIC_URL=http://localhost:8000
 EMBEDDING_PROVIDER=voyage
 VOYAGE_API_KEY=pa-xxxxxxxx
@@ -143,6 +143,18 @@ uv run mcp-rag-api create-user --username voce --role admin
 | `admin` (Administrador) | + chaves de API, usuários, links manuais e autonomia dos agents |
 
 A tela inicial é **Notas**: pastas (coleções) à esquerda, editor visual (Toast UI, com aba Markdown) no centro e, sob demanda, as conexões e o histórico da nota. Tudo o que o time escreve vira, na hora, conhecimento dos agentes. O salvamento cria uma versão (Ctrl+S, botão, ~20 s parado ou ao trocar de nota); enquanto isso, um rascunho fica guardado no navegador. Atalhos: **Ctrl+S** salva, **Alt+N** cria nota.
+
+**Pastas dentro de pastas:** cada pasta principal (coleção) é um projeto, cliente ou área — é ela que define o que cada agente pode acessar. Dentro dela dá para criar **subpastas sem limite de profundidade**, como no Notion: passe o mouse na pasta → **+** cria uma nota ali, **…** abre o menu (nova subpasta, renomear, mover, excluir). Mover uma pasta leva tudo o que tem dentro, inclusive para outra pasta principal. Excluir uma pasta não apaga nada: as notas e subpastas sobem um nível. Agentes e integrações também usam as subpastas, por **caminho** dentro da pasta principal (`"Clientes/Acme/Reuniões"`, sem diferenciar maiúsculas; por isso nomes de pasta não podem ter `/`):
+
+| MCP | REST | O que faz |
+|---|---|---|
+| `list_folders` | `GET /folders?collection=` | lista as pastas com o caminho completo |
+| `create_folder` | `POST /folders` `{collection, path}` | cria o caminho, só os níveis que faltam (idempotente) |
+| `add_document` / `upsert_document` com `folder_path` | `POST /documents`, `PUT /documents/upsert` | cria a nota já na pasta (criando o que faltar) |
+| `move_document` | `POST /documents/{id}/move` `{collection, folder_path}` | move para outra pasta principal e/ou pasta; sem `folder_path`, vai para a raiz |
+| `get_document` | `GET /documents/{id}` | devolve também `folder_path` (`null` = raiz) |
+
+O acesso continua sendo por pasta principal: a chave que só enxerga `Clientes` enxerga todas as pastas dentro dela.
 
 ### Importar um vault Obsidian
 
@@ -443,7 +455,7 @@ uv sync --extra dev
 uv run pytest tests/unit
 # integração: o database indicado é APAGADO a cada execução
 docker exec db-postgres psql -U user -d defaultdb -c "CREATE DATABASE kb_test"   # uma vez
-TEST_DATABASE_URL=postgresql://user:password@localhost:5432/kb_test uv run pytest tests/integration
+TEST_DATABASE_URL=postgresql://user:change-me@localhost:5432/kb_test uv run pytest tests/integration
 ```
 
 ## 13. Problemas comuns
@@ -548,6 +560,6 @@ A partir daí, tudo segue como nos tutoriais 7 a 9. Os agentes cadastrados já r
 ```bash
 docker build -f Dockerfile.coolify -t mcp-rag-api:local .
 docker run --rm --network db_network -p 8000:8000 \
-  -e DATABASE_URL=postgresql://user:password@db-postgres:5432/kb \
+  -e DATABASE_URL=postgresql://user:change-me@db-postgres:5432/kb \
   --env-file .env mcp-rag-api:local
 ```

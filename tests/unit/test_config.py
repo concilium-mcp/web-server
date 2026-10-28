@@ -65,3 +65,34 @@ def test_check_config_avisa_public_url_padrao_e_auth_desligada(monkeypatch, sett
     warnings = check_config()
     assert any("PUBLIC_URL" in w for w in warnings)
     assert any("KB_AUTH_DISABLED" in w for w in warnings)
+
+
+def test_default_database_url_has_no_credentials():
+    assert Settings.model_fields["database_url"].default == "postgresql://localhost:5432/kb"
+
+
+@pytest.mark.parametrize("public_url", ["https://kb.exemplo.com", "http://10.0.0.5:8000"])
+def test_check_config_refuses_auth_disabled_with_public_url(monkeypatch, settings_env, public_url):
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fake")
+    monkeypatch.setenv("KB_AUTH_DISABLED", "true")
+    monkeypatch.setenv("PUBLIC_URL", public_url)
+    with pytest.raises(RuntimeError, match="KB_AUTH_DISABLED"):
+        check_config()
+
+
+@pytest.mark.parametrize("public_url", ["http://localhost:8000", "http://127.0.0.1:9000"])
+def test_check_config_allows_auth_disabled_locally(monkeypatch, settings_env, public_url):
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fake")
+    monkeypatch.setenv("KB_AUTH_DISABLED", "true")
+    monkeypatch.setenv("PUBLIC_URL", public_url)
+    assert any("KB_AUTH_DISABLED" in w for w in check_config())
+
+
+def test_check_config_warns_example_db_password_in_production(monkeypatch, settings_env):
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fake")
+    monkeypatch.setenv("PUBLIC_URL", "https://kb.exemplo.com")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@db-postgres:5432/kb")
+    assert any("senha de exemplo" in w for w in check_config())
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:Xk9-forte-e-unica@db-postgres:5432/kb")
+    get_settings.cache_clear()
+    assert not any("senha de exemplo" in w for w in check_config())

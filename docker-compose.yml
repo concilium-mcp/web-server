@@ -8,7 +8,8 @@ services:
       dockerfile: Dockerfile.coolify
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://user:password@db-postgres:5432/kb
+      # host do Postgres compartilhado (rede db_network); usuário e senha vêm do .env
+      DATABASE_URL: postgresql://${POSTGRES_USER:?defina POSTGRES_USER no .env}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@db-postgres:5432/kb
     ports:
       - "8000:8000"
     networks:

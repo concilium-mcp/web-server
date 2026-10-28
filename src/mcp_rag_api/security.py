@@ -10,6 +10,7 @@ Escopos:
 import hashlib
 import secrets
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import UUID
 
 import asyncpg
@@ -17,6 +18,15 @@ import asyncpg
 VALID_SCOPES = {"read", "write", "agents:manage", "admin"}
 _IMPLIES = {"write": {"read"}, "agents:manage": {"read"}}
 KEY_PREFIX = "kb_sk_"
+# OAuth do MCP (plan-web-17): tokens opacos emitidos pela tela "Autorizar"
+OAUTH_ACCESS_PREFIX = "kb_at_"
+OAUTH_REFRESH_PREFIX = "kb_rt_"
+# teto de escopos que um usuário da dash pode conceder via OAuth, por papel (nunca "admin")
+OAUTH_ROLE_SCOPES: dict[str, tuple[str, ...]] = {
+    "viewer": ("read",),
+    "editor": ("read", "write"),
+    "admin": ("read", "write", "agents:manage"),
+}
 
 
 class KBError(Exception):
@@ -138,6 +148,62 @@ async def resolve_key(conn: asyncpg.Connection, raw: str) -> Principal:
         agent_slug=row["slug"],
         allowed_collections=tuple(row["allowed_collections"]),
     )
+
+
+async def resolve_oauth_token(conn: asyncpg.Connection, raw: str) -> Principal:
+    """Access token OAuth → Principal. Revalida a cada request: token/conexão revogados ou expirados,
+    usuário desativado, papel rebaixado abaixo do concedido ou agente arquivado invalidam na hora."""
+    row = await conn.fetchrow(
+        """
+        SELECT t.expires_at, t.revoked_at, t.scopes,
+               g.id AS grant_id, g.revoked_at AS grant_revoked_at, g.allowed_collections, g.agent_id,
+               g.last_used_at, u.username, u.role, u.disabled_at,
+               a.slug, a.scopes AS agent_scopes, a.allowed_collections AS agent_collections,
+               a.status AS agent_status
+        FROM oauth_tokens t
+        JOIN oauth_grants g ON g.id = t.grant_id
+        JOIN dash_users u ON u.id = g.user_id
+        LEFT JOIN agents a ON a.id = g.agent_id
+        WHERE t.token_hash = $1 AND t.kind = 'access'
+        """,
+        hash_key(raw),
+    )
+    invalid = PermissionDenied("Token OAuth inválido, expirado ou revogado.")
+    if row is None or row["revoked_at"] is not None or row["grant_revoked_at"] is not None:
+        raise invalid
+    if row["disabled_at"] is not None or row["expires_at"] <= datetime.now(UTC):
+        raise invalid
+    cap = OAUTH_ROLE_SCOPES.get(row["role"], ())
+    if not set(row["scopes"]) <= set(cap):
+        raise invalid
+    await conn.execute(
+        "UPDATE oauth_grants SET last_used_at = now() WHERE id = $1 "
+        "AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')",
+        row["grant_id"],
+    )
+    if row["agent_id"] is None:
+        # mesmo actor da dash: o que a pessoa faz pelo Claude aparece como dela (contribuidores, histórico)
+        return Principal(
+            actor=f"dash:{row['username']}",
+            scopes=frozenset(row["scopes"]),
+            allowed_collections=tuple(row["allowed_collections"]),
+        )
+    if row["agent_status"] != "active":
+        raise PermissionDenied("O agente desta conexão está arquivado.")
+    return Principal(
+        actor=f"agent:{row['slug']}",
+        scopes=frozenset(row["agent_scopes"]),
+        agent_id=row["agent_id"],
+        agent_slug=row["slug"],
+        allowed_collections=tuple(row["agent_collections"]),
+    )
+
+
+async def resolve_bearer(conn: asyncpg.Connection, raw: str) -> Principal:
+    """Bearer do /mcp e do REST: chave de API (kb_sk_) ou access token OAuth (kb_at_)."""
+    if raw.startswith(OAUTH_ACCESS_PREFIX):
+        return await resolve_oauth_token(conn, raw)
+    return await resolve_key(conn, raw)
 
 
 def bearer_token(authorization: str | None) -> str | None:

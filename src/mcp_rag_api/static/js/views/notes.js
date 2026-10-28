@@ -8,6 +8,7 @@ import { state, colorFor, store } from "../state.js";
 import { on } from "../events.js";
 import { openConnectModal } from "./docpanel.js";
 import { openImportModal } from "./import.js";
+import { loaderHtml } from "../loader.js";
 
 // o import de vault (import.js) avisa quando a árvore precisa ser relida
 on("notes:changed", () => {
@@ -75,11 +76,18 @@ async function renderNotesScreen(main, openId) {
   main.querySelector("#note-new")?.addEventListener("click", () => openNewNoteModal());
   main.querySelector("#folder-new")?.addEventListener("click", () => openNewFolderModal());
   main.querySelector("#note-import")?.addEventListener("click", () => openImportModal());
+  main.querySelector("#note-side").addEventListener("click", (e) => e.target.closest("[data-side-close]") && setNoteSide(null));
   main.querySelector("#notes-tree-list").addEventListener("click", async (e) => {
+    const addNote = e.target.closest("[data-folder-add-note]");
+    const menu = e.target.closest("[data-folder-menu]");
     const folder = e.target.closest("[data-toggle-folder]");
     const note = e.target.closest("[data-note]");
-    if (folder) {
-      const collapsed = new Set(store.get("concilium:collapsed") || []);
+    if (addNote) {
+      openNewNoteModal("blank", locKey(addNote.dataset.collection, addNote.dataset.folderId));
+    } else if (menu) {
+      await openFolderMenu(menu);
+    } else if (folder) {
+      const collapsed = collapsedSet();
       const name = folder.dataset.toggleFolder;
       collapsed.has(name) ? collapsed.delete(name) : collapsed.add(name);
       store.set("concilium:collapsed", [...collapsed]);
@@ -95,11 +103,20 @@ async function renderNotesScreen(main, openId) {
   if (exists) await openNote(target);
   else if (notes.tree.notes.length) await openNote(notes.tree.notes[0].id);
   else renderNotesEmpty();
+  // no celular a tela começa pela lista; só um link direto (#/notes/<id>) entra na nota
+  if (!openId) showNoteView(false);
+}
+
+// celular: árvore e nota não cabem lado a lado, a tela mostra uma ou outra (CSS em .show-note).
+// No desktop a classe não muda nada.
+function showNoteView(on) {
+  document.querySelector(".notes-layout")?.classList.toggle("show-note", on);
 }
 
 // sai da tela de notas: salva o que estiver pendente e desmonta o editor
 async function notesLeave() {
   document.removeEventListener("keydown", notesKeys);
+  closeFolderMenu();
   if (notes.current && notes.dirty) await saveNote();
   clearTimeout(notes.idleTimer);
   notes.editor?.destroy();
@@ -123,41 +140,208 @@ async function loadNotesTree() {
   renderNotesTree();
 }
 
+/* ---------- árvore: coleção (pasta principal) → pastas aninhadas sem limite → notas (plan-web-14) */
+
+// Local de uma nota/pasta = coleção + pasta (vazio = raiz da coleção). Nome de coleção não tem "|".
+const locKey = (collection, folderId) => `${collection}|${folderId || ""}`;
+const parseLoc = (value) => {
+  const i = value.indexOf("|");
+  return { collection: value.slice(0, i), folderId: value.slice(i + 1) || null };
+};
+// chave de recolhido: coleção pelo nome (compatível com o que já está salvo), pasta por "f:<id>"
+const folderKey = (folderId) => `f:${folderId}`;
+
+// Pastas recolhidas na árvore (preferência por navegador). Base grande sem preferência salva: começa com
+// todas as pastas fechadas — pastas fechadas não vão ao DOM (plan-web-24), e o caminho até a nota aberta
+// é reaberto por revealInTree. Base pequena segue abrindo tudo, como antes.
+const COLLAPSED_KEY = "concilium:collapsed";
+const LARGE_TREE = 300;
+
+function collapsedSet() {
+  let saved = store.get(COLLAPSED_KEY);
+  if (!Array.isArray(saved) && notes.tree && notes.tree.notes.length > LARGE_TREE) {
+    saved = notes.tree.folders.map((f) => folderKey(f.id));
+    store.set(COLLAPSED_KEY, saved);
+  }
+  return new Set(saved || []);
+}
+
+function treeIndex() {
+  const byId = new Map(notes.tree.folders.map((f) => [f.id, f]));
+  const kids = new Map();
+  for (const f of notes.tree.folders) {
+    const k = locKey(f.collection, f.parent_id);
+    kids.set(k, [...(kids.get(k) || []), f]);
+  }
+  const notesAt = new Map();
+  for (const n of notes.tree.notes) {
+    const k = locKey(n.collection, n.folder_id);
+    notesAt.set(k, [...(notesAt.get(k) || []), n]);
+  }
+  return { byId, kids, notesAt };
+}
+
+// pastas da raiz até a pasta (inclusive)
+function folderChain(folderId, byId = treeIndex().byId) {
+  const chain = [];
+  for (let f = byId.get(folderId); f && chain.length < 1000; f = byId.get(f.parent_id)) chain.unshift(f);
+  return chain;
+}
+
+// "Botucatu / Educação / 2026" — texto puro (escapar ao exibir)
+const locationLabel = (collection, folderId) => [collection, ...folderChain(folderId).map((f) => f.name)].join(" / ");
+
+const treeNoteFolder = (id) => notes.tree?.notes.find((n) => n.id === id)?.folder_id || null;
+
 function renderNotesTree() {
   const box = document.getElementById("notes-tree-list");
   if (!box || !notes.tree) return;
   const q = titleKey(notes.filter);
-  const collapsed = new Set(store.get("concilium:collapsed") || []);
-  const byCol = new Map(notes.tree.collections.map((c) => [c.name, []]));
-  for (const n of notes.tree.notes) {
-    if (!q || titleKey(n.title).includes(q)) byCol.get(n.collection)?.push(n);
-  }
-  box.innerHTML =
-    [...byCol.entries()]
-      .filter(([, items]) => !q || items.length)
-      .map(([name, items]) => {
-        const closed = collapsed.has(name) && !q;
-        return `
-      <div class="tree-folder ${closed ? "collapsed" : ""}">
-        <button class="tree-folder-head" type="button" data-toggle-folder="${escHtml(name)}">
-          <span class="tree-chevron">${icon("chevron-right", 13)}</span>
-          <span class="dot" style="background:${colorFor(name)}"></span>
-          <span class="grow">${escHtml(name)}</span><span class="count">${items.length}</span>
-        </button>
-        <div class="tree-notes">
+  const collapsed = collapsedSet();
+  const ix = treeIndex();
+
+  const noteButton = (n) =>
+    `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}">
+      <span class="grow">${escHtml(n.title)}</span>${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="${t("notes.unsaved")}"></span>` : ""}</button>`;
+
+  const folderNode = ({ collection, folderId = null, label, html, count, closed }) => {
+    const target = `data-collection="${escHtml(collection)}" data-folder-id="${folderId || ""}"`;
+    return `
+      <div class="tree-folder ${closed && !q ? "collapsed" : ""}">
+        <div class="tree-folder-row">
+          <button class="tree-folder-head" type="button" data-toggle-folder="${escHtml(folderId ? folderKey(folderId) : collection)}" title="${escHtml(label)}">
+            <span class="tree-chevron">${icon("chevron-right", 13)}</span>
+            ${folderId ? `<span class="tree-folder-icon">${icon("folder", 14)}</span>` : `<span class="dot" style="background:${colorFor(collection)}"></span>`}
+            <span class="grow">${escHtml(label)}</span><span class="count">${count}</span>
+          </button>
           ${
-            items
-              .map(
-                (n) => `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}">
-                  <span class="grow">${escHtml(n.title)}</span>${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="${t("notes.unsaved")}"></span>` : ""}</button>`,
-              )
-              .join("") || `<div class="tree-empty">${t("notes.emptyFolder")}</div>`
+            canEdit()
+              ? `<span class="tree-folder-tools">
+                  <button class="tree-tool" type="button" data-folder-add-note ${target} title="${t("folders.addNoteHere")}">${icon("plus", 14)}</button>
+                  <button class="tree-tool" type="button" data-folder-menu ${target} title="${t("folders.more")}" aria-haspopup="menu">${icon("ellipsis", 14)}</button>
+                </span>`
+              : ""
           }
         </div>
+        <div class="tree-notes">${closed && !q ? "" : html || `<div class="tree-empty">${t("notes.emptyFolder")}</div>`}</div>
       </div>`;
+  };
+
+  // conteúdo de um local (subpastas + notas); count = notas da subárvore que passam no filtro.
+  // visible=false (pasta fechada, sem filtro): só conta — o HTML de dentro não é gerado nem vai ao DOM
+  // (plan-web-24: com ~2 mil notas, a árvore punha todas no DOM mesmo com as pastas fechadas)
+  const branch = (collection, parentId, visible = true) => {
+    let html = "";
+    let count = 0;
+    for (const f of ix.kids.get(locKey(collection, parentId)) || []) {
+      const closed = collapsed.has(folderKey(f.id));
+      const sub = branch(collection, f.id, visible && (!closed || Boolean(q)));
+      count += sub.count;
+      if (!visible || (q && !sub.count)) continue;
+      html += folderNode({ collection, folderId: f.id, label: f.name, ...sub, closed });
+    }
+    const here = ix.notesAt.get(locKey(collection, parentId)) || [];
+    if (!visible && !q) return { html: "", count: count + here.length };
+    const items = here.filter((n) => !q || titleKey(n.title).includes(q));
+    count += items.length;
+    return { html: visible ? html + items.map(noteButton).join("") : "", count };
+  };
+
+  box.innerHTML =
+    notes.tree.collections
+      .map((c) => {
+        const closed = collapsed.has(c.name);
+        const sub = branch(c.name, null, !closed || Boolean(q));
+        return q && !sub.count ? "" : folderNode({ collection: c.name, label: c.name, ...sub, closed });
       })
       .join("") || `<div class="tree-empty">${t("notes.nothingFound", { query: escHtml(notes.filter) })}</div>`;
   loadIcons(box);
+}
+
+// abre na árvore o caminho até um local (coleção e pastas-mãe)
+function revealInTree(collection, folderId) {
+  const collapsed = collapsedSet();
+  collapsed.delete(collection);
+  for (const f of folderChain(folderId)) collapsed.delete(folderKey(f.id));
+  store.set("concilium:collapsed", [...collapsed]);
+}
+
+// <option>s de todos os locais (raiz de cada coleção + pastas, indentadas). exclude = pasta (e subárvore) fora.
+function locationOptions(selected, exclude = null) {
+  const ix = treeIndex();
+  const out = [];
+  const option = (value, label, depth) =>
+    `<option value="${escHtml(value)}" ${value === selected ? "selected" : ""}>${"   ".repeat(depth)}${escHtml(label)}</option>`;
+  const walk = (collection, parentId, depth) => {
+    for (const f of ix.kids.get(locKey(collection, parentId)) || []) {
+      if (f.id === exclude) continue;
+      out.push(option(locKey(collection, f.id), f.name, depth));
+      walk(collection, f.id, depth + 1);
+    }
+  };
+  for (const c of notes.tree.collections) {
+    out.push(option(locKey(c.name), c.name, 0));
+    walk(c.name, null, 1);
+  }
+  return out.join("");
+}
+
+/* ---------- menu "…" das pastas */
+
+function closeFolderMenu() {
+  document.getElementById("tree-menu")?.remove();
+  document.removeEventListener("click", folderMenuOutside, true);
+  document.removeEventListener("keydown", folderMenuEsc);
+}
+const folderMenuOutside = (e) => !e.target.closest("#tree-menu") && closeFolderMenu();
+const folderMenuEsc = (e) => e.key === "Escape" && closeFolderMenu();
+
+async function openFolderMenu(btn) {
+  closeFolderMenu();
+  const { collection, folderId } = btn.dataset;
+  const item = (action, iconName, label, extra = "") =>
+    `<button class="menu-item ${extra}" type="button" role="menuitem" data-folder-action="${action}">${icon(iconName)}<span class="grow">${label}</span></button>`;
+  const menu = document.createElement("div");
+  menu.id = "tree-menu";
+  menu.className = "tree-menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    ${item("subfolder", "folder-plus", t("folders.newSubfolder"))}
+    ${item("note", "file-plus", t("folders.addNoteHere"))}
+    ${
+      folderId
+        ? `<div class="menu-sep"></div>
+           ${item("rename", "pencil", t("folders.rename"))}
+           ${item("move", "folder-input", t("folders.move"))}
+           <div class="menu-sep"></div>
+           ${item("delete", "trash-2", t("folders.delete"), "danger")}`
+        : state.user?.role === "admin"
+          ? `<div class="menu-sep"></div>
+             ${item("rename-collection", "pencil", t("collections.rename"))}
+             <div class="menu-sep"></div>
+             ${item("delete-collection", "trash-2", t("collections.delete"), "danger")}`
+          : ""
+    }`;
+  document.body.appendChild(menu);
+  await loadIcons(menu);
+  const r = btn.getBoundingClientRect();
+  menu.style.top = `${Math.max(8, Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8))}px`;
+  menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+  menu.addEventListener("click", (e) => {
+    const action = e.target.closest("[data-folder-action]")?.dataset.folderAction;
+    if (!action) return;
+    closeFolderMenu();
+    if (action === "subfolder") openNewFolderModal({ collection, folderId: folderId || null });
+    else if (action === "note") openNewNoteModal("blank", locKey(collection, folderId));
+    else if (action === "rename") openRenameFolderModal(folderId);
+    else if (action === "move") openMoveFolderModal(folderId);
+    else if (action === "delete") deleteFolder(folderId);
+    else if (action === "rename-collection") openRenameCollectionModal(collection);
+    else if (action === "delete-collection") deleteCollection(collection);
+  });
+  // fase de captura: o clique que abriu o menu já passou; o próximo fora dele fecha
+  document.addEventListener("click", folderMenuOutside, true);
+  document.addEventListener("keydown", folderMenuEsc);
 }
 
 // mesma regra do kb_title_key do banco: minúsculas, sem acento
@@ -186,7 +370,10 @@ function renderNotesEmpty() {
 /* ---------- abrir / editar / salvar */
 
 async function openNote(id) {
-  if (notes.current?.id === id) return;
+  if (notes.current?.id === id) {
+    showNoteView(true);
+    return;
+  }
   if (notes.current && notes.dirty && !(await saveNote())) {
     const leave = await uiConfirm({
       title: t("notes.saveFailedTitle"),
@@ -204,11 +391,13 @@ async function openNote(id) {
   }
   notes.current = note;
   notes.tags = [...(note.tags || [])];
+  revealInTree(note.collection, treeNoteFolder(note.id));
   notes.dirty = false;
   store.set("concilium:last-note", id);
   if (location.hash !== `#/notes/${id}`) history.replaceState(null, "", `#/notes/${id}`);
   renderNoteMain();
   renderNotesTree();
+  showNoteView(true);
   if (notes.side) renderNoteSide(notes.side);
   await offerDraftRecovery();
 }
@@ -219,6 +408,7 @@ function renderNoteMain() {
   const editable = canEdit();
   main.innerHTML = `
     <div class="note-head">
+      <button class="icon-btn note-back" type="button" id="note-back" title="${t("notes.backToList")}" aria-label="${t("notes.backToList")}">${icon("chevron-left", 18)}</button>
       <input class="note-title" id="note-title" value="${escHtml(n.title)}" placeholder="${t("notes.untitled")}" ${editable ? "" : "readonly"} />
       <div class="note-actions">
         <span class="save-state" id="save-state"></span>
@@ -234,12 +424,13 @@ function renderNoteMain() {
       </div>
     </div>
     <div class="note-meta">
-      <span class="chip"><span class="dot" style="background:${colorFor(n.collection)}"></span>${escHtml(n.collection)}</span>
+      <span class="chip note-path" id="note-path"></span>
       <span class="muted" id="note-version"></span>
       <div class="tag-input" id="note-tags"></div>
     </div>
     <div class="note-editor" id="note-editor"></div>`;
   loadIcons(main);
+  renderNoteMeta();
   renderVersionLine();
   renderTags();
 
@@ -263,14 +454,21 @@ function renderNoteMain() {
     main.querySelector("#note-move").addEventListener("click", openMoveNoteModal);
     main.querySelector("#note-archive").addEventListener("click", archiveCurrentNote);
   }
+  main.querySelector("#note-back").addEventListener("click", () => showNoteView(false));
   main.querySelectorAll("[data-side]").forEach((b) =>
-    b.addEventListener("click", () => {
-      notes.side = notes.side === b.dataset.side ? null : b.dataset.side;
-      main.querySelectorAll("[data-side]").forEach((x) => x.classList.toggle("active", x.dataset.side === notes.side));
-      renderNoteSide(notes.side);
-    }),
+    b.addEventListener("click", () => setNoteSide(notes.side === b.dataset.side ? null : b.dataset.side)),
   );
   setSaveState(notes.dirty ? "dirty" : "saved");
+}
+
+// caminho da nota aberta: coleção / pasta / subpasta
+function renderNoteMeta() {
+  const n = notes.current;
+  const box = document.getElementById("note-path");
+  if (!box || !n) return;
+  const path = locationLabel(n.collection, treeNoteFolder(n.id));
+  box.title = path;
+  box.innerHTML = `<span class="dot" style="background:${colorFor(n.collection)}"></span><span class="grow">${escHtml(path)}</span>`;
 }
 
 function renderVersionLine() {
@@ -438,13 +636,11 @@ async function offerDraftRecovery() {
 
 /* ---------- criar / mover / arquivar / pastas */
 
-function collectionOptions(selected) {
-  return notes.tree.collections
-    .map((c) => `<option value="${escHtml(c.name)}" ${c.name === selected ? "selected" : ""}>${escHtml(c.name)}</option>`)
-    .join("");
-}
+// local atual da nota aberta (ou a raiz da primeira coleção)
+const currentLoc = () =>
+  notes.current ? locKey(notes.current.collection, treeNoteFolder(notes.current.id)) : locKey(notes.tree.collections[0].name);
 
-async function openNewNoteModal(templateId = "blank") {
+async function openNewNoteModal(templateId = "blank", loc = null) {
   if (!notes.tree.collections.length) {
     await uiAlert(t("notes.needFolderTitle"), t("notes.needFolderMsg"));
     return;
@@ -466,7 +662,7 @@ async function openNewNoteModal(templateId = "blank") {
         </label>
         <label class="form-field">
           <span class="form-label">${t("notes.folder")}</span>
-          <select class="input" id="nn-collection">${collectionOptions(notes.current?.collection || notes.tree.collections[0].name)}</select>
+          <select class="input" id="nn-location">${locationOptions(loc || currentLoc())}</select>
         </label>
       </div>
       <div class="form-field">
@@ -490,8 +686,10 @@ async function openNewNoteModal(templateId = "blank") {
     e.preventDefault();
     const title = modal.querySelector("#nn-title").value.trim();
     const template = noteTemplates().find((tpl) => tpl.id === modal.querySelector("input[name=nn-template]:checked").value);
+    const { collection, folderId } = parseLoc(modal.querySelector("#nn-location").value);
     const body = {
-      collection: modal.querySelector("#nn-collection").value,
+      collection,
+      folder_id: folderId,
       title,
       content: template.content || `# ${title}\n`,
     };
@@ -518,27 +716,33 @@ async function openNewNoteModal(templateId = "blank") {
     }
   });
   setOpen(true);
+  modal.querySelector("#nn-title").focus();
 }
 
-async function openNewFolderModal() {
+// sem "parent": cria uma pasta principal (coleção); com parent {collection, folderId}: subpasta ali dentro
+async function openNewFolderModal(parent = null) {
   document.getElementById("folder-new-modal")?.remove();
   const holder = document.createElement("div");
   holder.innerHTML = modalShell({
     id: "folder-new",
-    iconName: "folder",
-    title: t("folders.new"),
-    subtitle: t("folders.newSub"),
+    iconName: parent ? "folder-plus" : "folder",
+    title: parent ? t("folders.newSubfolder") : t("folders.new"),
+    subtitle: parent ? t("folders.newSubIn", { path: escHtml(locationLabel(parent.collection, parent.folderId)) }) : t("folders.newSub"),
     submitLabel: t("folders.create"),
     width: 520,
     body: `
       <label class="form-field">
         <span class="form-label">${t("common.name")}</span>
-        <input class="input" id="nf-name" placeholder="${t("folders.namePh")}" required />
+        <input class="input" id="nf-name" placeholder="${parent ? t("folders.subNamePh") : t("folders.namePh")}" maxlength="${parent ? 120 : 80}" required />
       </label>
-      <label class="form-field">
-        <span class="form-label">${t("folders.desc")} <span class="muted">${t("common.optional")}</span></span>
-        <input class="input" id="nf-desc" placeholder="${t("folders.descPh")}" />
-      </label>`,
+      ${
+        parent
+          ? ""
+          : `<label class="form-field">
+               <span class="form-label">${t("folders.desc")} <span class="muted">${t("common.optional")}</span></span>
+               <input class="input" id="nf-desc" placeholder="${t("folders.descPh")}" />
+             </label>`
+      }`,
   });
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("folder-new-modal");
@@ -546,11 +750,14 @@ async function openNewFolderModal() {
   const setOpen = bindModal("folder-new");
   modal.querySelector("#folder-new-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const name = modal.querySelector("#nf-name").value.trim();
     try {
-      await api.post("/collections", {
-        name: modal.querySelector("#nf-name").value.trim(),
-        description: modal.querySelector("#nf-desc").value.trim() || null,
-      });
+      if (parent) {
+        await api.post("/folders", { collection: parent.collection, parent_id: parent.folderId, name });
+        revealInTree(parent.collection, parent.folderId);
+      } else {
+        await api.post("/collections", { name, description: modal.querySelector("#nf-desc").value.trim() || null });
+      }
       setOpen(false);
       modal.remove();
       await loadNotesTree();
@@ -559,25 +766,188 @@ async function openNewFolderModal() {
     }
   });
   setOpen(true);
+  modal.querySelector("#nf-name").focus();
+}
+
+async function openRenameFolderModal(folderId) {
+  const folder = treeIndex().byId.get(folderId);
+  if (!folder) return;
+  document.getElementById("folder-rename-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "folder-rename",
+    iconName: "pencil",
+    title: t("folders.rename"),
+    subtitle: escHtml(locationLabel(folder.collection, folder.id)),
+    submitLabel: t("notes.save"),
+    submitIcon: "check",
+    width: 480,
+    body: `
+      <label class="form-field">
+        <span class="form-label">${t("common.name")}</span>
+        <input class="input" id="fr-name" value="${escHtml(folder.name)}" maxlength="120" required />
+      </label>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("folder-rename-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("folder-rename");
+  modal.querySelector("#folder-rename-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api.patch(`/folders/${folder.id}`, { name: modal.querySelector("#fr-name").value.trim() });
+      setOpen(false);
+      modal.remove();
+      await loadNotesTree();
+      if (notes.current) renderNoteMeta();
+    } catch (err) {
+      await uiError(t("folders.renameFailed"), err);
+    }
+  });
+  setOpen(true);
+  modal.querySelector("#fr-name").select();
+}
+
+// pasta principal (coleção) — plan-web-18, só admin
+async function openRenameCollectionModal(collection) {
+  document.getElementById("collection-rename-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "collection-rename",
+    iconName: "pencil",
+    title: t("collections.rename"),
+    subtitle: escHtml(collection),
+    submitLabel: t("notes.save"),
+    submitIcon: "check",
+    width: 480,
+    body: `
+      <label class="form-field">
+        <span class="form-label">${t("common.name")}</span>
+        <input class="input" id="cr-name" value="${escHtml(collection)}" maxlength="80" required />
+      </label>
+      <p class="muted">${t("collections.renameHint")}</p>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("collection-rename-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("collection-rename");
+  modal.querySelector("#collection-rename-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const res = await api.patch(`/collections/${encodeURIComponent(collection)}`, {
+        name: modal.querySelector("#cr-name").value.trim(),
+      });
+      setOpen(false);
+      modal.remove();
+      if (notes.current?.collection === collection) notes.current.collection = res.name;
+      await loadNotesTree();
+      if (notes.current) renderNoteMeta();
+    } catch (err) {
+      await uiError(t("collections.renameFailed"), err);
+    }
+  });
+  setOpen(true);
+  modal.querySelector("#cr-name").select();
+}
+
+async function deleteCollection(collection) {
+  const ok = await uiConfirm({
+    title: t("collections.deleteTitle"),
+    message: t("collections.deleteMsg", { name: collection }),
+    confirmLabel: t("collections.delete"),
+    tone: "danger",
+  });
+  if (!ok) return;
+  try {
+    await api.del(`/collections/${encodeURIComponent(collection)}`);
+    await loadNotesTree();
+  } catch (err) {
+    await uiError(t("collections.deleteFailed"), err);
+  }
+}
+
+async function openMoveFolderModal(folderId) {
+  const folder = treeIndex().byId.get(folderId);
+  if (!folder) return;
+  document.getElementById("folder-move-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "folder-move",
+    iconName: "folder-input",
+    title: t("folders.move"),
+    subtitle: t("folders.moveSub", { name: escHtml(folder.name) }),
+    submitLabel: t("move.submit"),
+    submitIcon: "folder-input",
+    width: 480,
+    body: `
+      <label class="form-field">
+        <span class="form-label">${t("folders.moveTo")}</span>
+        <select class="input" id="fm-location">${locationOptions(locKey(folder.collection, folder.parent_id), folder.id)}</select>
+      </label>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("folder-move-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("folder-move");
+  modal.querySelector("#folder-move-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const { collection, folderId: parentId } = parseLoc(modal.querySelector("#fm-location").value);
+    try {
+      await api.post(`/folders/${folder.id}/move`, { collection, parent_id: parentId });
+      setOpen(false);
+      modal.remove();
+      revealInTree(collection, parentId);
+      await loadNotesTree();
+      if (notes.current) {
+        // a nota aberta pode ter mudado de coleção junto com a pasta
+        const moved = notes.tree.notes.find((x) => x.id === notes.current.id);
+        if (moved) notes.current.collection = moved.collection;
+        renderNoteMeta();
+      }
+    } catch (err) {
+      await uiError(t("folders.moveFailed"), err);
+    }
+  });
+  setOpen(true);
+}
+
+async function deleteFolder(folderId) {
+  const folder = treeIndex().byId.get(folderId);
+  if (!folder) return;
+  const ok = await uiConfirm({
+    title: t("folders.deleteTitle"),
+    message: t("folders.deleteMsg", { name: folder.name, parent: locationLabel(folder.collection, folder.parent_id) }),
+    confirmLabel: t("folders.delete"),
+    tone: "danger",
+  });
+  if (!ok) return;
+  try {
+    await api.del(`/folders/${folder.id}`);
+    await loadNotesTree();
+    if (notes.current) renderNoteMeta();
+  } catch (err) {
+    await uiError(t("folders.deleteFailed"), err);
+  }
 }
 
 async function openMoveNoteModal() {
   const n = notes.current;
   if (!(await saveNote())) return;
+  const from = locKey(n.collection, treeNoteFolder(n.id));
   document.getElementById("note-move-modal")?.remove();
   const holder = document.createElement("div");
   holder.innerHTML = modalShell({
     id: "note-move",
     iconName: "folder-input",
     title: t("move.title"),
-    subtitle: t("move.sub", { title: escHtml(n.title), folder: escHtml(n.collection) }),
+    subtitle: t("move.sub", { title: escHtml(n.title), folder: escHtml(locationLabel(n.collection, treeNoteFolder(n.id))) }),
     submitLabel: t("move.submit"),
     submitIcon: "folder-input",
     width: 480,
     body: `
       <label class="form-field">
         <span class="form-label">${t("move.to")}</span>
-        <select class="input" id="nm-collection">${collectionOptions(n.collection)}</select>
+        <select class="input" id="nm-location">${locationOptions(from)}</select>
       </label>`,
   });
   document.body.appendChild(holder.firstElementChild);
@@ -586,14 +956,15 @@ async function openMoveNoteModal() {
   const setOpen = bindModal("note-move");
   modal.querySelector("#note-move-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const destination = modal.querySelector("#nm-collection").value;
+    const { collection, folderId } = parseLoc(modal.querySelector("#nm-location").value);
     try {
-      await api.post(`/notes/${n.id}/move`, { collection: destination });
+      await api.post(`/notes/${n.id}/move`, { collection, folder_id: folderId });
       setOpen(false);
       modal.remove();
-      n.collection = destination;
+      n.collection = collection;
+      revealInTree(collection, folderId);
       await loadNotesTree();
-      renderNoteMain();
+      renderNoteMeta();
     } catch (err) {
       await uiError(t("move.failed"), err);
     }
@@ -628,13 +999,22 @@ async function archiveCurrentNote() {
 
 /* ---------- painel lateral: conexões e histórico */
 
+function setNoteSide(kind) {
+  notes.side = kind;
+  document.querySelectorAll("#note-main [data-side]").forEach((x) => x.classList.toggle("active", x.dataset.side === kind));
+  renderNoteSide(kind);
+}
+
+// fechar: no celular o painel cobre a nota e os botões que o abriram
+const sideClose = () => `<button class="icon-btn side-close" type="button" data-side-close title="${t("common.close")}" aria-label="${t("common.close")}">${icon("x", 16)}</button>`;
+
 async function renderNoteSide(kind) {
   const side = document.getElementById("note-side");
   if (!side) return;
   side.classList.toggle("hidden", !kind);
   if (!kind || !notes.current) return;
   const n = notes.current;
-  side.innerHTML = `<div class="muted">${t("common.loading")}</div>`;
+  side.innerHTML = `<div class="cl-pad">${loaderHtml(t("common.loading"), "sm")}</div>`;
   if (kind === "related") {
     let rel;
     try {
@@ -648,6 +1028,7 @@ async function renderNoteSide(kind) {
     side.innerHTML = `
       <div class="side-head"><h3>${icon("link", 15)} ${t("notes.connections")}</h3>
         ${state.user?.role === "admin" ? `<button class="btn sm ghost" type="button" id="side-connect">${icon("plus", 13)}<span>${t("side.connectTo")}</span></button>` : ""}
+        ${sideClose()}
       </div>
       <div class="links-label">${t("side.links", { count: rel.links.length })}</div>
       ${
@@ -671,7 +1052,7 @@ async function renderNoteSide(kind) {
       return;
     }
     side.innerHTML = `
-      <div class="side-head"><h3>${icon("history", 15)} ${t("notes.history")}</h3></div>
+      <div class="side-head"><h3>${icon("history", 15)} ${t("notes.history")}</h3>${sideClose()}</div>
       ${versions
         .map(
           (v) => `

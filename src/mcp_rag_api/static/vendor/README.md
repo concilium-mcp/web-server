@@ -33,3 +33,32 @@ Nada aqui passa por build; cada entrada registra origem e versão exata.
 - **Arquivo:** `force-graph.min.js`
 - **Origem:** release oficial — https://github.com/vasturiano/force-graph
 - **Uso:** grafo de conexões das notas na dashboard.
+
+## inter/
+
+- **Arquivos:** `inter-latin-wght-normal.woff2` e `inter-latin-ext-wght-normal.woff2` (fonte variável, pesos 100–900)
+- **Versão:** `@fontsource-variable/inter@5.0.16`
+- **Origem:** `https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5.0.16/files/`
+- **Licença:** SIL Open Font License 1.1 (ver `LICENSE`)
+- **Uso:** fonte da interface (plan-web-15, estética Resend). Local por causa da CSP (`default-src 'self'`, sem fonte externa).
+
+## swagger-ui/
+
+- **Arquivos:** `swagger-ui-bundle.js`, `swagger-ui.css` (+ `LICENSE`)
+- **Versão:** `swagger-ui-dist@5.17.14`
+- **Origem:** `https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/`
+- **Licença:** Apache-2.0 (ver `LICENSE`)
+- **Uso:** documentação da API em `/dash/docs`. Local por causa da CSP (`script-src 'self'`): o
+  `get_swagger_ui_html` padrão do FastAPI carrega do CDN e inicializa com `<script>` inline, o que
+  deixava a página em branco. A inicialização fica em `static/js/swagger-init.js`.
+
+## 3d-force-graph/
+
+- **Arquivo:** `3d-force-graph.min.js` (+ `LICENSE`) — bundle UMD que já embute o three.js
+- **Versão:** `3d-force-graph@1.80.1`
+- **Origem:** `https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.1/dist/3d-force-graph.min.js`
+- **Licença:** MIT (ver `LICENSE`)
+- **Uso:** modo 3D do grafo (plan-web-19). Carregado sob demanda (só quando a pessoa escolhe 3D),
+  por isso não entra no `dashboard.html`. Usa o motor de física d3 (padrão), igual ao 2D: o bundle
+  também traz o `ngraph.forcelayout`, que gera código com `new Function` e seria barrado pela CSP
+  (`script-src 'self'`, sem `unsafe-eval`) — **não ligar `forceEngine('ngraph')`**.

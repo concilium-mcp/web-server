@@ -217,14 +217,18 @@ function meter(label, value, total, hint) {
 
 /* ---------- tela */
 
-function chartCard(id, title, subtitle, { wide = false } = {}) {
+// "Notas por pasta": as 10 maiores; o resto atrás do "Ver mais" (a tabela continua com todas)
+const FOLDERS_PREVIEW = 10;
+
+function chartCard(id, title, subtitle, { wide = false, more = false } = {}) {
   return `
     <section class="viz-card ${wide ? "wide" : ""}" id="${id}">
       <header class="viz-card-head">
         <div class="grow"><h2>${title}</h2>${subtitle ? `<span class="muted">${subtitle}</span>` : ""}</div>
-        <button class="btn sm ghost" type="button" data-table-toggle="${id}" title="${t("chart.tableTitle")}">${icon("table-2", 13)}<span>${t("chart.table")}</span></button>
+        <button class="btn sm" type="button" data-table-toggle="${id}" title="${t("chart.tableTitle")}">${icon("table-2", 13)}<span>${t("chart.table")}</span></button>
       </header>
       <div class="viz-body"></div>
+      ${more ? `<div class="viz-more hidden"></div>` : ""}
       <div class="viz-table hidden"></div>
     </section>`;
 }
@@ -250,12 +254,12 @@ function overviewTemplate() {
           </div>
           <span class="grow"></span>
           <span class="muted overview-updated" id="overview-updated"></span>
-          <button class="icon-btn overview-refresh" type="button" id="overview-refresh" title="${t("overview.refresh")}">${icon("refresh-cw", 15)}</button>
+          <button class="btn sm overview-refresh" type="button" id="overview-refresh" title="${t("overview.refresh")}">${icon("refresh-cw", 14)}<span>${t("overview.refreshBtn")}</span></button>
         </div>
         <div class="kpis" id="kpis"></div>
         <div class="viz-grid">
           ${chartCard("viz-activity", t("overview.activity"), t("overview.activitySub", { days }), { wide: true })}
-          ${chartCard("viz-collections", t("overview.byFolder"), t("overview.byFolderSub"))}
+          ${chartCard("viz-collections", t("overview.byFolder"), t("overview.byFolderSub"), { more: true })}
           ${chartCard("viz-contributors", t("overview.contributors"), t("overview.contributorsSub", { days }))}
           <section class="viz-card" id="viz-health">
             <header class="viz-card-head"><div class="grow"><h2>${t("overview.health")}</h2><span class="muted">${t("overview.healthSub")}</span></div></header>
@@ -294,8 +298,15 @@ async function renderOverview(main) {
       toggle.querySelector("span").textContent = showTable ? t("chart.chart") : t("chart.table");
       return;
     }
+    if (e.target.closest("[data-folders-more]")) {
+      state.foldersExpanded = !state.foldersExpanded;
+      renderOverviewCharts();
+      return;
+    }
     const open = e.target.closest("[data-open-note]");
     if (open) emit("navigate", { screen: "notes", openId: open.dataset.openNote });
+    const go = e.target.closest("[data-goto]");
+    if (go) emit("navigate", { screen: go.dataset.goto });
   });
   await loadInsights();
 }
@@ -340,31 +351,38 @@ function renderKpis(d) {
   const newCount = d.created.current;
   const notesSub = newCount ? t("kpi.notesNew", { count: nf.format(newCount), days: d.days }) : t("kpi.notesNone", { days: d.days });
   const notesTip = t("kpi.notesTip", { count: nf.format(newCount), previous: nf.format(d.created.previous), days: d.days });
+  // goto = tela que o cartão abre ao clicar (vira <button>); sem goto é só leitura
   const tiles = [
-    { label: t("kpi.notes"), iconName: "notebook-pen", value: totals.documents, sub: notesSub, subTip: notesTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "" },
+    { label: t("kpi.notes"), iconName: "notebook-pen", value: totals.documents, sub: notesSub, subTip: notesTip, trend: delta > 0 ? "up" : delta < 0 ? "down" : "", goto: "notes" },
     { label: t("kpi.edits", { days: d.days }), iconName: "activity", value: edits, spark: d.activity.map((p) => p.edits) },
-    { label: t("kpi.folders"), iconName: "folder", value: totals.collections },
+    { label: t("kpi.folders"), iconName: "folder", value: totals.collections, goto: "notes" },
     {
       label: t("kpi.links"),
       iconName: "link",
       value: totals.links,
       sub: totals.pending_links ? t("kpi.pending", { count: nf.format(totals.pending_links) }) : t("kpi.linksSub"),
+      goto: "graph",
     },
-    { label: t("kpi.agents"), iconName: "bot", value: totals.agents, sub: t("kpi.memories", { count: nf.format(totals.memories) }) },
-    { label: t("kpi.chunks"), iconName: "file-text", value: totals.chunks, sub: t("kpi.chunksSub"), tech: true },
+    { label: t("kpi.agents"), iconName: "bot", value: totals.agents, sub: t("kpi.memories", { count: nf.format(totals.memories) }), goto: "agents" },
+    { label: t("kpi.chunks"), iconName: "file-text", value: totals.chunks, sub: t("kpi.chunksSub"), tech: true, goto: "search" },
   ];
+  // a descrição fica FORA do cartão (legenda abaixo): assim todos os cartões têm a mesma altura
   document.getElementById("kpis").innerHTML = tiles
-    .map(
-      (k) => `
-      <div class="kpi ${k.tech ? "tech" : ""}">
-        <span class="kpi-label"><span class="kpi-icon">${icon(k.iconName, 14)}</span>${escHtml(k.label)}</span>
-        <div class="kpi-row">
-          <span class="kpi-value" title="${nf.format(k.value)}">${k.value >= 10000 ? nfCompact.format(k.value) : nf.format(k.value)}</span>
-          ${k.spark ? sparkline(k.spark) : ""}
-        </div>
+    .map((k) => {
+      const tag = k.goto ? "button" : "div";
+      return `
+      <div class="kpi-cell ${k.tech ? "tech" : ""}">
+        <${tag} class="kpi"${k.goto ? ` type="button" data-goto="${k.goto}"` : ""}>
+          <span class="kpi-label"><span class="kpi-icon">${icon(k.iconName, 14)}</span>${escHtml(k.label)}</span>
+          <div class="kpi-row">
+            <span class="kpi-value" title="${nf.format(k.value)}">${k.value >= 10000 ? nfCompact.format(k.value) : nf.format(k.value)}</span>
+            ${k.spark ? sparkline(k.spark) : ""}
+          </div>
+          ${k.goto ? `<span class="kpi-go">${icon("chevron-right", 14)}</span>` : ""}
+        </${tag}>
         ${k.sub ? `<span class="kpi-sub ${k.trend || ""}" ${k.subTip ? `title="${escHtml(k.subTip)}"` : ""}>${k.trend === "up" ? "▲ " : k.trend === "down" ? "▼ " : ""}${escHtml(k.sub)}</span>` : ""}
-      </div>`,
-    )
+      </div>`;
+    })
     .join("");
   loadIcons(document.getElementById("kpis"));
 }
@@ -385,11 +403,21 @@ function renderOverviewCharts() {
     d.activity.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), p.edits, p.created]),
   );
 
+  const folders = d.by_collection;
+  const hiddenCount = folders.length - FOLDERS_PREVIEW;
+  const shown = state.foldersExpanded || hiddenCount <= 0 ? folders : folders.slice(0, FOLDERS_PREVIEW);
   drawBars(
     card("viz-collections").querySelector(".viz-body"),
-    d.by_collection.map((c) => ({ label: c.name, value: c.documents, dot: colorFor(c.name) })),
+    shown.map((c) => ({ label: c.name, value: c.documents, dot: colorFor(c.name) })),
     { valueName: (v) => t("unit.note", { count: v }), empty: t("chart.noFolders") },
   );
+  const more = card("viz-collections").querySelector(".viz-more");
+  more.classList.toggle("hidden", hiddenCount <= 0);
+  if (hiddenCount > 0) {
+    more.innerHTML = `<button class="btn sm ghost" type="button" data-folders-more aria-expanded="${Boolean(state.foldersExpanded)}">
+      <span>${state.foldersExpanded ? t("chart.showLess") : t("chart.showMore", { count: hiddenCount })}</span>${icon("chevron-right", 14)}</button>`;
+    loadIcons(more);
+  }
   card("viz-collections").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.folder"), t("col.notes")],
     d.by_collection.map((c) => [c.name, c.documents]),
@@ -434,9 +462,11 @@ function renderRecent(d) {
         <span class="grow"><span class="recent-title">${escHtml(n.title)}</span>
           <span class="muted">${escHtml(n.collection)} · v${n.version} · ${escHtml(actorName(n.updated_by))}</span></span>
         <span class="muted recent-when">${fmtAgo(n.updated_at)}</span>
+        <span class="recent-go">${icon("chevron-right", 14)}</span>
       </button>`,
       )
       .join("") || `<div class="viz-empty">${t("overview.recentEmpty")}</div>`;
+  loadIcons(box);
 }
 
 const onOverviewResize = debounce(() => state.screen === "overview" && renderOverviewCharts(), 150);

@@ -190,16 +190,31 @@ class LoginRateLimiter:
         self._failures.pop(key, None)
 
 
+# O IP do cliente é só uma dica (atrás de proxy dá para forjar ou rodar IPs), então cada
+# username também tem um balde próprio, mais folgado, que segura força bruta distribuída
+# sem travar o dono da conta por meia dúzia de erros de digitação.
+LOGIN_USER_FAILURES_FACTOR = 4
+
 _login_limiter: LoginRateLimiter | None = None
+_login_user_limiter: LoginRateLimiter | None = None
 
 
 def login_rate_limiter() -> LoginRateLimiter:
-    """Instância única do limiter, reconstruída se o env mudar (ex.: testes)."""
+    """Limiter por (username, IP), reconstruído se o env mudar (ex.: testes)."""
     global _login_limiter
     limit = get_settings().dash_login_rate_limit
     if _login_limiter is None or _login_limiter.max_failures != limit:
         _login_limiter = LoginRateLimiter(limit)
     return _login_limiter
+
+
+def login_user_rate_limiter() -> LoginRateLimiter:
+    """Limiter só por username (qualquer IP), com LOGIN_USER_FAILURES_FACTOR × o limite."""
+    global _login_user_limiter
+    limit = get_settings().dash_login_rate_limit * LOGIN_USER_FAILURES_FACTOR
+    if _login_user_limiter is None or _login_user_limiter.max_failures != limit:
+        _login_user_limiter = LoginRateLimiter(limit)
+    return _login_user_limiter
 
 
 async def cleanup_sessions() -> dict:

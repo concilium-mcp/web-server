@@ -9,8 +9,10 @@ import { renderOverview, hideTip } from "./views/insights.js";
 import { graphTemplate, bindGraphControls, loadGraph, destroyGraph } from "./views/graph.js";
 import { searchTemplate, bindSearch, renderSearchResults } from "./views/search.js";
 import { renderKeysList } from "./views/keys.js";
+import { renderConnectionsList } from "./views/connections.js";
 import { renderAgentsList } from "./views/agents.js";
 import { renderUsersList } from "./views/users.js";
+import { renderSecurityPage } from "./views/security.js";
 import { closePanel } from "./views/docpanel.js";
 
 // troca de tela: a de notas guarda o endereço da nota aberta (#/notes/<id>), as outras limpam
@@ -58,10 +60,18 @@ async function renderScreen() {
     main.innerHTML = pageTemplate("key-round", t("keys.title"), t("keys.sub"));
     await loadIcons(main);
     await renderKeysList();
+  } else if (state.screen === "connections") {
+    main.innerHTML = pageTemplate("plug", t("connections.title"), t("connections.sub"));
+    await loadIcons(main);
+    await renderConnectionsList();
   } else if (state.screen === "agents") {
     main.innerHTML = pageTemplate("bot", t("agents.title"), t("agents.sub"));
     await loadIcons(main);
     await renderAgentsList();
+  } else if (state.screen === "security") {
+    main.innerHTML = pageTemplate("shield-check", t("mfa.pageTitle"), t("mfa.pageSub"));
+    await loadIcons(main);
+    await renderSecurityPage();
   } else if (state.screen === "users") {
     main.innerHTML = pageTemplate("users", t("users.title"), t("users.sub"));
     await loadIcons(main);

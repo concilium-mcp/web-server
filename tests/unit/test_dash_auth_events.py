@@ -7,7 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from mcp_rag_api.config import Settings
-from mcp_rag_api.core import dash_auth
+from mcp_rag_api.core import dash_auth, mfa
 from mcp_rag_api.main import app
 
 # O portão CSRF da dash (web-04) exige o header que o dashboard.js envia em todo fetch.
@@ -23,6 +23,7 @@ def test_login_ok_loga_sem_senha(monkeypatch, caplog):
     user = dash_auth.DashUser(id="u1", username="maria", role="admin")
     monkeypatch.setattr(dash_auth, "authenticate", AsyncMock(return_value=user))
     monkeypatch.setattr(dash_auth, "create_session", AsyncMock(return_value="token"))
+    monkeypatch.setattr(mfa, "is_enabled", AsyncMock(return_value=False))  # sem banco: conta sem 2FA
     client = TestClient(app)
     with caplog.at_level(logging.INFO, logger="mcp_rag_api"):
         resp = client.post(
@@ -64,6 +65,7 @@ def test_cookie_max_age_segue_ttl_configurado(monkeypatch, valor, esperado):
     user = dash_auth.DashUser(id="u1", username="maria", role="admin")
     monkeypatch.setattr(dash_auth, "authenticate", AsyncMock(return_value=user))
     monkeypatch.setattr(dash_auth, "create_session", AsyncMock(return_value="token"))
+    monkeypatch.setattr(mfa, "is_enabled", AsyncMock(return_value=False))  # sem banco: conta sem 2FA
     fake_settings = Settings(dash_session_ttl_hours=valor)
     monkeypatch.setattr(dash_auth, "get_settings", lambda: fake_settings)
     client = TestClient(app)

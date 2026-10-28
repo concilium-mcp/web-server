@@ -48,6 +48,19 @@ def _visible(p: Principal, rows: list[dict]) -> list[dict]:
     return [r for r in rows if r.get("collection") is None or p.can_access_collection(r["collection"])]
 
 
+def _visible_outgoing(p: Principal, rows: list[dict]) -> list[dict]:
+    """Como _visible, mas um [[wikilink]] resolvido para coleção fora do alcance aparece como pendente:
+    se sumisse, a diferença "sumiu × pendente" revelaria que o título existe numa coleção proibida.
+    Link manual para fora do alcance continua escondido (não tem título digitado para mostrar)."""
+    out = []
+    for r in rows:
+        if r["collection"] is None or p.can_access_collection(r["collection"]):
+            out.append(r)
+        elif r["kind"] == "wikilink":
+            out.append({**r, "document_id": None, "title": None, "collection": None})
+    return out
+
+
 async def get_links(p: Principal, document_id: str) -> dict:
     """Links que saem do documento (inclui [[pendentes]]) e backlinks (quem aponta para ele)."""
     p.require("read")
@@ -56,11 +69,12 @@ async def get_links(p: Principal, document_id: str) -> dict:
         doc_uuid = parse_uuid(document_id)
         outgoing = records(await conn.fetch(_OUTGOING_SQL, doc_uuid))
         backlinks = records(await conn.fetch(_BACKLINKS_SQL, doc_uuid))
+    outgoing = _visible_outgoing(p, outgoing)
     for link in outgoing:
         link["pending"] = link["document_id"] is None
     return {
         "document": {"document_id": document_id, "title": doc["title"], "collection": doc["collection"]},
-        "links": _visible(p, outgoing),
+        "links": outgoing,
         "backlinks": _visible(p, backlinks),
     }
 

@@ -33,6 +33,25 @@ def _check_grant(p: Principal, scopes: list[str]) -> None:
         raise PermissionDenied("Só uma chave admin pode dar os escopos 'admin' ou 'agents:manage' a um agente.")
 
 
+def _check_collections(p: Principal, collections: list[str] | None) -> None:
+    """Quem está restrito a coleções não cria nem amplia um agente além do próprio alcance
+    (lista vazia no agente = todas as coleções, então também é recusada)."""
+    if not p.allowed_collections:
+        return
+    if not collections or not set(collections) <= set(p.allowed_collections):
+        raise PermissionDenied(
+            f"Esta chave só alcança as coleções {sorted(p.allowed_collections)}: "
+            "o agente precisa ficar restrito a elas."
+        )
+
+
+def _check_reach(p: Principal, agent: asyncpg.Record | dict) -> None:
+    """Operar sobre um agente existente (editar, restaurar, emitir chave...) exige cobrir os escopos e
+    as coleções dele — senão quem tem agents:manage herdaria um privilégio que não tem."""
+    _check_grant(p, list(agent["scopes"]))
+    _check_collections(p, list(agent["allowed_collections"]))
+
+
 def connect_command(slug: str, api_key: str) -> str:
     url = get_settings().public_url.rstrip("/")
     return f'claude mcp add --transport http kb-{slug} {url}/mcp --header "Authorization: Bearer {api_key}"'
@@ -154,6 +173,7 @@ async def create_agent(
     p.require("agents:manage")
     scopes = validate_scopes(scopes or ["read", "write"])
     _check_grant(p, scopes)
+    _check_collections(p, allowed_collections)
     config = {"auto_apply_updates": False, **(config or {})}
     async with pool().acquire() as conn, conn.transaction():
         try:
@@ -231,6 +251,9 @@ async def update_agent(
         _check_grant(p, changes["scopes"])
     async with pool().acquire() as conn, conn.transaction():
         agent = await resolve_agent(conn, p, slug)
+        _check_reach(p, agent)
+        if "allowed_collections" in changes:
+            _check_collections(p, changes["allowed_collections"])
         return await _apply(conn, agent, changes, p.actor, change_note)
 
 
@@ -239,6 +262,7 @@ async def set_agent_autonomy(p: Principal, slug: str, auto_apply_updates: bool, 
     state = "ligada" if auto_apply_updates else "desligada"
     async with pool().acquire() as conn, conn.transaction():
         agent = await resolve_agent(conn, p, slug)
+        _check_reach(p, agent)
         profile = await _apply(
             conn,
             agent,
@@ -308,6 +332,7 @@ async def archive_agent(p: Principal, slug: str, reason: str) -> dict:
     p.require("agents:manage")
     async with pool().acquire() as conn, conn.transaction():
         agent = await resolve_agent(conn, p, slug)
+        _check_reach(p, agent)
         await conn.execute("UPDATE agents SET status = 'archived', updated_at = now() WHERE id = $1", agent["id"])
         revoked = await conn.fetchval(
             "WITH r AS (UPDATE api_keys SET revoked_at = now() WHERE agent_id = $1 AND revoked_at IS NULL "
@@ -330,6 +355,11 @@ async def restore_agent_version(p: Principal, slug: str, version: int, change_no
         if old is None:
             raise NotFound(f"Versão {version} do agente '{slug}' não encontrada.")
         changes = {f: old[f] for f in PROFILE_FIELDS if old[f] is not None}
+        # a versão restaurada passa pelas mesmas regras de uma edição: sem reelevar escopo nem
+        # sair do alcance de coleções de quem restaura
+        _check_reach(p, agent)
+        _check_grant(p, list(changes.get("scopes", agent["scopes"])))
+        _check_collections(p, list(changes.get("allowed_collections", agent["allowed_collections"])))
         # config restaurada por inteiro (inclusive chaves removidas depois)
         changes["config"] = {**{k: None for k in agent["config"]}, **(old["config"] or {})}
         return await _apply(conn, agent, changes, p.actor, change_note or f"restaurado da versão {version}")
@@ -342,6 +372,7 @@ async def issue_agent_key(p: Principal, slug: str, label: str | None = None) -> 
     p.require("agents:manage")
     async with pool().acquire() as conn, conn.transaction():
         agent = await resolve_agent(conn, p, slug)
+        _check_reach(p, agent)  # a chave herda os escopos e as coleções do agente
         key = await create_api_key(conn, label=label or f"agent:{slug}", scopes=[], agent_id=agent["id"])
         await audit(conn, p.actor, "agent.key.issue", slug, prefix=key["prefix"])
     return {
@@ -355,11 +386,23 @@ async def revoke_agent_key(p: Principal, key_prefix: str) -> dict:
     p.require("agents:manage")
     async with pool().acquire() as conn, conn.transaction():
         rows = await conn.fetch(
-            "UPDATE api_keys SET revoked_at = now() WHERE prefix = $1 AND revoked_at IS NULL RETURNING id",
+            """
+            SELECT k.id, k.agent_id, a.scopes, a.allowed_collections
+            FROM api_keys k LEFT JOIN agents a ON a.id = k.agent_id
+            WHERE k.prefix = $1 AND k.revoked_at IS NULL
+            FOR UPDATE OF k
+            """,
             key_prefix,
         )
         if not rows:
             raise NotFound(f"Nenhuma chave ativa com prefixo '{key_prefix}'.")
+        for row in rows:
+            # chave humana (sem agente) é gestão de credencial: só admin, como na dashboard
+            if row["agent_id"] is None and not p.has("admin"):
+                raise PermissionDenied("Só uma chave admin revoga chaves que não são de agente.")
+            if row["agent_id"] is not None:
+                _check_reach(p, row)  # escopos e coleções do agente dono da chave
+        await conn.execute("UPDATE api_keys SET revoked_at = now() WHERE id = ANY($1)", [r["id"] for r in rows])
         await audit(conn, p.actor, "key.revoke", key_prefix)
     return {"revoked": len(rows), "prefix": key_prefix}
 
@@ -446,6 +489,7 @@ async def review_agent_update(p: Principal, proposal_id: int, approve: bool, not
         if prop is None:
             raise NotFound(f"Proposta {proposal_id} não encontrada ou já revisada.")
         agent = await conn.fetchrow("SELECT * FROM agents WHERE id = $1", prop["agent_id"])
+        _check_reach(p, agent)  # aprovar muda o system_prompt: só quem cobre o agente revisa
         if not approve:
             await conn.execute(
                 "UPDATE agent_versions SET status = 'rejected', reviewed_by = $2, review_note = $3, "

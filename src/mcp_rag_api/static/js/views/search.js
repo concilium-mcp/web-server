@@ -6,6 +6,7 @@ import { escHtml } from "../ui.js";
 import { state, colorFor } from "../state.js";
 import { emit } from "../events.js";
 import { openDocumentPanel } from "./docpanel.js";
+import { createLocationPicker } from "../location-picker.js";
 
 /* ---------------------------------------------------------------- tela: busca RAG (testador) */
 
@@ -26,6 +27,7 @@ function searchTemplate() {
             </label>
             <button class="composer-send" type="submit" title="${t("search.submit")}">${icon("search", 16)}</button>
           </form>
+          <div class="search-scope"><span class="muted">${t("search.scope")}</span><div id="s-location"></div></div>
           <div class="results-head hidden" id="s-head">
             <span class="muted" id="s-summary"></span>
             <button class="btn sm" id="s-highlight" type="button">${icon("network")}<span>${t("search.showInGraph")}</span></button>
@@ -42,6 +44,13 @@ function bindSearch() {
   const input = document.getElementById("s-query");
   if (state.lastSearch) input.value = state.lastSearch;
   input.focus();
+  createLocationPicker(document.getElementById("s-location"), {
+    value: state.searchScope,
+    onChange: (scope) => {
+      state.searchScope = scope;
+      if (input.value.trim()) form.requestSubmit(); // refaz a busca no novo local
+    },
+  });
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const query = input.value.trim();
@@ -52,7 +61,13 @@ function bindSearch() {
     results.innerHTML = `<div class="results-empty">${t("search.searching")}</div>`;
     const t0 = performance.now();
     try {
-      const data = await api.post("/search-test", { query, top_k: state.searchK });
+      const { collection, folderId } = state.searchScope;
+      const data = await api.post("/search-test", {
+        query,
+        top_k: state.searchK,
+        collections: collection ? [collection] : null,
+        folder_id: folderId || null,
+      });
       state.lastSearch = query;
       state.lastSearchResults = data.results;
       state.lastSearchMs = Math.round(performance.now() - t0);

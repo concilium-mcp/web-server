@@ -2,20 +2,13 @@
 import { api } from "../api.js";
 import { t } from "../i18n.js";
 import { icon, loadIcons } from "../icons.js";
-import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiConfirm, uiAlert, uiError } from "../ui.js";
+import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiConfirm, uiAlert, uiError, disclosure } from "../ui.js";
 import { state } from "../state.js";
+import { accessChips, accessPresetsHtml, scopesBlockHtml, bindAccessPicker, readScopes } from "../access.js";
 
 /* ---------------------------------------------------------------- tela: chaves API */
 
-// [escopo, chave da descrição]
-const SCOPES = [
-  ["read", "scope.read"],
-  ["write", "scope.write"],
-  ["agents:manage", "scope.agentsManage"],
-  ["admin", "scope.admin"],
-];
-
-
+// Formulário em linguagem simples (nome, quem usa, o que pode fazer); os escopos da API ficam no "Ver mais".
 function keysCreateForm(agents) {
   return modalShell({
     id: "key",
@@ -30,27 +23,21 @@ function keysCreateForm(agents) {
         <label class="form-field">
           <span class="form-label">${t("common.name")}</span>
           <input class="input" type="text" id="key-label" placeholder="${t("keys.labelPh")}" required />
+          <span class="form-help">${t("keys.labelHelp")}</span>
         </label>
         <label class="form-field">
           <span class="form-label">${t("keys.owner")}</span>
           <select class="input" id="key-agent">
             <option value="">${t("keys.humanKey")}</option>
-            ${agents.map((a) => `<option value="${escHtml(a.slug)}">agent: ${escHtml(a.slug)}</option>`).join("")}
+            ${agents.map((a) => `<option value="${escHtml(a.slug)}">${t("keys.agentOption", { slug: escHtml(a.slug) })}</option>`).join("")}
           </select>
         </label>
       </div>
       <div class="form-field">
-        <span class="form-label">${t("keys.scopes")}</span>
-        <div class="scope-grid two" id="key-scopes">
-          ${SCOPES.map(
-            ([sc, desc]) => `
-            <label class="scope-option">
-              <input type="checkbox" value="${sc}" ${sc === "read" ? "checked" : ""} />
-              <span><span class="mono">${sc}</span><span class="muted">${t(desc)}</span></span>
-            </label>`,
-          ).join("")}
-        </div>
-      </div>`,
+        <span class="form-label">${t("keys.access")}</span>
+        ${accessPresetsHtml("key", "read")}
+      </div>
+      ${disclosure({ id: "key-advanced", hint: t("keys.advancedHint"), body: scopesBlockHtml("key", ["read"]) })}`,
   });
 }
 
@@ -62,13 +49,17 @@ function keyRow(k, isAdmin) {
         <span class="row-icon">${icon(k.agent ? "bot" : "key-round")}</span>
         <div class="grow">
           <div class="row-title">${escHtml(k.label ?? "—")}</div>
-          <div class="mono muted">${escHtml(k.prefix)}…</div>
+          ${k.prefix ? `<div class="mono muted">${escHtml(k.prefix)}…</div>` : ""}
         </div>
       </div>
-      <div class="tcell">${(k.scopes || []).map((s) => `<span class="chip ${s === "admin" ? "accent" : ""}">${s}</span>`).join("")}</div>
-      <div class="tcell muted">${k.agent ? `<span class="chip">${icon("bot", 12)} ${escHtml(k.agent)}</span>` : t("keys.human")}</div>
-      <div class="tcell muted" title="${t("keys.createdAt", { date: fmtDate(k.created_at) })}">${revoked ? t("keys.revokedAgo", { ago: fmtAgo(k.revoked_at) }) : fmtAgo(k.created_at)}</div>
-      <div class="tcell muted" title="${k.last_used_at ? fmtDate(k.last_used_at) : t("keys.neverUsed")}">${fmtAgo(k.last_used_at)}</div>
+      <div class="tcell">${accessChips(k.scopes)}</div>
+      <div class="tcell" title="${escHtml(k.agent || t("keys.human"))}">${
+        k.agent
+          ? `<span class="chip">${icon("bot", 12)}<span class="chip-text">${escHtml(k.agent)}</span></span>`
+          : `<span class="tcell-who">${icon("circle-user-round", 14)}<span class="chip-text">${t("keys.human")}</span></span>`
+      }</div>
+      <div class="tcell" title="${t("keys.createdAt", { date: fmtDate(k.created_at) })}">${revoked ? t("keys.revokedAgo", { ago: fmtAgo(k.revoked_at) }) : fmtAgo(k.created_at)}</div>
+      <div class="tcell ${k.last_used_at ? "" : "muted"}" title="${k.last_used_at ? fmtDate(k.last_used_at) : t("keys.neverUsed")}">${k.last_used_at ? fmtAgo(k.last_used_at) : t("keys.neverUsed")}</div>
       <div class="tcell-actions">
         ${
           isAdmin && !revoked
@@ -127,9 +118,10 @@ async function renderKeysList() {
 function bindKeysCreate() {
   const form = document.getElementById("key-form");
   const setOpen = bindModal("key", { trigger: document.getElementById("key-new") });
+  bindAccessPicker(form, "key");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const scopes = [...document.querySelectorAll("#key-scopes input:checked")].map((i) => i.value);
+    const scopes = readScopes(form, "key");
     if (!scopes.length) {
       await uiAlert(t("keys.pickScopeTitle"), t("keys.pickScopeMsg"));
       return;

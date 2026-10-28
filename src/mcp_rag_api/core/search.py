@@ -23,6 +23,7 @@ WITH filtered AS (
       AND ($2::text[] IS NULL OR col.name = ANY($2))
       AND ($3::text[] IS NULL OR d.tags && $3)
       AND ($4::jsonb IS NULL OR d.metadata @> $4)
+      AND ($9::uuid[] IS NULL OR d.folder_id = ANY($9))
 ),
 vec AS (
     SELECT id, row_number() OVER (ORDER BY embedding <=> $1) AS rank
@@ -58,7 +59,10 @@ async def search_knowledge(
     tags: list[str] | None = None,
     metadata: dict | None = None,
     top_k: int = 5,
+    folder_ids: list | None = None,
 ) -> list[dict]:
+    """folder_ids: restringe às notas dessas pastas (o chamador passa a subárvore). Só o web-server tem
+    pastas — o parâmetro não existe no core do server."""
     p.require("read")
     effective = p.collection_filter(collections)
     top_k = min(max(top_k, 1), 50)
@@ -82,5 +86,6 @@ async def search_knowledge(
                 query,
                 RRF_K,
                 top_k,
+                folder_ids or None,
             )
     return records(rows)

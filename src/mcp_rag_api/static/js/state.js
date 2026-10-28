@@ -6,12 +6,17 @@ const state = {
   screen: "overview", // tela inicial ao entrar
   insightsDays: 30, // período do Painel (7 | 30 | 90)
   insights: null,
+  foldersExpanded: false, // Painel: "Notas por pasta" mostrando todas as pastas (Ver mais)
   level: "documents",
   collection: "",
+  folderId: null, // grafo: pasta escolhida no seletor de local (inclui subpastas)
+  graphPicker: null,
+  searchScope: { collection: "", folderId: null }, // busca: onde procurar
   minSimilarity: 0.5, // calibrado para bge-m3: docs relacionados ficam ~0.5–0.7
   k: 5,
   colors: new Map(),
   graphInstance: null,
+  graphInstanceMode: null, // modo ("2d" | "3d") da instância viva — troca de modo recria
   graphObserver: null,
   graphNeedsFit: false,
   hoverNode: null,
@@ -26,13 +31,41 @@ const state = {
   connectMode: false, // grafo: modo "clique na origem e no destino"
   connectFrom: null, // nó de origem escolhido no modo conectar
   showSemantic: true, // grafo: mostrar arestas de similaridade além dos links explícitos
+  graphMode: "2d", // grafo: "2d" (canvas) | "3d" (WebGL, carregado sob demanda)
+  graphView: "auto", // grafo: "auto" (grupos se a base for grande) | "groups" | "all"
+  graphGroup: null, // grafo: grupo aberto ({ id, label, size }) ou null
+  linkScale: 1, // grafo: multiplicador da espessura das arestas (0.3–3)
 };
+
+// paleta das coleções: o tema pode trocar (--collection-palette, ex.: preto e branco em tons de cinza);
+// lida sob demanda e zerada a cada troca de tema (resetCollectionColors)
+let collectionPalette = null;
+
+function currentCollectionPalette() {
+  if (!collectionPalette) {
+    const custom = getComputedStyle(document.documentElement).getPropertyValue("--collection-palette").trim();
+    collectionPalette = custom ? custom.split(/\s*,\s*/) : PALETTE;
+  }
+  return collectionPalette;
+}
 
 function colorFor(collection) {
   if (!state.colors.has(collection)) {
-    state.colors.set(collection, PALETTE[state.colors.size % PALETTE.length]);
+    const palette = currentCollectionPalette();
+    state.colors.set(collection, palette[state.colors.size % palette.length]);
   }
   return state.colors.get(collection);
+}
+
+// cor de um grupo de assunto do grafo: mesma paleta das coleções, por índice (não ocupa cor de coleção)
+function groupColor(i) {
+  const palette = currentCollectionPalette();
+  return palette[i % palette.length];
+}
+
+function resetCollectionColors() {
+  collectionPalette = null;
+  state.colors.clear();
 }
 
 // localStorage pode falhar (aba privada, bloqueio): rascunho é conveniência, nunca obrigatório
@@ -60,4 +93,4 @@ const store = {
   },
 };
 
-export { state, colorFor, store };
+export { state, colorFor, groupColor, resetCollectionColors, store };

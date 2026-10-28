@@ -132,3 +132,20 @@ async def test_graph_marks_explicit_links_regardless_of_threshold(base):
 
     chunks = await graph.build_graph("chunks", "lk-produto", 0.0, 3)
     assert all(e["kind"] == "semantic" for e in chunks["edges"])
+
+
+async def test_wikilink_to_forbidden_collection_looks_pending(base):
+    """Quem só alcança lk-produto não distingue [[título de outra coleção]] de [[título inexistente]]."""
+    probe = await _doc("lk-produto", "Sonda", "cita [[Orçamento]] e [[Titulo Que Nao Existe]]")
+    only_produto = Principal(actor="prod", scopes=frozenset({"read"}), allowed_collections=("lk-produto",))
+
+    seen = {lk["target_title"]: lk for lk in (await links.get_links(only_produto, probe))["links"]}
+    assert seen["Orçamento"]["pending"] and seen["Titulo Que Nao Existe"]["pending"]
+    assert seen["Orçamento"]["document_id"] is None and seen["Orçamento"]["collection"] is None
+    assert {k: v for k, v in seen["Orçamento"].items() if k not in ("id", "target_title", "created_at")} == {
+        k: v for k, v in seen["Titulo Que Nao Existe"].items() if k not in ("id", "target_title", "created_at")
+    }
+
+    # quem alcança as duas coleções continua vendo o link resolvido
+    full = {lk["target_title"]: lk for lk in (await links.get_links(ADMIN, probe))["links"]}
+    assert not full["Orçamento"]["pending"] and full["Orçamento"]["document_id"] == base["fin"]

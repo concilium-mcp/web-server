@@ -31,6 +31,31 @@ async def _create_user(username: str, role: str, password: str) -> dict:
         await db.close_pool()
 
 
+async def _reset_2fa(username: str) -> bool:
+    from .core import dash_auth, mfa
+
+    await db.init_pool()
+    try:
+        user_id = await db.pool().fetchval("SELECT id FROM dash_users WHERE username = $1", username.strip().lower())
+        if user_id is None:
+            return False
+        await mfa.disable(str(user_id))
+        await dash_auth.revoke_user_sessions(str(user_id))
+        return True
+    finally:
+        await db.close_pool()
+
+
+async def _encrypt_2fa_secrets(decrypt: bool) -> int:
+    from .core import mfa
+
+    await db.init_pool()
+    try:
+        return await mfa.reseal_all(decrypt=decrypt)
+    finally:
+        await db.close_pool()
+
+
 async def _sync_agents(out_dir: Path) -> list[Path]:
     """Gera .claude/agents/<slug>.md a partir do banco (fonte da verdade continua sendo o banco)."""
     await db.init_pool()
@@ -57,13 +82,15 @@ async def _sync_agents(out_dir: Path) -> list[Path]:
 
 
 async def _cleanup() -> dict:
-    from .core import dash_auth
+    from .core import dash_auth, mfa, oauth
     from .core.memory import cleanup_memories
 
     await db.init_pool()
     try:
         result = await cleanup_memories()
         result.update(await dash_auth.cleanup_sessions())
+        result.update(await mfa.cleanup_challenges())
+        result.update(await oauth.cleanup())
         return result
     finally:
         await db.close_pool()
@@ -110,6 +137,16 @@ def main() -> None:
     user.add_argument("--role", choices=["admin", "editor", "viewer"], default="viewer")
     user.add_argument("--password", help="Se omitido, pede interativamente (sem eco)")
 
+    reset_2fa = sub.add_parser("reset-2fa", help="Desliga o 2FA de um usuário da dashboard (perdeu o celular)")
+    reset_2fa.add_argument("--username", required=True)
+
+    enc = sub.add_parser(
+        "encrypt-2fa-secrets", help="Cifra os segredos do 2FA já gravados com DASH_TOTP_ENCRYPTION_KEY"
+    )
+    enc.add_argument(
+        "--decrypt", action="store_true", help="Volta os segredos para texto puro (trocar/remover a chave)"
+    )
+
     sync = sub.add_parser("sync-agents", help="Gera .claude/agents/<slug>.md a partir do banco")
     sync.add_argument("--out", type=Path, default=Path(".claude/agents"))
 
@@ -145,6 +182,13 @@ def main() -> None:
                     raise SystemExit("Senhas não conferem.")
             result = asyncio.run(_create_user(args.username, args.role, password))
             print(f"Usuário '{result['username']}' criado com role '{result['role']}'.")
+        case "reset-2fa":
+            if not asyncio.run(_reset_2fa(args.username)):
+                raise SystemExit(f"Usuário '{args.username}' não encontrado.")
+            print(f"2FA desligado para '{args.username}'. As sessões desse usuário foram encerradas.")
+        case "encrypt-2fa-secrets":
+            n = asyncio.run(_encrypt_2fa_secrets(args.decrypt))
+            print(f"{n} conta(s) {'decifrada(s)' if args.decrypt else 'cifrada(s)'}.")
         case "sync-agents":
             for path in asyncio.run(_sync_agents(args.out)):
                 print("escrito:", path)

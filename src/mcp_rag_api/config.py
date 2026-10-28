@@ -2,6 +2,7 @@ from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,7 +22,8 @@ def default_migrations_dir() -> Path:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql://user:password@localhost:5432/kb"
+    # sem usuário/senha no default: a credencial vem sempre do .env (DATABASE_URL)
+    database_url: str = "postgresql://localhost:5432/kb"
     public_url: str = "http://localhost:8000"
     # None = usar as migrações embutidas no pacote; MIGRATIONS_DIR sobrescreve (deploys antigos).
     migrations_dir: Path | None = None
@@ -49,6 +51,20 @@ class Settings(BaseSettings):
     # Dashboard: falhas de login permitidas por (usuário, IP) antes do backoff exponencial.
     # 0 desliga o rate limit (só para dev/testes controlados).
     dash_login_rate_limit: int = 5
+    # Cifra os segredos do 2FA (TOTP) no banco com AES-256-GCM. Opcional: vazio = texto puro.
+    # Gere com `openssl rand -base64 32` e guarde fora do banco; perder a chave = resetar o 2FA de todos.
+    dash_totp_encryption_key: str = ""
+
+    # OAuth do MCP (plan-web-17): clientes como o Claude conectam pela tela "Autorizar", sem copiar chave.
+    # O issuer é o PUBLIC_URL (https em produção; http só em localhost).
+    oauth_enabled: bool = True
+    oauth_access_ttl_minutes: int = Field(default=60, gt=0)
+    oauth_refresh_ttl_days: int = Field(default=30, gt=0)
+    # hosts https aceitos como redirect_uri no registro dinâmico (subdomínios inclusos; loopback http
+    # sempre aceito): Claude, ChatGPT, VS Code (web), Mistral Le Chat
+    oauth_redirect_allowlist: str = "claude.ai,claude.com,chatgpt.com,openai.com,vscode.dev,mistral.ai"
+    # esquemas de app nativo aceitos como redirect_uri (ex.: cursor://anysphere.cursor-mcp/oauth/callback)
+    oauth_redirect_schemes: str = "cursor,vscode,vscode-insiders"
 
     kb_log_level: str = "INFO"
     # tempo de vida das sessões da dashboard, em horas (padrão: 7 dias)
@@ -67,6 +83,36 @@ class Settings(BaseSettings):
         if self.chunk_overlap_words >= self.chunk_words:
             raise ValueError("CHUNK_OVERLAP_WORDS deve ser menor que CHUNK_WORDS")
         return self
+
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# senhas de exemplo que já apareceram nos docs/compose do projeto
+WEAK_DB_PASSWORDS = {"password", "senha", "change-me", "kb"}
+
+
+def _csv(value: str) -> set[str]:
+    return {item.strip().lower() for item in value.split(",") if item.strip()}
+
+
+def oauth_redirect_hosts(s: Settings) -> set[str]:
+    return _csv(s.oauth_redirect_allowlist)
+
+
+def oauth_redirect_schemes(s: Settings) -> set[str]:
+    # http/https nunca entram por aqui: seguem as regras de loopback e de host
+    return _csv(s.oauth_redirect_schemes) - {"http", "https"}
+
+
+def oauth_issue() -> str | None:
+    """Motivo pelo qual o OAuth não pode subir (None = pode). O SDK exige issuer https,
+    exceto em localhost/127.0.0.1."""
+    s = get_settings()
+    if not s.oauth_enabled:
+        return "OAUTH_ENABLED=false"
+    url = urlparse(s.public_url)
+    if url.scheme == "https" or (url.scheme == "http" and url.hostname in ("localhost", "127.0.0.1")):
+        return None
+    return f"PUBLIC_URL={s.public_url} não é https: OAuth do MCP desligado"
 
 
 @lru_cache
@@ -90,9 +136,24 @@ def check_config() -> list[str]:
     env_name, key = required_key.get(s.embedding_provider, ("", ""))
     if env_name and not key:
         raise RuntimeError(f"EMBEDDING_PROVIDER={s.embedding_provider} exige {env_name}: defina a variável no .env")
+    public = urlparse(s.public_url).hostname not in LOCAL_HOSTS
+    if s.kb_auth_disabled and public:
+        # auth desligada com URL pública = API e MCP abertos como admin para a internet
+        raise RuntimeError(
+            f"KB_AUTH_DISABLED=true só é aceito com PUBLIC_URL local; PUBLIC_URL={s.public_url}. "
+            "Desligue KB_AUTH_DISABLED em produção."
+        )
+    if s.dash_totp_encryption_key and len(s.dash_totp_encryption_key) < 32:
+        raise RuntimeError(
+            "DASH_TOTP_ENCRYPTION_KEY curta demais: use ao menos 32 caracteres (openssl rand -base64 32)"
+        )
     warnings: list[str] = []
+    if public and urlparse(s.database_url).password in WEAK_DB_PASSWORDS:
+        warnings.append("DATABASE_URL usa uma senha de exemplo (ex.: 'password') — troque a senha do banco")
     if s.public_url == "http://localhost:8000":
         warnings.append("PUBLIC_URL é o padrão http://localhost:8000 — defina a URL pública em produção")
+    if s.oauth_enabled and (issue := oauth_issue()):
+        warnings.append(issue)
     if s.kb_auth_disabled:
         warnings.append("KB_AUTH_DISABLED=true: AUTENTICAÇÃO DESLIGADA — use apenas em desenvolvimento!")
     return warnings

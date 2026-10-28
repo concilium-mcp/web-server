@@ -5,6 +5,7 @@ import hashlib
 import math
 import re
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -71,8 +72,26 @@ class EmbeddingProvider(ABC):
                 out.append(arr)
         return out
 
+    # Consultas repetidas (agentes perguntando de novo, o testador da dash) não voltam ao provedor:
+    # no brian-king cada embedding no Hugging Face custa 200–760 ms. Só consultas (textos de
+    # documento raramente se repetem); LRU por instância = por provedor/modelo (plan-web-24).
+    QUERY_CACHE_SIZE = 512
+
     async def embed_one(self, text: str, input_type: InputType = "document") -> np.ndarray:
-        return (await self.embed([text], input_type))[0]
+        if input_type != "query":
+            return (await self.embed([text], input_type))[0]
+        cache: OrderedDict[str, np.ndarray] = self.__dict__.setdefault("_query_cache", OrderedDict())
+        key = text.strip()
+        hit = cache.get(key)
+        if hit is not None:
+            cache.move_to_end(key)
+            return hit
+        vector = (await self.embed([text], input_type))[0]
+        vector.setflags(write=False)  # compartilhado entre chamadas: ninguém altera
+        cache[key] = vector
+        if len(cache) > self.QUERY_CACHE_SIZE:
+            cache.popitem(last=False)
+        return vector
 
     async def warmup(self) -> None:
         """Pré-carrega recursos pesados no boot (só LocalProvider tem algo a fazer)."""

@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .config import get_settings
-from .core import agents, documents, links, memory, search
-from .security import DEV_PRINCIPAL, PermissionDenied, Principal, bearer_token, resolve_key
+from .core import agents, documents, folders, links, memory, search
+from .security import DEV_PRINCIPAL, PermissionDenied, Principal, bearer_token, resolve_bearer
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ async def principal(authorization: str | None = Header(default=None)) -> Princip
     token = bearer_token(authorization)
     if token:
         async with db.pool().acquire() as conn:
-            return await resolve_key(conn, token)
+            return await resolve_bearer(conn, token)
     if get_settings().kb_auth_disabled:
         return DEV_PRINCIPAL
     raise PermissionDenied("Autenticação necessária: Authorization: Bearer <chave>.")
@@ -52,6 +52,7 @@ class DocumentIn(BaseModel):
     source: str | None = None
     external_id: str | None = None
     force: bool = False
+    folder_path: str | None = None  # "A/B": pasta dentro da coleção (criada se faltar); None = raiz
 
 
 class DocumentPatch(BaseModel):
@@ -62,6 +63,18 @@ class DocumentPatch(BaseModel):
     metadata: dict[str, Any] | None = None
     source: str | None = None
     base_version: int | None = None  # trava otimista opcional: conflito devolve 409 + current_version
+
+
+class TextEditIn(BaseModel):
+    old_text: str
+    new_text: str
+
+
+class DocumentEdit(BaseModel):
+    change_note: str
+    edits: list[TextEditIn] | None = None
+    append: str | None = None
+    base_version: int | None = None
 
 
 class LinkIn(BaseModel):
@@ -78,6 +91,17 @@ class DocumentUpsert(BaseModel):
     metadata: dict[str, Any] | None = None
     source: str | None = None
     change_note: str = "sincronização (upsert)"
+    folder_path: str | None = None
+
+
+class DocumentMove(BaseModel):
+    collection: str
+    folder_path: str | None = None
+
+
+class FolderPathIn(BaseModel):
+    collection: str
+    path: str
 
 
 class AgentIn(BaseModel):
@@ -159,6 +183,32 @@ async def create_collection(body: CollectionIn, p: Principal = Auth) -> dict:
     return await documents.create_collection(p, body.name, body.description)
 
 
+class CollectionRenameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+@router.patch("/collections/{name}")
+async def rename_collection(name: str, body: CollectionRenameIn, p: Principal = Auth) -> dict:
+    """Renomeia a coleção (escopo admin); leva o nome novo para as listas de acesso restrito."""
+    return await folders.rename_collection(p, name, body.name)
+
+
+@router.delete("/collections/{name}")
+async def delete_collection(name: str, p: Principal = Auth) -> dict:
+    """Exclui a coleção sem notas ativas (escopo admin) — irreversível."""
+    return await folders.delete_collection(p, name)
+
+
+@router.get("/folders")
+async def list_folders(collection: str | None = None, p: Principal = Auth) -> list[dict]:
+    return await folders.list_folders(p, collection)
+
+
+@router.post("/folders")
+async def create_folder(body: FolderPathIn, p: Principal = Auth) -> dict:
+    return await folders.ensure_folder_path(p, body.collection, body.path)
+
+
 @router.post("/search")
 async def search_knowledge(body: SearchIn, p: Principal = Auth) -> list[dict]:
     return await search.search_knowledge(p, body.query, body.collections, body.tags, body.metadata, body.top_k)
@@ -178,22 +228,34 @@ async def list_documents(
 
 @router.post("/documents")
 async def add_document(body: DocumentIn, p: Principal = Auth) -> dict:
-    return await documents.add_document(p, **body.model_dump())
+    data = body.model_dump()
+    return await folders.add_document_in_folder(p, data.pop("folder_path"), **data)
 
 
 @router.put("/documents/upsert")
 async def upsert_document(body: DocumentUpsert, p: Principal = Auth) -> dict:
-    return await documents.upsert_document(p, **body.model_dump())
+    data = body.model_dump()
+    return await folders.upsert_document_in_folder(p, data.pop("folder_path"), **data)
 
 
 @router.get("/documents/{document_id}")
 async def get_document(document_id: str, p: Principal = Auth) -> dict:
-    return await documents.get_document(p, document_id)
+    return await folders.get_document_with_folder(p, document_id)
+
+
+@router.post("/documents/{document_id}/move")
+async def move_document(document_id: str, body: DocumentMove, p: Principal = Auth) -> dict:
+    return await folders.move_document_to(p, document_id, body.collection, body.folder_path)
 
 
 @router.patch("/documents/{document_id}")
 async def update_document(document_id: str, body: DocumentPatch, p: Principal = Auth) -> dict:
     return await documents.update_document(p, document_id, **body.model_dump())
+
+
+@router.post("/documents/{document_id}/edit")
+async def edit_document(document_id: str, body: DocumentEdit, p: Principal = Auth) -> dict:
+    return await documents.edit_document(p, document_id, **body.model_dump())
 
 
 @router.delete("/documents/{document_id}")

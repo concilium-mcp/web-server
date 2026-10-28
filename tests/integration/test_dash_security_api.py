@@ -49,6 +49,16 @@ async def test_security_headers_on_all_responses():
             assert "style-src 'self' 'unsafe-inline'" in csp
             assert "img-src 'self' data:" in csp
             assert "connect-src 'self'" in csp
+            assert resp.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
+            assert "camera=()" in resp.headers["Permissions-Policy"]
+            assert resp.headers["Cross-Origin-Opener-Policy"] == "same-origin"
+
+
+async def test_root_redirects_to_dashboard():
+    async with await _client() as c:
+        resp = await c.get("/")
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/dashboard"
 
 
 # ---------------------------------------------------------------- cookie Secure
@@ -140,6 +150,29 @@ async def test_login_rate_limit_blocks_then_env_disables():
             assert (await c.post("/dash/api/auth/login", json=wrong)).status_code == 401
         assert (await c.post("/dash/api/auth/login", json=wrong)).status_code == 401  # 5ª falha ainda executa
         assert (await c.post("/dash/api/auth/login", json=wrong)).status_code == 429  # a próxima morre no bloqueio
+
+
+async def test_login_rate_limit_ignores_spoofed_forwarded_for():
+    """Trocar o X-Forwarded-For a cada tentativa não zera o limite: com CF-Connecting-IP o IP vem dele,
+    e o balde por username segura de qualquer jeito (4× o limite)."""
+    body = {"username": "sec-spoof", "password": "senha-correta-5"}
+    await dash_auth.create_user(body["username"], body["password"], "viewer")
+    wrong = {**body, "password": "senha-errada-999"}
+
+    async with await _client() as c:
+        # atrás do Cloudflare: o XFF forjado muda, o CF-Connecting-IP não
+        for i in range(5):
+            headers = {"X-Forwarded-For": f"10.9.0.{i}", "CF-Connecting-IP": "203.0.113.7"}
+            assert (await c.post("/dash/api/auth/login", json=wrong, headers=headers)).status_code == 401
+        headers = {"X-Forwarded-For": "10.9.0.99", "CF-Connecting-IP": "203.0.113.7"}
+        assert (await c.post("/dash/api/auth/login", json=wrong, headers=headers)).status_code == 429
+
+        # IPs "diferentes" a cada tentativa: o balde por username bloqueia após 20 falhas no total
+        for i in range(5, 20):
+            headers = {"CF-Connecting-IP": f"198.51.100.{i}"}
+            assert (await c.post("/dash/api/auth/login", json=wrong, headers=headers)).status_code == 401
+        headers = {"CF-Connecting-IP": "198.51.100.200"}
+        assert (await c.post("/dash/api/auth/login", json=body, headers=headers)).status_code == 429
 
 
 # ---------------------------------------------------------------- downgrade de papel

@@ -12,7 +12,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from .core import agents, dash_auth, documents, graph, links, obsidian_import, search
+from .core import agents, dash_auth, documents, folders, graph, links, mfa, oauth, obsidian_import, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -69,22 +69,80 @@ auth_router = APIRouter(
 )
 
 
-@auth_router.post("/login")
-async def login(body: LoginIn, request: Request, response: Response) -> dict:
-    limiter = dash_auth.login_rate_limiter()
-    rate_key = (body.username.strip().lower(), request.client.host if request.client else "?")
-    blocked = limiter.blocked_for(rate_key)
+def client_ip(request: Request) -> str:
+    """IP do cliente para o rate limit. Atrás do Cloudflare vale o CF-Connecting-IP (o Cloudflare
+    sobrescreve o que vier do cliente); o request.client.host sai do X-Forwarded-For mais à
+    esquerda (--forwarded-allow-ips='*'), que o próprio cliente consegue forjar."""
+    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+    return cf_ip or (request.client.host if request.client else "?")
+
+
+def _login_buckets(username: str, request: Request) -> list[tuple[dash_auth.LoginRateLimiter, tuple[str, str]]]:
+    return [
+        (dash_auth.login_rate_limiter(), (username, client_ip(request))),
+        (dash_auth.login_user_rate_limiter(), (username, "*")),
+    ]
+
+
+def _check_login_blocked(buckets: list[tuple[dash_auth.LoginRateLimiter, tuple[str, str]]]) -> None:
+    blocked = max(limiter.blocked_for(key) for limiter, key in buckets)
     if blocked:
         raise HTTPException(
             status_code=429,
             detail=f"Muitas tentativas de login. Tente novamente em {int(blocked) + 1}s.",
         )
+
+
+@auth_router.post("/login")
+async def login(body: LoginIn, request: Request, response: Response) -> dict:
+    username = body.username.strip().lower()
+    buckets = _login_buckets(username, request)
+    _check_login_blocked(buckets)
     user = await dash_auth.authenticate(body.username, body.password)
     if user is None:
-        limiter.register_failure(rate_key)
-        logger.warning("dash auth: login falhou (username=%s)", body.username.strip().lower())
+        for limiter, key in buckets:
+            limiter.register_failure(key)
+        logger.warning("dash auth: login falhou (username=%s ip=%s)", username, client_ip(request))
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
-    limiter.reset(rate_key)
+    if await mfa.is_enabled(user.id):
+        # senha certa não zera o rate limit: quem tem só a senha não ganha tentativas de código à vontade
+        logger.info("dash auth: senha ok, aguardando 2FA (username=%s)", user.username)
+        return {"mfa_required": True, "mfa_token": await mfa.create_challenge(user.id)}
+    for limiter, key in buckets:
+        limiter.reset(key)
+    return await _start_session(user, request, response)
+
+
+class MfaLoginIn(BaseModel):
+    mfa_token: str
+    code: str
+
+
+@auth_router.post("/login/mfa")
+async def login_mfa(body: MfaLoginIn, request: Request, response: Response) -> dict:
+    """2ª etapa do login: código do app autenticador ou um recovery code."""
+    who = await mfa.challenge_user(body.mfa_token)
+    if who is None:
+        raise HTTPException(status_code=401, detail="Verificação expirada. Entre com a senha de novo.")
+    buckets = _login_buckets(who["username"], request)
+    _check_login_blocked(buckets)
+    method = await mfa.verify(who["id"], body.code)
+    if method is None:
+        await mfa.register_challenge_failure(body.mfa_token)
+        for limiter, key in buckets:
+            limiter.register_failure(key)
+        logger.warning("dash auth: código 2FA inválido (username=%s ip=%s)", who["username"], client_ip(request))
+        raise HTTPException(status_code=400, detail="Código inválido.")
+    await mfa.consume_challenge(body.mfa_token)
+    for limiter, key in buckets:
+        limiter.reset(key)
+    if method == "recovery":
+        async with pool().acquire() as conn:
+            await audit(conn, f"dash:{who['username']}", "dash.2fa.recovery_used", who["username"])
+    return await _start_session(DashUser(**who), request, response)
+
+
+async def _start_session(user: DashUser, request: Request, response: Response) -> dict:
     token = await dash_auth.create_session(user.id)
     # cookie Secure só em HTTPS: em produção o uvicorn roda atrás de proxy com
     # --proxy-headers (X-Forwarded-Proto chega no scheme da request); em dev local (HTTP)
@@ -134,9 +192,20 @@ async def get_graph(
     min_similarity: float = Query(default=0.5, ge=0.0, lt=1.0),
     k: int = Query(default=5, ge=1, le=20),
     level: Literal["documents", "chunks"] = "documents",
+    folder_id: str | None = None,
+    view: Literal["auto", "all", "groups"] = "auto",
+    group: int | None = Query(default=None, ge=0),
 ) -> dict:
-    """Nós e arestas do grafo da base: vizinhança por cosseno (centroides ou chunks)."""
-    return await graph.build_graph(level, collection, min_similarity, k)
+    """Nós e arestas do grafo da base: vizinhança por cosseno (centroides ou chunks). folder_id = só a
+    pasta e as subpastas. No nível documentos os nós vêm com x,y do layout do servidor; view="groups"
+    (padrão acima de ~1.500 notas em "auto") devolve um nó por grupo de assunto e group=N, as notas dele."""
+    return await graph.build_graph(level, collection, min_similarity, k, folder_id or None, view=view, group=group)
+
+
+@router.get("/folders")
+async def location_tree(user: DashUser = Depends(current_user)) -> dict:
+    """Coleções e pastas (caminho, nº de notas diretas e com subpastas) para o seletor de local."""
+    return await folders.location_tree(_reader(user))
 
 
 def _reader(user: DashUser) -> Principal:
@@ -166,8 +235,9 @@ def _who(actor: str | None) -> str:
 
 
 @router.get("/notes/tree")
-async def notes_tree() -> dict:
-    """Árvore leve da tela Notas: todas as coleções (inclusive vazias) e os documentos ativos, sem conteúdo."""
+async def notes_tree(user: DashUser = Depends(current_user)) -> dict:
+    """Árvore leve da tela Notas: todas as coleções (inclusive vazias), as pastas aninhadas dentro delas
+    (plan-web-14) e os documentos ativos com a pasta onde estão (folder_id NULL = raiz), sem conteúdo."""
     collections = await pool().fetch(
         """
         SELECT c.name, c.description, count(d.id) FILTER (WHERE d.status = 'active') AS documents
@@ -177,13 +247,17 @@ async def notes_tree() -> dict:
     )
     notes = await pool().fetch(
         """
-        SELECT d.id, d.title, c.name AS collection, d.tags, d.version, d.updated_at, d.updated_by
+        SELECT d.id, d.title, c.name AS collection, d.folder_id, d.tags, d.version, d.updated_at, d.updated_by
         FROM documents d JOIN collections c ON c.id = d.collection_id
         WHERE d.status = 'active'
         ORDER BY c.name, lower(d.title)
         """
     )
-    return {"collections": records(collections), "notes": records(notes)}
+    return {
+        "collections": records(collections),
+        "folders": await folders.list_folders(_reader(user)),
+        "notes": records(notes),
+    }
 
 
 @router.get("/notes/{document_id}")
@@ -197,15 +271,23 @@ class NoteIn(BaseModel):
     content: str = Field(min_length=1)
     tags: list[str] = []
     force: bool = False
+    folder_id: str | None = None  # pasta dentro da coleção (None = raiz)
 
 
 @router.post("/notes")
 async def create_note(body: NoteIn, user: DashUser = Depends(require_editor)) -> dict:
     """Cria a nota. Se houver conteúdo muito parecido, devolve created=false + similar_document (a UI
     pergunta e repete com force=true)."""
-    return await documents.add_document(
-        _writer(user), body.collection, body.title, body.content, tags=body.tags, force=body.force
+    writer = _writer(user)
+    if body.folder_id:
+        await folders.ensure_folder_in(writer, body.folder_id, body.collection)  # valida antes de criar
+    result = await documents.add_document(
+        writer, body.collection, body.title, body.content, tags=body.tags, force=body.force
     )
+    if body.folder_id and result.get("created"):
+        await folders.place_document(writer, result["document_id"], body.folder_id)
+        result["folder_id"] = body.folder_id
+    return result
 
 
 class NotePatch(BaseModel):
@@ -242,11 +324,17 @@ async def update_note(document_id: str, body: NotePatch, user: DashUser = Depend
 
 class MoveIn(BaseModel):
     collection: str
+    folder_id: str | None = None  # pasta de destino dentro da coleção (None = raiz)
 
 
 @router.post("/notes/{document_id}/move")
 async def move_note(document_id: str, body: MoveIn, user: DashUser = Depends(require_editor)) -> dict:
-    return await documents.move_document(_writer(user), document_id, body.collection)
+    writer = _writer(user)
+    if body.folder_id:
+        await folders.ensure_folder_in(writer, body.folder_id, body.collection)
+    result = await documents.move_document(writer, document_id, body.collection)
+    placed = await folders.place_document(writer, document_id, body.folder_id)
+    return {**result, "moved": True, "folder_id": placed["folder_id"]}
 
 
 class ArchiveIn(BaseModel):
@@ -287,6 +375,63 @@ class CollectionIn(BaseModel):
 @router.post("/collections")
 async def create_collection(body: CollectionIn, user: DashUser = Depends(require_editor)) -> dict:
     return await documents.create_collection(_writer(user), body.name, body.description)
+
+
+class CollectionRenameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+@router.patch("/collections/{name}")
+async def rename_collection(name: str, body: CollectionRenameIn, user: DashUser = Depends(require_admin)) -> dict:
+    """Renomeia a pasta principal (plan-web-18) — ação de admin."""
+    admin = Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+    return await folders.rename_collection(admin, name, body.name)
+
+
+@router.delete("/collections/{name}")
+async def delete_collection(name: str, user: DashUser = Depends(require_admin)) -> dict:
+    """Exclui a pasta principal sem notas ativas (plan-web-18) — ação de admin, irreversível."""
+    admin = Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+    return await folders.delete_collection(admin, name)
+
+
+# ---------------------------------------------------------------- pastas aninhadas (plan-web-14)
+
+
+class FolderIn(BaseModel):
+    collection: str
+    name: str = Field(min_length=1, max_length=folders.FOLDER_NAME_MAX)
+    parent_id: str | None = None  # None = direto na coleção (pasta principal)
+
+
+@router.post("/folders")
+async def create_folder(body: FolderIn, user: DashUser = Depends(require_editor)) -> dict:
+    return await folders.create_folder(_writer(user), body.collection, body.name, body.parent_id)
+
+
+class FolderPatch(BaseModel):
+    name: str = Field(min_length=1, max_length=folders.FOLDER_NAME_MAX)
+
+
+@router.patch("/folders/{folder_id}")
+async def rename_folder(folder_id: str, body: FolderPatch, user: DashUser = Depends(require_editor)) -> dict:
+    return await folders.rename_folder(_writer(user), folder_id, body.name)
+
+
+class FolderMoveIn(BaseModel):
+    collection: str
+    parent_id: str | None = None
+
+
+@router.post("/folders/{folder_id}/move")
+async def move_folder(folder_id: str, body: FolderMoveIn, user: DashUser = Depends(require_editor)) -> dict:
+    return await folders.move_folder(_writer(user), folder_id, body.collection, body.parent_id)
+
+
+@router.delete("/folders/{folder_id}")
+async def delete_folder(folder_id: str, user: DashUser = Depends(require_editor)) -> dict:
+    """Remove a pasta; o conteúdo sobe um nível (nada é apagado)."""
+    return await folders.delete_folder(_writer(user), folder_id)
 
 
 # ---------------------------------------------------------------- importação Obsidian (plan-web-13)
@@ -588,12 +733,82 @@ async def set_autonomy(slug: str, body: AutonomyIn, user: DashUser = Depends(req
     return await agents.set_agent_autonomy(admin, slug, body.auto_apply_updates)
 
 
+# ---------------------------------------------------------------- gerenciar agente (plan-web-16)
+# Editar, chaves e arquivar — mesmas regras do MCP/REST (core/agents.py): cada edição gera uma versão
+# nova do perfil, com histórico.
+
+_DASH_AGENT_NOTE = "edição pela dashboard"
+
+
+def _agent_admin(user: DashUser) -> Principal:
+    return Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+
+
+@router.get("/agents/{slug}")
+async def agent_detail(slug: str, user: DashUser = Depends(require_admin)) -> dict:
+    """Perfil completo (com system prompt), chaves do agente (sem o segredo) e histórico de versões."""
+    out = await agents.get_agent(_agent_admin(user), slug)
+    out["agent"]["auto_apply_updates"] = bool((out["agent"].get("config") or {}).get("auto_apply_updates"))
+    return out
+
+
+class AgentPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+    system_prompt: str | None = Field(default=None, min_length=1)
+    allowed_collections: list[str] | None = None
+    scopes: list[str] | None = None
+    auto_apply_updates: bool | None = None
+    change_note: str | None = None
+
+
+@router.patch("/agents/{slug}")
+async def update_agent(slug: str, body: AgentPatch, user: DashUser = Depends(require_admin)) -> dict:
+    """Edita o perfil do agente (gera uma versão nova). O slug não muda: a conexão MCP depende dele."""
+    if body.scopes is not None and not body.scopes:
+        raise KBError("O agente precisa de ao menos um escopo.")
+    config = {"auto_apply_updates": body.auto_apply_updates} if body.auto_apply_updates is not None else None
+    return await agents.update_agent(
+        _agent_admin(user),
+        slug,
+        (body.change_note or "").strip() or _DASH_AGENT_NOTE,
+        name=body.name.strip() if body.name else None,
+        description=body.description.strip() if body.description is not None else None,
+        system_prompt=body.system_prompt,
+        config=config,
+        allowed_collections=body.allowed_collections,
+        scopes=body.scopes,
+    )
+
+
+class AgentArchiveIn(BaseModel):
+    reason: str = "arquivado pela dashboard"
+
+
+@router.post("/agents/{slug}/archive")
+async def archive_agent(slug: str, body: AgentArchiveIn, user: DashUser = Depends(require_admin)) -> dict:
+    """Arquiva o agente e revoga todas as chaves dele (o histórico fica para auditoria)."""
+    return await agents.archive_agent(_agent_admin(user), slug, body.reason)
+
+
+class AgentKeyIn(BaseModel):
+    label: str | None = None
+
+
+@router.post("/agents/{slug}/keys")
+async def issue_agent_key(slug: str, body: AgentKeyIn, user: DashUser = Depends(require_admin)) -> dict:
+    """Emite uma chave nova para o agente — o segredo e o comando de conexão aparecem só nesta resposta."""
+    return await agents.issue_agent_key(_agent_admin(user), slug, (body.label or "").strip() or None)
+
+
 # ---------------------------------------------------------------- chaves Bearer
 
 
 @router.get("/keys")
-async def list_keys(_user: DashUser = Depends(current_user)) -> list[dict]:
-    """Todas as chaves da API (prefixo, label, escopos, agente, último uso, status)."""
+async def list_keys(user: DashUser = Depends(current_user)) -> list[dict]:
+    """Todas as chaves da API (prefixo, label, escopos, agente, último uso, status).
+
+    O prefixo identifica a chave na revogação pela API/MCP: só admin o recebe."""
     rows = await pool().fetch(
         """
         SELECT k.id, k.prefix, k.label, k.scopes, k.revoked_at, k.last_used_at, k.created_at,
@@ -603,7 +818,11 @@ async def list_keys(_user: DashUser = Depends(current_user)) -> list[dict]:
         ORDER BY k.created_at DESC
         """
     )
-    return records(rows)
+    items = records(rows)
+    if not user.is_admin:
+        for item in items:
+            item["prefix"] = None
+    return items
 
 
 class KeyIn(BaseModel):
@@ -657,13 +876,98 @@ async def renew_key(key_id: str, user: DashUser = Depends(require_admin)) -> dic
     return {"revoked_key_id": str(key_uuid), **key}
 
 
+# ---------------------------------------------------------------- 2FA da própria conta
+
+
+class PasswordIn(BaseModel):
+    password: str
+
+
+class CodeIn(BaseModel):
+    code: str
+
+
+class DisableMfaIn(BaseModel):
+    password: str
+    code: str
+
+
+async def _recheck_password(user: DashUser, password: str, request: Request) -> None:
+    """Mudanças no 2FA pedem a senha de novo (sessão roubada sozinha não liga/desliga nada).
+    Erros contam no mesmo rate limit do login."""
+    buckets = _login_buckets(user.username, request)
+    _check_login_blocked(buckets)
+    if await dash_auth.authenticate(user.username, password) is None:
+        for limiter, key in buckets:
+            limiter.register_failure(key)
+        raise HTTPException(status_code=400, detail="Senha incorreta.")
+
+
+@router.get("/account/2fa")
+async def mfa_status(user: DashUser = Depends(current_user)) -> dict:
+    return await mfa.status(user.id)
+
+
+@router.post("/account/2fa/setup")
+async def mfa_setup(body: PasswordIn, request: Request, user: DashUser = Depends(current_user)) -> dict:
+    if await mfa.is_enabled(user.id):
+        raise KBError("O 2FA já está ligado. Desligue antes de cadastrar outro aparelho.")
+    await _recheck_password(user, body.password, request)
+    return await mfa.begin_setup(user.id, user.username)
+
+
+@router.post("/account/2fa/enable")
+async def mfa_enable(body: CodeIn, user: DashUser = Depends(current_user)) -> dict:
+    codes = await mfa.confirm_setup(user.id, body.code)
+    async with pool().acquire() as conn:
+        await audit(conn, f"dash:{user.username}", "dash.2fa.enable", user.username)
+    return {"recovery_codes": codes}
+
+
+@router.post("/account/2fa/disable")
+async def mfa_disable(body: DisableMfaIn, request: Request, user: DashUser = Depends(current_user)) -> dict:
+    await _recheck_password(user, body.password, request)
+    if await mfa.verify(user.id, body.code) is None:
+        raise HTTPException(status_code=400, detail="Código inválido.")
+    await mfa.disable(user.id)
+    async with pool().acquire() as conn:
+        await audit(conn, f"dash:{user.username}", "dash.2fa.disable", user.username)
+    return {"ok": True}
+
+
+@router.post("/account/2fa/recovery-codes")
+async def mfa_recovery_codes(body: CodeIn, user: DashUser = Depends(current_user)) -> dict:
+    if await mfa.verify(user.id, body.code) is None:
+        raise HTTPException(status_code=400, detail="Código inválido.")
+    codes = await mfa.regenerate_recovery_codes(user.id)
+    async with pool().acquire() as conn:
+        await audit(conn, f"dash:{user.username}", "dash.2fa.recovery_regenerate", user.username)
+    return {"recovery_codes": codes}
+
+
 # ---------------------------------------------------------------- usuários da dash
+
+USER_COLUMNS = "id, username, role, disabled_at, created_at, totp_enabled_at IS NOT NULL AS totp_enabled"
 
 
 @router.get("/users")
 async def list_users(_admin: DashUser = Depends(require_admin)) -> list[dict]:
-    rows = await pool().fetch("SELECT id, username, role, disabled_at, created_at FROM dash_users ORDER BY username")
+    rows = await pool().fetch(f"SELECT {USER_COLUMNS} FROM dash_users ORDER BY username")
     return records(rows)
+
+
+@router.delete("/users/{user_id}/2fa")
+async def reset_user_mfa(user_id: str, admin: DashUser = Depends(require_admin)) -> dict:
+    """Pessoa perdeu o celular e os recovery codes: o admin desliga o 2FA dela (e derruba as sessões)."""
+    target = parse_uuid(user_id, "user_id")
+    row = await pool().fetchrow("SELECT id, username FROM dash_users WHERE id = $1", target)
+    if row is None:
+        raise NotFound(f"Usuário {user_id} não encontrado.")
+    await mfa.disable(str(row["id"]))
+    await dash_auth.revoke_user_sessions(str(row["id"]))
+    async with pool().acquire() as conn:
+        await audit(conn, f"dash:{admin.username}", "dash.2fa.reset", row["username"])
+    return {"ok": True}
 
 
 class DashUserIn(BaseModel):
@@ -720,6 +1024,7 @@ async def update_dash_user(user_id: str, body: DashUserPatch, admin: DashUser = 
     # sem isso um admin rebaixado a viewer seguiria operando com o papel antigo
     if body.disabled or body.password is not None or body.role is not None:
         await dash_auth.revoke_user_sessions(str(row["id"]))
+        await oauth.revoke_user_grants(str(row["id"]))  # e as conexões OAuth (Claude etc.)
     async with pool().acquire() as conn:
         await audit(
             conn,
@@ -730,11 +1035,7 @@ async def update_dash_user(user_id: str, body: DashUserPatch, admin: DashUser = 
             disabled=body.disabled,
             password_reset=body.password is not None,
         )
-    updated = record(
-        await pool().fetchrow(
-            "SELECT id, username, role, disabled_at, created_at FROM dash_users WHERE id = $1", target
-        )
-    )
+    updated = record(await pool().fetchrow(f"SELECT {USER_COLUMNS} FROM dash_users WHERE id = $1", target))
     if updated is None:  # narrow pro mypy: a linha já foi validada antes do UPDATE
         raise NotFound(f"Usuário {user_id} não encontrado.")
     return updated
@@ -870,6 +1171,7 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
 class SearchTestIn(BaseModel):
     query: str
     collections: list[str] | None = None
+    folder_id: str | None = None  # só a pasta e as subpastas
     top_k: int = Field(default=5, ge=1, le=20)
 
 
@@ -877,5 +1179,11 @@ class SearchTestIn(BaseModel):
 async def search_test(body: SearchTestIn, user: DashUser = Depends(current_user)) -> dict:
     """Roda a busca híbrida real da base e devolve os chunks, para destacar no grafo."""
     principal = Principal(actor=f"dash:{user.username}", scopes=frozenset({"read"}))
-    results = await search.search_knowledge(principal, body.query, body.collections, None, None, body.top_k)
+    folder_ids = None
+    if body.folder_id:
+        async with pool().acquire() as conn:
+            folder_ids = await folders.folder_subtree_ids(conn, principal, body.folder_id)
+    results = await search.search_knowledge(
+        principal, body.query, body.collections, None, None, body.top_k, folder_ids=folder_ids
+    )
     return {"results": results}

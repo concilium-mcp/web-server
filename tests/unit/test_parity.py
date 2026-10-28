@@ -17,11 +17,18 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "list_documents": ("GET", "/documents"),
     "list_collections": ("GET", "/collections"),
     "create_collection": ("POST", "/collections"),
+    "rename_collection": ("PATCH", "/collections/{name}"),
+    "delete_collection": ("DELETE", "/collections/{name}"),
     "add_document": ("POST", "/documents"),
     "update_document": ("PATCH", "/documents/{document_id}"),
+    "edit_document": ("POST", "/documents/{document_id}/edit"),
     "upsert_document": ("PUT", "/documents/upsert"),
     "archive_document": ("DELETE", "/documents/{document_id}"),
     "document_history": ("GET", "/documents/{document_id}/versions"),
+    # pastas dentro das coleções (plan-web-16)
+    "list_folders": ("GET", "/folders"),
+    "create_folder": ("POST", "/folders"),
+    "move_document": ("POST", "/documents/{document_id}/move"),
     # links
     "get_related": ("GET", "/documents/{document_id}/related"),
     "link_documents": ("POST", "/documents/{document_id}/links"),
