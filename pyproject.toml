@@ -20,6 +20,8 @@ dependencies = [
     "python-multipart>=0.0.32",
     "segno>=1.6",
     "cryptography>=43",
+    "pypdf>=5",
+    "mammoth>=1.8",
 ]
 
 [project.optional-dependencies]
@@ -58,10 +60,10 @@ ignore = ["B008", "ASYNC240"]  # Query()/Depends() em defaults é o idioma do Fa
 
 [tool.mypy]
 python_version = "3.12"
-# asyncpg e sentence_transformers não têm stubs nem py.typed; sem essa trava o mypy
+# asyncpg, sentence_transformers e mammoth não têm stubs nem py.typed; sem essa trava o mypy
 # falha no import e vira ruído constante no gate de tipos.
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "sentence_transformers.*"]
+module = ["asyncpg.*", "sentence_transformers.*", "mammoth.*"]
 ignore_missing_imports = true
 
 [dependency-groups]

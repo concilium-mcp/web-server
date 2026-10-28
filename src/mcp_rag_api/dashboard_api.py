@@ -6,13 +6,14 @@ separada do Bearer da API pública (api_keys continua valendo para agentes/integ
 
 import asyncio
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from .core import agents, dash_auth, documents, folders, graph, links, mfa, oauth, obsidian_import, search
+from .core import agents, dash_auth, documents, file_import, folders, graph, links, mfa, oauth, obsidian_import, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -434,7 +435,7 @@ async def delete_folder(folder_id: str, user: DashUser = Depends(require_editor)
     return await folders.delete_folder(_writer(user), folder_id)
 
 
-# ---------------------------------------------------------------- importação Obsidian (plan-web-13)
+# ---------------------------------------------------------------- importação: vault (plan-web-13) e arquivos (web-28)
 
 # Job assíncrono em memória (deploy é single-process; mesmo precedente do LoginRateLimiter).
 # Restart perde o job — aceitável porque o re-import é idempotente (external_id = path no vault).
@@ -491,49 +492,40 @@ def _job_for(user: DashUser, job_id: str) -> ImportJob:
     return job
 
 
-async def _read_upload_limited(file: UploadFile) -> bytes:
+async def _read_upload_limited(file: UploadFile, limit: int, too_big: str) -> bytes:
     chunks: list[bytes] = []
     size = 0
     while chunk := await file.read(_IMPORT_CHUNK_SIZE):
         size += len(chunk)
-        if size > obsidian_import.MAX_ZIP_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"O zip passa de {obsidian_import.MAX_ZIP_BYTES // (1024 * 1024)} MB. "
-                "Divida o vault e importe em partes.",
-            )
+        if size > limit:
+            raise HTTPException(status_code=413, detail=too_big)
         chunks.append(chunk)
     return b"".join(chunks)
 
 
-async def _run_import(job: ImportJob, user: DashUser, notes: list[obsidian_import.ParsedNote]) -> None:
+async def _run_import[T](
+    job: ImportJob,
+    items: list[T],
+    name_of: Callable[[T], str],
+    handle: Callable[[T], Awaitable[str]],
+) -> None:
     """Vetorização sequencial (providers de embeddings dão 429 com concorrência).
 
-    Cada nota passa pelo upsert_document completo (chunk + embed + dedupe + sync de
-    wikilinks); o cancelamento é cooperativo, observado entre uma nota e outra.
+    `handle` grava um item (chunk + embed + dedupe + sync de wikilinks pelo core) e devolve a
+    coleção de destino; o cancelamento é cooperativo, observado entre um item e outro.
     """
-    writer = _writer(user)
     try:
-        for note in notes:
+        for item in items:
             if job.cancel_requested:
                 job.status = "cancelled"
                 break
-            job.current_file = note.path
+            job.current_file = name_of(item)
             try:
-                await documents.create_collection(writer, note.collection)
-                await documents.upsert_document(
-                    writer,
-                    note.collection,
-                    note.path,
-                    note.title,
-                    note.content,
-                    tags=note.tags or None,
-                    source="obsidian-import",
-                )
-            except Exception as exc:  # uma nota ruim não derruba o import inteiro
-                job.errors.append({"file": note.path, "error": str(exc)})
+                collection = await handle(item)
+            except Exception as exc:  # um arquivo ruim não derruba o import inteiro
+                job.errors.append({"file": job.current_file, "error": str(exc)})
             else:
-                job.collections.add(note.collection)
+                job.collections.add(collection)
                 job.notes += 1
             job.done += 1
         else:
@@ -559,9 +551,8 @@ async def _run_import(job: ImportJob, user: DashUser, notes: list[obsidian_impor
         )
 
 
-@router.post("/import/obsidian")
-async def import_obsidian(file: UploadFile = File(...), user: DashUser = Depends(require_editor)) -> dict:
-    """Recebe o .zip do vault, valida e dispara o import em background (um ativo por usuário)."""
+def _ensure_no_active_import(user: DashUser) -> None:
+    """Um import ativo por usuário."""
     _cleanup_finished_jobs()
     active = next(
         (j for j in _import_jobs.values() if j.username == user.username and j.status == "running"),
@@ -573,15 +564,94 @@ async def import_obsidian(file: UploadFile = File(...), user: DashUser = Depends
             detail=f"Já existe uma importação em andamento ({active.done}/{active.total}). "
             "Acompanhe-a ou cancele antes de iniciar outra.",
         )
-    data = await _read_upload_limited(file)
-    notes = obsidian_import.parse_vault(data)  # KBError (zip inválido/sem notas/limites) vira 400
-    job = ImportJob(secrets.token_urlsafe(12), user.username, len(notes))
+
+
+def _start_import[T](
+    user: DashUser, items: list[T], name_of: Callable[[T], str], handle: Callable[[T], Awaitable[str]]
+) -> dict:
+    job = ImportJob(secrets.token_urlsafe(12), user.username, len(items))
     _import_jobs[job.id] = job
-    task = asyncio.create_task(_run_import(job, user, notes))
+    task = asyncio.create_task(_run_import(job, items, name_of, handle))
     _import_tasks.add(task)
     task.add_done_callback(_import_tasks.discard)
     logger.info("dash import: iniciado (username=%s, total=%d)", user.username, job.total)
     return {"job_id": job.id, "total": job.total}
+
+
+@router.post("/import/obsidian")
+async def import_obsidian(file: UploadFile = File(...), user: DashUser = Depends(require_editor)) -> dict:
+    """Recebe o .zip do vault, valida e dispara o import em background (um ativo por usuário)."""
+    _ensure_no_active_import(user)
+    data = await _read_upload_limited(
+        file,
+        obsidian_import.MAX_ZIP_BYTES,
+        f"O zip passa de {obsidian_import.MAX_ZIP_BYTES // (1024 * 1024)} MB. Divida o vault e importe em partes.",
+    )
+    notes = obsidian_import.parse_vault(data)  # KBError (zip inválido/sem notas/limites) vira 400
+    writer = _writer(user)
+
+    async def handle(note: obsidian_import.ParsedNote) -> str:
+        await documents.create_collection(writer, note.collection)
+        await documents.upsert_document(
+            writer,
+            note.collection,
+            note.path,
+            note.title,
+            note.content,
+            tags=note.tags or None,
+            source="obsidian-import",
+        )
+        return note.collection
+
+    return _start_import(user, notes, lambda n: n.path, handle)
+
+
+@router.post("/import/files")
+async def import_files(
+    files: list[UploadFile] = File(...),
+    collection: str = Form(...),
+    folder_id: str | None = Form(None),
+    user: DashUser = Depends(require_editor),
+) -> dict:
+    """PDF, Word (.docx), Markdown e texto soltos → notas numa coleção/pasta (plan-web-28).
+
+    Formato e tamanho são validados antes de começar; a conversão roda dentro do job (em
+    thread, é CPU) para que um arquivo ilegível vire erro daquele arquivo, não do import todo.
+    """
+    _ensure_no_active_import(user)
+    writer = _writer(user)
+    writer.require_collection(collection)
+    if not files:
+        raise KBError("Nenhum arquivo enviado.")
+    if len(files) > file_import.MAX_FILES:
+        raise KBError(f"Envie no máximo {file_import.MAX_FILES} arquivos por vez.")
+    for upload in files:
+        file_import.file_type_for(file_import.safe_filename(upload.filename or ""))
+    folder_path: str | None = None
+    if folder_id:
+        await folders.ensure_folder_in(writer, folder_id, collection)
+        in_collection = await folders.list_folders(writer, collection)
+        folder_path = next(f["path"] for f in in_collection if str(f["id"]) == folder_id)
+    pending: list[tuple[str, bytes]] = []
+    total = 0
+    for upload in files:
+        name = file_import.safe_filename(upload.filename or "")
+        mb = file_import.MAX_FILE_BYTES // (1024 * 1024)
+        data = await _read_upload_limited(upload, file_import.MAX_FILE_BYTES, f"'{name}' passa de {mb} MB.")
+        total += len(data)
+        if total > file_import.MAX_TOTAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"O envio passa de {file_import.MAX_TOTAL_BYTES // (1024 * 1024)} MB. Importe em partes.",
+            )
+        pending.append((name, data))
+
+    async def handle(item: tuple[str, bytes]) -> str:
+        converted = await asyncio.to_thread(file_import.convert_file, *item)
+        await file_import.import_file(writer, collection, folder_path, converted)
+        return collection
+
+    return _start_import(user, pending, lambda item: item[0], handle)
 
 
 @router.get("/import/{job_id}")

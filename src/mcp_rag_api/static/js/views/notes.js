@@ -75,7 +75,9 @@ async function renderNotesScreen(main, openId) {
   });
   main.querySelector("#note-new")?.addEventListener("click", () => openNewNoteModal());
   main.querySelector("#folder-new")?.addEventListener("click", () => openNewFolderModal());
-  main.querySelector("#note-import")?.addEventListener("click", () => openImportModal());
+  main.querySelector("#note-import")?.addEventListener("click", () =>
+    openImportModal(notes.tree?.collections.length ? { locations: locationOptions(currentLoc()), parseLoc } : {}),
+  );
   main.querySelector("#note-side").addEventListener("click", (e) => e.target.closest("[data-side-close]") && setNoteSide(null));
   main.querySelector("#notes-tree-list").addEventListener("click", async (e) => {
     const addNote = e.target.closest("[data-folder-add-note]");

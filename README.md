@@ -42,6 +42,7 @@ Agents also get a home: a profile (system prompt), persistent memory, session su
 - Nested folders with no depth limit (like Notion), a WYSIWYG editor with a Markdown tab, tags and note templates
 - `[[Wikilinks]]` and backlinks, Obsidian style. Links to notes that don't exist yet resolve on their own once the note is created
 - **Obsidian vault import**: upload the `.zip` from the dashboard and watch real-time progress — folders become collections, notes become fully embedded documents, and re-importing updates instead of duplicating
+- **File import**: drop PDF, Word (`.docx`), Markdown or text files into any folder from the dashboard, or send them to `POST /documents/upload`. They are converted to Markdown and embedded right away (no OCR for scanned PDFs yet)
 - Version history with restore, conflict detection and local drafts, so nothing gets lost
 
 **🔎 Real RAG for agents**
@@ -202,8 +203,8 @@ Yes, for teams. You get folders, Markdown, `[[wikilinks]]`, backlinks and a grap
 **Can it replace Notion as our team wiki?**
 For knowledge that agents need to use, it can: customer profiles, playbooks, runbooks, product docs. Concilium focuses on notes, search and agents rather than databases, kanban boards or real-time co-editing.
 
-**Can I import my Obsidian vault or Markdown files?**
-Send them through the REST API (`PUT /documents/upsert`) or ask Claude to add them through MCP, then run `uv run mcp-rag-api relink` to resolve every `[[wikilink]]`. A one-click importer isn't available yet.
+**Can I import my Obsidian vault, PDFs or Word documents?**
+Yes. In the dashboard, **Notes → Import** takes either a zipped Obsidian vault (folders become collections, `[[wikilinks]]` are kept) or loose PDF, `.docx`, Markdown and text files sent to a folder of your choice. Integrations can use `POST /documents/upload` for files or `PUT /documents/upsert` for text. Scanned PDFs need OCR first.
 
 **Does it work with ChatGPT, Cursor or other LLM tools?**
 Any client that speaks the **Model Context Protocol** can connect. Everything else can use the REST API. Embeddings are independent of the chat model.

@@ -638,13 +638,25 @@ window.I18N["pt-BR"] = {
 
   // importação de vault Obsidian
   "import.toolbarBtn": "Importar",
-  "import.toolbarTitle": "Importar um vault Obsidian (.zip)",
-  "import.title": "Importar vault Obsidian",
-  "import.subtitle": "As pastas viram coleções e as notas .md viram documentos da base",
+  "import.toolbarTitle": "Importar arquivos (PDF, Word) ou um vault Obsidian",
+  "import.title": "Importar para a base",
+  "import.subtitle": "Arquivos e notas viram documentos pesquisáveis pelos agentes",
   "import.help":
     "Compacte a pasta do seu vault (botão direito → Compactar) e envie o .zip. A pasta .obsidian, arquivos ocultos e anexos são ignorados; os [[links]] entre notas são preservados. Re-importar o mesmo zip atualiza as notas em vez de duplicar.",
   "import.fileLabel": "Arquivo .zip do vault",
   "import.start": "Iniciar importação",
+  "import.modeFiles": "Arquivos",
+  "import.modeFilesDesc": "PDF, Word (.docx), Markdown ou texto",
+  "import.modeFilesNoFolder": "Crie uma pasta principal antes de importar arquivos",
+  "import.modeVault": "Vault Obsidian",
+  "import.modeVaultDesc": "Pasta do vault compactada em .zip",
+  "import.filesHelp": "Cada arquivo vira uma nota com o nome do arquivo, já vetorizada para a busca. PDF escaneado (só imagem) não tem texto e não é importado. Enviar de novo o mesmo arquivo para o mesmo lugar atualiza a nota em vez de duplicar.",
+  "import.filesLabel": "Arquivos (até 50, 25 MB cada)",
+  "import.destination": "Destino",
+  "import.noFilesTitle": "Nenhum arquivo",
+  "import.noFilesMsg": "Escolha ao menos um arquivo para importar.",
+  "import.unsupportedTitle": "Formato não suportado",
+  "import.unsupportedMsg": "Estes arquivos não são PDF, Word (.docx), Markdown ou texto: {files}",
   "import.closeTitle": "Importação em andamento",
   "import.closeMsg":
     "Fechar agora deixa o import rodando em segundo plano (a árvore de notas é atualizada ao final) — ou cancele o import.",
@@ -666,7 +678,7 @@ window.I18N["pt-BR"] = {
   "import.cancelledTitle": "Importação cancelada",
   "import.errorTitle": "Importação falhou",
   "import.doneSummary":
-    "{notes} nota(s) em {collections} coleção(ões) · {errors} erro(s). Notas com o mesmo caminho foram atualizadas, não duplicadas.",
+    "{notes} nota(s) em {collections} coleção(ões) · {errors} erro(s). O que já tinha sido importado para o mesmo lugar foi atualizado, não duplicado.",
   "import.closeSummary": "Concluir",
   "import.progressLostTitle": "Progresso perdido",
   "import.progressLostMsg":

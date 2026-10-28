@@ -1,9 +1,12 @@
-/* Importação de vault Obsidian — modal com seleção de .zip e progresso em tempo real.
+/* Importação para a base — modal com dois modos e progresso em tempo real.
+
+- Arquivos (plan-web-28): PDF, Word (.docx), Markdown e texto soltos → notas numa coleção/pasta;
+- Vault Obsidian (plan-web-13): .zip do vault, pastas viram coleções.
 
 O upload inicia um job no servidor; o poll de 1 s alimenta a barra de progresso.
 Fechar o modal durante o import pergunta: continua em segundo plano (o poll segue
 silencioso e a árvore de notas é atualizada ao final) ou cancela o job.
-Nomes de arquivo do zip são dados não confiáveis: só saem com escHtml/textContent. */
+Nomes de arquivo são dados não confiáveis: só saem com escHtml/textContent. */
 import { api } from "../api.js";
 import { t } from "../i18n.js";
 import { icon, loadIcons } from "../icons.js";
@@ -12,13 +15,23 @@ import { emit } from "../events.js";
 
 const POLL_MS = 1000;
 const MAX_POLL_FAILURES = 5;
+const FILE_EXTENSIONS = [".pdf", ".docx", ".md", ".markdown", ".txt"];
 
 // job ativo no momento (um por vez na UI): { jobId, phase, timer, fails, doneEmitted, modal }
 let active = null;
+// destino do modo arquivos: <option>s e parser vêm da tela de notas (mesmos locais do "Nova nota")
+let target = null;
 
-async function openImportModal() {
+/* opts: { locations: html dos <option> "coleção|pasta" (vazio = sem coleção), selected, parseLoc } */
+async function openImportModal(opts = {}) {
+  target = opts.locations ? opts : null;
   document.getElementById("obsidian-import-modal")?.remove();
   const holder = document.createElement("div");
+  const mode = (value, titleKey, descKey, checked, disabled = false) => `
+    <label class="scope-option">
+      <input type="radio" name="oi-mode" value="${value}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+      <span><span>${t(titleKey)}</span><span class="muted">${t(descKey)}</span></span>
+    </label>`;
   holder.innerHTML = modalShell({
     id: "obsidian-import",
     iconName: "folder-input",
@@ -28,16 +41,41 @@ async function openImportModal() {
     submitIcon: "folder-input",
     width: 640,
     body: `
-      <p class="muted">${t("import.help")}</p>
-      <label class="form-field">
-        <span class="form-label">${t("import.fileLabel")}</span>
-        <input class="input" id="oi-file" type="file" accept=".zip,application/zip" required />
-      </label>`,
+      <div class="scope-grid two">
+        ${mode("files", "import.modeFiles", target ? "import.modeFilesDesc" : "import.modeFilesNoFolder", Boolean(target), !target)}
+        ${mode("vault", "import.modeVault", "import.modeVaultDesc", !target)}
+      </div>
+      <div data-import-mode="files" class="${target ? "" : "hidden"}">
+        <p class="muted">${t("import.filesHelp")}</p>
+        <div class="create-grid">
+          <label class="form-field">
+            <span class="form-label">${t("import.filesLabel")}</span>
+            <input class="input" id="oi-files" type="file" multiple accept="${FILE_EXTENSIONS.join(",")}" />
+          </label>
+          <label class="form-field">
+            <span class="form-label">${t("import.destination")}</span>
+            <select class="input" id="oi-location">${target?.locations || ""}</select>
+          </label>
+        </div>
+      </div>
+      <div data-import-mode="vault" class="${target ? "hidden" : ""}">
+        <p class="muted">${t("import.help")}</p>
+        <label class="form-field">
+          <span class="form-label">${t("import.fileLabel")}</span>
+          <input class="input" id="oi-file" type="file" accept=".zip,application/zip" />
+        </label>
+      </div>`,
   });
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("obsidian-import-modal");
   await loadIcons(modal);
   modal.querySelector("#obsidian-import-form").addEventListener("submit", onStart);
+  modal.querySelectorAll("input[name=oi-mode]").forEach((r) =>
+    r.addEventListener("change", () => {
+      const current = selectedMode(modal);
+      modal.querySelectorAll("[data-import-mode]").forEach((el) => el.classList.toggle("hidden", el.dataset.importMode !== current));
+    }),
+  );
   // fechamento manual (bindModal não tem gancho de "antes de fechar"): durante o import
   // o ×/Esc/clique fora pergunta se continua em segundo plano ou cancela
   modal.querySelectorAll("[data-close-modal]").forEach((b) => b.addEventListener("click", () => void closeRequested()));
@@ -47,6 +85,8 @@ async function openImportModal() {
   document.addEventListener("keydown", onEsc);
   modal.classList.remove("hidden");
 }
+
+const selectedMode = (modal) => modal.querySelector("input[name=oi-mode]:checked")?.value || "vault";
 
 function onEsc(e) {
   if (e.key === "Escape" && !document.querySelector(".dialog-backdrop")) void closeRequested();
@@ -78,21 +118,44 @@ async function closeRequested() {
   }
 }
 
+// monta o FormData do modo escolhido; null = validação falhou (o aviso já foi mostrado)
+async function buildUpload(modal) {
+  const form = new FormData();
+  if (selectedMode(modal) === "files") {
+    const files = [...modal.querySelector("#oi-files").files];
+    if (!files.length) {
+      await uiAlert(t("import.noFilesTitle"), t("import.noFilesMsg"));
+      return null;
+    }
+    const unsupported = files.filter((f) => !FILE_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext)));
+    if (unsupported.length) {
+      await uiAlert(t("import.unsupportedTitle"), t("import.unsupportedMsg", { files: unsupported.map((f) => f.name).join(", ") }));
+      return null;
+    }
+    const { collection, folderId } = target.parseLoc(modal.querySelector("#oi-location").value);
+    files.forEach((f) => form.append("files", f));
+    form.append("collection", collection);
+    if (folderId) form.append("folder_id", folderId);
+    return { path: "/import/files", form };
+  }
+  const file = modal.querySelector("#oi-file").files[0];
+  if (!file || !file.name.toLowerCase().endsWith(".zip")) {
+    await uiAlert(t("import.notAZipTitle"), t("import.notAZipMsg"));
+    return null;
+  }
+  form.append("file", file);
+  return { path: "/import/obsidian", form };
+}
+
 async function onStart(e) {
   e.preventDefault();
   const modal = document.getElementById("obsidian-import-modal");
-  const file = modal.querySelector("#oi-file").files[0];
-  if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".zip")) {
-    await uiAlert(t("import.notAZipTitle"), t("import.notAZipMsg"));
-    return;
-  }
-  const form = new FormData();
-  form.append("file", file);
+  const upload = await buildUpload(modal);
+  if (!upload) return;
   const submit = modal.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
-    const started = await api.upload("/import/obsidian", form);
+    const started = await api.upload(upload.path, upload.form);
     active = { jobId: started.job_id, phase: "running", timer: null, fails: 0, doneEmitted: false };
     renderProgressShell(modal);
     schedulePoll(150); // primeiro poll quase imediato (o job já existe no servidor)

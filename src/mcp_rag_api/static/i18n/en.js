@@ -637,13 +637,25 @@ window.I18N.en = {
 
   // Obsidian vault import
   "import.toolbarBtn": "Import",
-  "import.toolbarTitle": "Import an Obsidian vault (.zip)",
-  "import.title": "Import Obsidian vault",
-  "import.subtitle": "Folders become collections and .md notes become documents",
+  "import.toolbarTitle": "Import files (PDF, Word) or an Obsidian vault",
+  "import.title": "Import into the knowledge base",
+  "import.subtitle": "Files and notes become documents agents can search",
   "import.help":
     "Zip your vault folder (right-click → Compress) and upload the .zip. The .obsidian folder, hidden files and attachments are ignored; [[links]] between notes are preserved. Re-importing the same zip updates notes instead of duplicating them.",
   "import.fileLabel": "Vault .zip file",
   "import.start": "Start import",
+  "import.modeFiles": "Files",
+  "import.modeFilesDesc": "PDF, Word (.docx), Markdown or plain text",
+  "import.modeFilesNoFolder": "Create a main folder before importing files",
+  "import.modeVault": "Obsidian vault",
+  "import.modeVaultDesc": "Vault folder compressed as .zip",
+  "import.filesHelp": "Each file becomes a note named after the file, already vectorized for search. Scanned PDFs (images only) have no text and are not imported. Sending the same file to the same place again updates the note instead of duplicating it.",
+  "import.filesLabel": "Files (up to 50, 25 MB each)",
+  "import.destination": "Destination",
+  "import.noFilesTitle": "No files",
+  "import.noFilesMsg": "Choose at least one file to import.",
+  "import.unsupportedTitle": "Unsupported format",
+  "import.unsupportedMsg": "These files are not PDF, Word (.docx), Markdown or text: {files}",
   "import.closeTitle": "Import in progress",
   "import.closeMsg":
     "Closing now keeps the import running in the background (the notes tree is updated when it finishes) — or cancel the import.",
@@ -665,7 +677,7 @@ window.I18N.en = {
   "import.cancelledTitle": "Import cancelled",
   "import.errorTitle": "Import failed",
   "import.doneSummary":
-    "{notes} note(s) across {collections} collection(s) · {errors} error(s). Notes with the same path were updated, not duplicated.",
+    "{notes} note(s) across {collections} collection(s) · {errors} error(s). Anything already imported to the same place was updated, not duplicated.",
   "import.closeSummary": "Done",
   "import.progressLostTitle": "Progress lost",
   "import.progressLostMsg":

@@ -176,6 +176,28 @@ Quem tem um vault no Obsidian e quer migrar para a base: na tela Notas, clique e
 
 **Re-import é seguro:** importar o mesmo zip de novo atualiza as notas existentes (bump de versão só no que mudou) em vez de duplicar. Se o servidor reiniciar no meio do import, o job some da memória — basta importar de novo para completar.
 
+### Importar arquivos (PDF, Word, Markdown, texto)
+
+Na tela Notas, **Importar** → **Arquivos**: escolha até 50 arquivos (25 MB cada, 100 MB no total) e o destino (pasta principal ou uma pasta dentro dela). Cada arquivo vira uma nota com o nome do arquivo como título, já quebrada em trechos e vetorizada — o progresso aparece na tela como no import do vault.
+
+| Formato | Como é convertido |
+|---|---|
+| PDF (`.pdf`) | texto de cada página (`pypdf`); o número de páginas vai para o metadata |
+| Word (`.docx`) | markdown com títulos, listas, negrito e links (`mammoth`); imagens são descartadas |
+| Markdown (`.md`) | como está; `title`/`tags` do frontmatter viram título/tags |
+| Texto (`.txt`) | como está |
+
+**Limites:** PDF escaneado (só imagem) não tem texto — aparece como erro daquele arquivo, sem OCR por enquanto. PDF com senha também é recusado. O arquivo original não fica guardado, só o texto. `.doc` antigo, planilhas e apresentações ficam de fora.
+
+**Reenvio é seguro:** o `external_id` é `file:<pasta>/<nome do arquivo>`, então mandar o mesmo arquivo para o mesmo lugar atualiza a nota (versão nova se o texto mudou) em vez de duplicar.
+
+Pela API, um arquivo por chamada (síncrono, devolve o resultado do upsert):
+
+```bash
+curl -s -X POST $API/documents/upload -H "Authorization: Bearer $KEY" \
+  -F "file=@contrato.pdf" -F "collection=clientes" -F "folder_path=Acme/Contratos"
+```
+
 ## 6. Conectar ao Claude
 
 ### Claude Code
@@ -363,6 +385,10 @@ curl -s -X POST $API/documents -H "Authorization: Bearer $KEY" -H "Content-Type:
 # criar/atualizar por id externo (sincronização)
 curl -s -X PUT $API/documents/upsert -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"collection": "manuais", "external_id": "crm-42", "title": "Contato", "content": "Ramal 200."}'
+
+# enviar um arquivo (PDF, .docx, .md, .txt) — vira nota vetorizada; reenviar atualiza
+curl -s -X POST $API/documents/upload -H "Authorization: Bearer $KEY" \
+  -F "file=@manual.pdf" -F "collection=manuais"
 
 # atualizar um documento (versão nova no histórico)
 curl -s -X PATCH $API/documents/DOC_ID -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \

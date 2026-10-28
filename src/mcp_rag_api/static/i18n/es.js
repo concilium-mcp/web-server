@@ -637,13 +637,25 @@ window.I18N.es = {
 
   // importación de vault de Obsidian
   "import.toolbarBtn": "Importar",
-  "import.toolbarTitle": "Importar un vault de Obsidian (.zip)",
-  "import.title": "Importar vault de Obsidian",
-  "import.subtitle": "Las carpetas se convierten en colecciones y las notas .md en documentos",
+  "import.toolbarTitle": "Importar archivos (PDF, Word) o un vault de Obsidian",
+  "import.title": "Importar a la base",
+  "import.subtitle": "Archivos y notas se convierten en documentos que los agentes pueden buscar",
   "import.help":
     "Comprime la carpeta de tu vault (clic derecho → Comprimir) y sube el .zip. La carpeta .obsidian, los archivos ocultos y los adjuntos se ignoran; los [[links]] entre notas se conservan. Re-importar el mismo .zip actualiza las notas en lugar de duplicarlas.",
   "import.fileLabel": "Archivo .zip del vault",
   "import.start": "Iniciar importación",
+  "import.modeFiles": "Archivos",
+  "import.modeFilesDesc": "PDF, Word (.docx), Markdown o texto",
+  "import.modeFilesNoFolder": "Crea una carpeta principal antes de importar archivos",
+  "import.modeVault": "Vault de Obsidian",
+  "import.modeVaultDesc": "Carpeta del vault comprimida en .zip",
+  "import.filesHelp": "Cada archivo se convierte en una nota con el nombre del archivo, ya vectorizada para la búsqueda. Los PDF escaneados (solo imagen) no tienen texto y no se importan. Enviar de nuevo el mismo archivo al mismo lugar actualiza la nota en vez de duplicarla.",
+  "import.filesLabel": "Archivos (hasta 50, 25 MB cada uno)",
+  "import.destination": "Destino",
+  "import.noFilesTitle": "Ningún archivo",
+  "import.noFilesMsg": "Elige al menos un archivo para importar.",
+  "import.unsupportedTitle": "Formato no soportado",
+  "import.unsupportedMsg": "Estos archivos no son PDF, Word (.docx), Markdown ni texto: {files}",
   "import.closeTitle": "Importación en curso",
   "import.closeMsg":
     "Si cierras ahora, la importación continúa en segundo plano (el árbol de notas se actualiza al final) — o cancela la importación.",
@@ -665,7 +677,7 @@ window.I18N.es = {
   "import.cancelledTitle": "Importación cancelada",
   "import.errorTitle": "La importación falló",
   "import.doneSummary":
-    "{notes} nota(s) en {collections} colección(es) · {errors} error(es). Las notas con la misma ruta se actualizaron, no se duplicaron.",
+    "{notes} nota(s) en {collections} colección(es) · {errors} error(es). Lo que ya se había importado en el mismo lugar se actualizó, no se duplicó.",
   "import.closeSummary": "Concluir",
   "import.progressLostTitle": "Progreso perdido",
   "import.progressLostMsg":
