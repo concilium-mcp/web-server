@@ -100,8 +100,8 @@ docker run -d --name concilium-db -p 5432:5432 \
   pgvector/pgvector:pg16
 
 # 2. Install
-git clone https://gitlab.com/oadrianolucas/concilium-web-server.git
-cd concilium-web-server
+git clone https://github.com/concilium-mcp/web-server.git concilium
+cd concilium
 uv sync
 cp .env.example .env   # set DATABASE_URL, EMBEDDING_PROVIDER and the provider's API key
 
@@ -128,7 +128,7 @@ docker run -d --name concilium -p 8000:8000 \
 docker exec -it concilium mcp-rag-api create-user --username you --role admin
 ```
 
-To build it yourself, `Dockerfile.coolify` is the same production image. `docker-compose.yml` is an example that runs the API next to an existing Postgres container (external network `db_network`).
+Coolify, Dokploy, Railway, Kubernetes and more: see the **[deployment guide](docs/deploy.md)**. To build it yourself, `Dockerfile.coolify` is the same production image. `docker-compose.yml` is an example that runs the API next to an existing Postgres container (external network `db_network`).
 
 ## Connect your agents
 
@@ -189,6 +189,7 @@ Prompts: `design_agent`, `start_as_agent`, `answer_with_sources`, `save_learning
 
 ## Documentation
 
+- **[Deployment guide](docs/deploy.md)**: public Docker image, Docker Compose with pgvector, Coolify, other platforms and a production checklist
 - **[Full guide](docs/guide.pt-BR.md)** (Portuguese for now): setup, every MCP tool, scopes, REST examples, maintenance, troubleshooting and production deployment
 - Interactive REST API docs: `http://localhost:8000/dash/docs` (behind the dashboard login)
 - Architecture and design decisions: [PLANO.md](PLANO.md)

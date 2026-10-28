@@ -100,8 +100,8 @@ docker run -d --name concilium-db -p 5432:5432 \
   pgvector/pgvector:pg16
 
 # 2. Instalar
-git clone https://gitlab.com/oadrianolucas/concilium-web-server.git
-cd concilium-web-server
+git clone https://github.com/concilium-mcp/web-server.git concilium
+cd concilium
 uv sync
 cp .env.example .env   # defina DATABASE_URL, EMBEDDING_PROVIDER e a chave do provedor
 
@@ -128,7 +128,7 @@ docker run -d --name concilium -p 8000:8000 \
 docker exec -it concilium mcp-rag-api create-user --username you --role admin
 ```
 
-Para buildar você mesmo, o `Dockerfile.coolify` é a mesma imagem de produção. O `docker-compose.yml` é um exemplo que roda a API ao lado de um container Postgres já existente (rede externa `db_network`).
+Coolify, Dokploy, Railway, Kubernetes e outros: veja o **[guia de deploy](docs/deploy.pt-BR.md)**. Para buildar você mesmo, o `Dockerfile.coolify` é a mesma imagem de produção. O `docker-compose.yml` é um exemplo que roda a API ao lado de um container Postgres já existente (rede externa `db_network`).
 
 ## Conectar seus agentes
 

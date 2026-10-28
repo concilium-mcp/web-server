@@ -1,0 +1,38 @@
+# Concilium (web-server) + PostgreSQL com pgvector, a partir da imagem pública do ghcr.io.
+# Não precisa clonar o repo: baixe este arquivo, crie um .env ao lado (veja docs/deploy.md) e rode
+#   docker compose up -d
+name: concilium-web-server
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: concilium
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: concilium
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U concilium -d concilium"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: ghcr.io/concilium-mcp/web-server:${CONCILIUM_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # o banco é o serviço "db" acima; sobrescreve qualquer DATABASE_URL do .env
+      DATABASE_URL: postgresql://concilium:${POSTGRES_PASSWORD}@db:5432/concilium
+    ports:
+      - "${CONCILIUM_PORT:-8000}:8000"
+
+volumes:
+  db-data:
