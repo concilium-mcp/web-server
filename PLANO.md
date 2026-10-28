@@ -1,6 +1,6 @@
-# Plano — MCP RAG API (Python + PostgreSQL + pgvector)
+# Plano — Concilium (MCP RAG API em Python + PostgreSQL + pgvector)
 
-> ⚠️ **Documento histórico do design original; a verdade atual é README + código + `agents/web-server/AGENTS.md`.**
+> **Atualizado em 2026-10-28.** As fases (§11), as decisões (§12) e os critérios de pronto (§13) mostram o estado atual. As seções de design (§4 a §10) são as do plano original, com notas onde o projeto mudou. A referência do dia a dia é o [README](README.md), o [guia](docs/guide.pt-BR.md) e o código.
 
 > Servidor MCP em Python que dá aos agentes de IA (Claude e nossos agentes) uma **memória/base de conhecimento compartilhada**: consultar (RAG), inserir e atualizar conhecimento, com PostgreSQL + pgvector como armazenamento.
 
@@ -48,15 +48,15 @@
 | API REST | FastAPI + Uvicorn | Async, OpenAPI automático; MCP montado no mesmo app |
 | Banco | PostgreSQL 16 + extensão **pgvector** | Vetores + dados relacionais + full‑text no mesmo lugar |
 | Acesso ao banco / migrações | asyncpg + SQL puro; migrações em `migrations/NNN_*.sql` aplicadas no start | Menos camadas; o SQL fica igual ao desenhado aqui |
-| Embeddings | Interface plugável: Voyage AI / OpenAI (API) **ou** `sentence-transformers` local (ex.: `bge-m3`, bom em PT‑BR) | Trocar provedor sem mexer no resto |
-| Chunking | Splitter próprio por tokens com sobreposição (ex.: 500–800 tokens, overlap 10–15%) | |
+| Embeddings | Interface plugável: Voyage AI / OpenAI / Hugging Face Inference API (`bge-m3`) **ou** `sentence-transformers` local (`bge-m3`, bom em PT‑BR) | Trocar provedor sem mexer no resto |
+| Chunking | Splitter próprio por palavras com sobreposição (450 palavras, overlap 60; `CHUNK_WORDS` e `CHUNK_OVERLAP_WORDS`) | |
 | Rerank (opcional) | Cross-encoder local ou API de rerank | Melhora precisão do top‑k |
 | Config | pydantic-settings (`.env`) | |
-| Infra | Docker Compose só da API, usando o Postgres compartilhado do DB-DOCKER (`db-postgres`, database `kb`) | Reaproveita a infraestrutura existente |
-| Testes | pytest + pytest-asyncio + testcontainers (Postgres real) | |
+| Infra | Imagem Docker pública (`ghcr.io/concilium-mcp/web-server`, amd64/arm64) + qualquer PostgreSQL 16 com pgvector ≥ 0.8; `deploy/docker-compose.yml` sobe app + banco | Roda em qualquer host de containers ([guia de deploy](docs/deploy.md)) |
+| Testes | pytest + pytest-asyncio; integração contra Postgres + pgvector real (`TEST_DATABASE_URL`) | |
 | Qualidade | ruff + mypy | |
 
-> Implementado: provedor plugável (`voyage` padrão, `openai`, `local`, `fake` para testes), sempre em 1024 dimensões. Decisão pendente: **qual usar em produção** (API paga vs. modelo local). A dimensão do vetor depende dessa escolha e fica fixa na migração inicial.
+> Provedores implementados: `voyage` (padrão), `openai`, `huggingface` (`bge-m3` pela Inference API), `local` (`bge-m3` na máquina) e `fake` (testes), sempre em 1024 dimensões. Trocar de provedor ou modelo exige `mcp-rag-api reindex`.
 
 ## 4. Modelo de dados
 
@@ -122,10 +122,12 @@ CREATE INDEX ON documents USING gin (metadata);
 CREATE INDEX ON documents USING gin (tags);
 ```
 
+> Esse é o schema da migração inicial. Depois vieram: usuários e sessões da dashboard (`002`), links entre documentos (`003`), papel editor (`004`), índice de versões (`005`), pastas aninhadas (`006`), OAuth (`007`), layout do grafo (`008`) e 2FA (`009`).
+
 ## 5. Pipeline RAG
 
 **Ingestão (inserir/atualizar)**
-1. Recebe texto (ou arquivo: `.md`, `.txt`, `.pdf`, `.docx` numa fase posterior).
+1. Recebe texto ou arquivo (`.pdf`, `.docx`, `.md`, `.txt` pelo `POST /documents/upload`, convertido para markdown antes do chunking).
 2. Normaliza e calcula `content_hash`; se igual ao atual → não faz nada.
 3. Faz chunking com sobreposição, mantendo título/seção no metadata do chunk.
 4. Gera embeddings em lote.
@@ -154,6 +156,8 @@ CREATE INDEX ON documents USING gin (tags);
 
 **Resources MCP** (leitura): `agent://{slug}/context`. (A v2 do SDK não injeta contexto, e portanto autenticação, em resources estáticos; por isso coleções e documentos são lidos pelas tools.)
 **Prompts MCP**: `answer_with_sources` (instrui o agente a buscar antes de responder e citar fontes) e `save_learning` (orienta o agente a registrar um aprendizado de forma padronizada).
+
+> Hoje são **42 tools**. Além das acima: `edit_document` (troca só um trecho), coleções (`create_collection`, `rename_collection`, `delete_collection`), pastas (`create_folder`, `list_folders`, `move_document`), links (`link_documents`, `unlink_documents`, `get_related`) e as de agente da §6.1. Cada conexão só vê as tools que o escopo dela permite.
 
 Boas práticas nas tools:
 - Descrições claras de **quando** usar cada tool (o modelo decide com base nelas).
@@ -372,9 +376,11 @@ GET    /agents/{slug}            PATCH /agents/{slug}
 GET    /agents/{slug}/context    (mesmo retorno do load_agent)
 GET    /agents/{slug}/proposals  POST /agents/{slug}/proposals/{id}/approve|reject
 GET    /agents/{slug}/memories   GET /agents/{slug}/sessions   GET /agents/{slug}/tasks
-POST   /documents/upload         (fase 3: arquivos)
+POST   /documents/upload         (PDF, .docx, .md, .txt → markdown → documento vetorizado)
 /mcp                             (endpoint MCP streamable HTTP montado no mesmo app)
 ```
+
+> Além dessas: pastas, links e gestão de coleções na REST; a dashboard usa `/dash/api` e o OAuth usa `/authorize`, `/oauth/*` e `/.well-known/*`. A lista completa está no README.
 
 ## 8. Segurança
 
@@ -384,7 +390,7 @@ POST   /documents/upload         (fase 3: arquivos)
 - Rate limit básico e limite de tamanho de conteúdo por requisição.
 - Logs de auditoria de toda escrita.
 - Conteúdo retornado pela base é **dado, não instrução** — documentar isso no prompt dos agentes (mitiga prompt injection via documentos inseridos).
-- Evolução futura: OAuth 2.1 (padrão de autorização do MCP) se for exposto publicamente.
+- **OAuth 2.1 no MCP (feito):** conectores como o do claude.ai abrem a tela *Autorizar* do Concilium; a pessoa entra com a conta da dashboard e escolhe escopos e as pastas principais (coleções) que o conector vê. A dashboard tem usuários com papéis (admin, editor, viewer) e 2FA por TOTP.
 
 ## 9. Conexão com Claude e nossos agentes
 
@@ -394,36 +400,42 @@ claude mcp add --transport http kb https://kb.nossodominio.com/mcp \
   --header "Authorization: Bearer <API_KEY>"
 ```
 
-**Claude Desktop / claude.ai** — adicionar como conector MCP remoto (URL `/mcp`), ou via `stdio` em dev:
+**Claude Desktop / claude.ai** — adicionar como conector MCP remoto (URL `/mcp`; o Concilium abre a tela de autorização OAuth), ou via `stdio` em dev:
 ```json
 {
   "mcpServers": {
-    "kb": { "command": "uv", "args": ["run", "mcp-rag-api", "--stdio"] }
+    "kb": { "command": "uv", "args": ["run", "mcp-rag-api", "stdio"] }
   }
 }
 ```
 
-**Claude API / nossos agentes** — usar o MCP connector da Messages API (servidor remoto por URL + token) ou o Claude Agent SDK apontando para o mesmo servidor MCP. Detalhes exatos de parâmetros serão confirmados na documentação atual no momento da implementação.
+**Claude API / nossos agentes** — usar o MCP connector da Messages API (servidor remoto por URL + token) ou o Claude Agent SDK apontando para o mesmo servidor MCP. O passo a passo está no README.
 
 ## 10. Estrutura de pastas
 
 ```
-mcp-rag-api/
-├── PLANO.md / README.md
-├── pyproject.toml / .env.example
-├── docker-compose.yml / Dockerfile     # só a API; banco = db-postgres do DB-DOCKER
-├── migrations/001_init.sql             # schema completo (base + agentes + chaves + auditoria)
+web-server/
+├── PLANO.md / README*.md / docs/        # guia (pt-BR) e guia de deploy
+├── pyproject.toml / uv.lock / .env.example
+├── Dockerfile.coolify / docker-compose.yml (dev) / deploy/docker-compose.yml (app + pgvector)
+├── .github/workflows/docker.yml        # imagem pública no ghcr.io
 ├── src/mcp_rag_api/
-│   ├── main.py          # FastAPI + MCP montado em /mcp
-│   ├── mcp_server.py    # MCPServer: 33 tools, prompts, resource agent://{slug}/context
-│   ├── api.py           # rotas REST (espelho)
-│   ├── config.py / db.py / security.py   # settings, pool+migrações, chaves/escopos
-│   ├── cli.py           # serve, stdio, migrate, create-key, sync-agents, cleanup
+│   ├── main.py          # FastAPI + MCP em /mcp + dashboard em /dashboard
+│   ├── mcp_server.py    # 42 tools, prompts, resource agent://{slug}/context
+│   ├── api.py           # REST (espelho das tools + upload de arquivos)
+│   ├── dashboard_api.py # API da dashboard (/dash/api)
+│   ├── oauth_api.py     # OAuth 2.1 do MCP (tela Autorizar)
+│   ├── config.py / db.py / security.py / logging_config.py
+│   ├── cli.py           # serve, stdio, migrate, create-key, create-user, reset-2fa, sync-agents, cleanup, relink, reindex
+│   ├── migrations/      # 001 a 009, aplicadas no start
+│   ├── static/          # dashboard (pt-BR, en, es; temas)
 │   └── core/
-│       ├── chunking.py / embeddings.py / search.py
+│       ├── chunking.py / embeddings.py / search.py / reindex.py
 │       ├── documents.py # CRUD + versionamento + duplicatas
-│       ├── agents.py    # cadastro, versões, propostas, autonomia, chaves
-│       └── memory.py    # load_agent, memórias, sessões, tarefas
+│       ├── folders.py / links.py / wikilinks.py / graph.py / graph_layout.py
+│       ├── agents.py / memory.py
+│       ├── dash_auth.py / mfa.py / oauth.py
+│       └── obsidian_import.py / file_import.py
 └── tests/unit, tests/integration
 ```
 
@@ -431,7 +443,7 @@ mcp-rag-api/
 
 **Fase 0 — Setup (0,5 dia)**
 - [x] `pyproject.toml` (uv), ruff, mypy, pytest
-- [x] `docker-compose.yml` da API usando o `db-postgres` compartilhado (database `kb`)
+- [x] `docker-compose.yml` de dev (Postgres externo) e `deploy/docker-compose.yml` (app + pgvector)
 - [x] Config via `.env`, healthcheck
 
 **Fase 1 — Banco e núcleo (1–2 dias)**
@@ -446,7 +458,7 @@ mcp-rag-api/
 - [x] Resources e prompts
 - [x] Transporte stdio + streamable HTTP
 - [x] Teste ponta a ponta com cliente MCP (streamable HTTP)
-- [ ] Testar com Claude Code usando embeddings reais
+- [x] Testar com Claude Code usando embeddings reais (Hugging Face `bge-m3`)
 
 **Fase 2.5 — Registro de agentes e memória (1–2 dias)**
 - [x] Tabelas `agents`, `agent_versions`, `agent_memories`, `agent_sessions`, `agent_tasks`
@@ -455,39 +467,62 @@ mcp-rag-api/
 - [x] Garantir que `propose_agent_update` não altera `auto_apply_updates`, `scopes` nem `allowed_collections` (teste)
 - [x] Prompts `design_agent` (entrevista de cadastro) e `start_as_agent`; resource `agent://{slug}/context`
 - [x] Escopo `agents:manage` e API key vinculada ao agente (gerada no `create_agent`)
-- [ ] Cadastrar 1 agente piloto **pelo chat do Claude** e validar o ciclo início → trabalho → fim → novo chat retomando
+- [x] Cadastrar 1 agente piloto **pelo chat do Claude** e validar o ciclo início → trabalho → fim → novo chat retomando
 
 **Fase 3 — REST + auth (1 dia)**
 - [x] Rotas FastAPI espelhando as tools
 - [x] API keys por agente com escopos; auditoria
-- [ ] Upload de arquivos (md/txt/pdf/docx)
+- [x] Upload de arquivos (PDF, .docx, .md, .txt) pelo `POST /documents/upload`; reenviar o mesmo arquivo atualiza o documento
+- [x] Na dashboard: *Importar → Arquivos* (até 50 por vez, para uma pasta) e *Vault Obsidian*
 
 **Fase 4 — Qualidade do RAG (contínuo)**
 - [x] Detecção de duplicatas no insert
 - [ ] Rerank opcional
 - [ ] Conjunto de avaliação (perguntas → documentos esperados) e métricas (recall@k, MRR)
-- [ ] Ajuste de tamanho de chunk / top_k
+- [ ] Ajuste fino de chunk / top_k guiado pelo conjunto de avaliação (hoje: 450/60 palavras, configurável)
 
 **Fase 5 — Deploy e operação**
 - [x] Imagem Docker (`Dockerfile.coolify`: multi-stage com uv, non-root, healthcheck, proxy headers)
-- [x] CI GitLab (testes com pgvector efêmero → build/push no registry → webhook do Coolify)
+- [x] CI com testes contra pgvector efêmero, build da imagem e deploy automático
+- [x] Imagem pública multi-arch no `ghcr.io` (GitHub Actions) + [guia de deploy](docs/deploy.md): Compose, Coolify e outras plataformas
 - [x] Portão de autenticação no `/mcp` inteiro (401 sem chave válida)
-- [ ] Deploy no Coolify atrás de HTTPS (banco `pgvector/pgvector:pg16`)
-- [ ] Backup do Postgres, logs estruturados, métricas básicas
-- [ ] Documentação de conexão para cada agente
+- [x] Deploy no Coolify atrás de HTTPS (banco `pgvector/pgvector:pg16`), com instâncias em produção
+- [x] Logs estruturados com request id
+- [ ] Backup automático do Postgres (o guia de deploy recomenda; no Coolify, *Database → Backups*)
+- [ ] Métricas básicas
+- [x] Documentação de conexão (README: Claude Code, Desktop, claude.ai, API e agentes próprios)
 
-## 12. Decisões em aberto
+**Fase 6 — Dashboard e espaço de notas (além do plano original)**
+- [x] Dashboard web com login, papéis (admin, editor, viewer) e 2FA por TOTP
+- [x] Espaço de notas: editor markdown, `[[wikilinks]]`, backlinks e grafo 2D/3D da base
+- [x] Pastas dentro de pastas, mover/renomear/excluir; acesso por coleção (a "pasta principal" da dashboard) para chaves, agentes e conexões OAuth
+- [x] Import de vault Obsidian e de arquivos soltos (PDF, .docx, .md, .txt)
+- [x] Gestão de agentes, chaves de API e coleções pela dashboard
+- [x] OAuth 2.1 no MCP (conector do claude.ai sem chave para copiar)
+- [x] Três idiomas (pt-BR, en, es) e 13 temas
 
-1. Provedor de embeddings: API (Voyage/OpenAI) ou local (`bge-m3`)? → define custo, latência e dimensão do vetor.
-2. Onde hospedar (VPS própria, cloud, junto com o `DB-DOCKER` existente?).
-3. Coleções iniciais e quais fontes de dados entram primeiro.
-4. Agentes podem escrever livremente ou escritas passam por aprovação (status `pending_review`)?
-5. Multi-tenant (vários clientes/projetos isolados) é requisito agora ou depois?
-6. Quais agentes cadastrar primeiro (papel, coleções e escopos de cada um)?
-## 13. Critérios de pronto (MVP)
+## 12. Decisões
 
-- Claude Code conectado ao MCP consegue: buscar e responder citando fontes; inserir um novo documento; atualizar um documento existente e ver a nova versão refletida na busca seguinte.
-- Pelo chat do Claude (via MCP) é possível cadastrar um agente novo, alterar seu perfil, aprovar uma proposta e ligar/desligar a autoatualização, tudo sem sair da conversa.
-- Um agente cadastrado no banco é carregado com `load_agent` em um chat novo e retoma memórias, último resumo e tarefas de um chat anterior.
-- Testes de integração passando contra Postgres + pgvector reais.
-- Sobe com `docker compose up` e um `.env`.
+**Resolvidas**
+
+1. **Embeddings:** provedor plugável, padrão `voyage`. As instâncias em produção usam `huggingface` com `bge-m3` (bom em PT-BR, sem GPU). Dimensão fixa em 1024; trocar de modelo exige `mcp-rag-api reindex`.
+2. **Hospedagem:** qualquer host de containers, com a imagem pública. As instâncias de referência rodam em VPS com Coolify, atrás de HTTPS, cada uma com o próprio Postgres + pgvector.
+3. **Coleções:** livres, criadas por quem usa (dashboard ou MCP). Não existe um conjunto inicial fixo.
+4. **Escrita dos agentes:** direta, limitada por escopo (`write`) e por coleção, com versionamento, aviso de duplicata e auditoria. Só o **perfil** do agente passa por aprovação (propostas e autonomia, §6.1). O status `pending_review` para documentos não foi necessário.
+5. **Multi-tenant:** fora do app por enquanto. Cada empresa tem a própria instância com banco próprio; dentro dela, o isolamento é por coleções, papéis da dashboard e escopo das chaves.
+6. **Agentes iniciais:** decisão de cada instalação, com o prompt `design_agent`.
+
+**Em aberto**
+
+- Rerank e conjunto de avaliação com métricas (recall@k, MRR).
+- OCR para PDF escaneado (hoje é recusado com mensagem clara) e upload de arquivo pelo MCP.
+- Multi-tenant dentro de uma instância só.
+- Backup automático e métricas.
+
+## 13. Critérios de pronto (MVP): atingidos
+
+- [x] Claude Code conectado ao MCP consegue: buscar e responder citando fontes; inserir um novo documento; atualizar um documento existente e ver a nova versão refletida na busca seguinte.
+- [x] Pelo chat do Claude (via MCP) é possível cadastrar um agente novo, alterar seu perfil, aprovar uma proposta e ligar/desligar a autoatualização, tudo sem sair da conversa.
+- [x] Um agente cadastrado no banco é carregado com `load_agent` em um chat novo e retoma memórias, último resumo e tarefas de um chat anterior.
+- [x] Testes de integração passando contra Postgres + pgvector reais.
+- [x] Sobe com `docker compose up` e um `.env` (`deploy/docker-compose.yml`, com a imagem pública).
