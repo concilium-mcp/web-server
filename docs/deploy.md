@@ -26,6 +26,7 @@ The image reads environment variables. The full list, with comments, is in [`.en
 | `EMBEDDING_PROVIDER` | `voyage` (default), `openai` or `huggingface`, plus its key: `VOYAGE_API_KEY`, `OPENAI_API_KEY` or `HF_API_KEY` |
 | `PUBLIC_URL` | the public `https://` address. OAuth (Claude connectors) and the connection commands use it |
 | `DASH_TOTP_ENCRYPTION_KEY` | optional: encrypts the 2FA secrets in the database |
+| `OCR_PROVIDER` | optional: OCR for scanned PDF pages. `tesseract` (default, bundled in the image, Portuguese and English), `openai` (vision model on any OpenAI-compatible API, see `.env.example`) or `none`. Running outside the image? Install `tesseract-ocr` |
 
 Picked an embeddings provider? Stay with it. Changing provider or model later requires `mcp-rag-api reindex`, because vectors from different models can't be compared.
 

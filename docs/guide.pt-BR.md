@@ -182,12 +182,14 @@ Na tela Notas, **Importar** → **Arquivos**: escolha até 50 arquivos (25 MB ca
 
 | Formato | Como é convertido |
 |---|---|
-| PDF (`.pdf`) | texto de cada página (`pypdf`); o número de páginas vai para o metadata |
+| PDF (`.pdf`) | texto de cada página (`pypdf`); página sem texto (escaneada ou só imagem) passa pelo OCR. O metadata guarda `pages` e, quando houve OCR, `ocr_pages` e `ocr_engine` |
 | Word (`.docx`) | markdown com títulos, listas, negrito e links (`mammoth`); imagens são descartadas |
 | Markdown (`.md`) | como está; `title`/`tags` do frontmatter viram título/tags |
 | Texto (`.txt`) | como está |
 
-**Limites:** PDF escaneado (só imagem) não tem texto — aparece como erro daquele arquivo, sem OCR por enquanto. PDF com senha também é recusado. O arquivo original não fica guardado, só o texto. `.doc` antigo, planilhas e apresentações ficam de fora.
+**PDF escaneado:** cada página com menos de 20 caracteres de texto vira imagem e passa pelo OCR. As páginas que já têm texto não passam, então um PDF misto só demora nas páginas-imagem. O motor vem do `OCR_PROVIDER`: `tesseract` (padrão, local, português + inglês, de 0,3 a 1 s por página), `openai` (modelo de visão por API; lê melhor tabela e letra à mão, mas cobra por página e manda a imagem para fora) ou `none`. O OCR vai até 200 páginas por arquivo na tela (`OCR_MAX_PAGES`) e até 20 pela API, que é síncrona. Acima disso, o arquivo é recusado antes de começar.
+
+**Limites:** imagem dentro de uma página que já tem texto (print no meio do relatório) não passa pelo OCR. A qualidade depende da digitalização: foto torta ou de baixa resolução sai com erros. PDF com senha é recusado. O arquivo original não fica guardado, só o texto. `.doc` antigo, planilhas e apresentações ficam de fora.
 
 **Reenvio é seguro:** o `external_id` é `file:<pasta>/<nome do arquivo>`, então mandar o mesmo arquivo para o mesmo lugar atualiza a nota (versão nova se o texto mudou) em vez de duplicar.
 

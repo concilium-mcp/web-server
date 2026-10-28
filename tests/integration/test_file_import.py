@@ -9,12 +9,26 @@ import httpx
 import pytest
 
 from mcp_rag_api import db
-from mcp_rag_api.core import dash_auth, documents, folders, search
+from mcp_rag_api.core import dash_auth, documents, file_import, folders, search
+from mcp_rag_api.core.ocr import OcrEngine
 from mcp_rag_api.main import app
 from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
 from mcp_rag_api.security import create_api_key
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+class EchoOcr(OcrEngine):
+    """Motor falso: devolve um texto fixo numerado por chamada (o tesseract não é exigido nos testes)."""
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def read_png(self, png: bytes) -> str:
+        self.calls += 1
+        return f"Laudo tecnico escaneado pagina {self.calls}"
 
 
 async def _dash_client(username: str, role: str) -> httpx.AsyncClient:
@@ -166,3 +180,35 @@ async def test_rest_upload_converts_and_places_in_folder(writer, reader, make_do
 
     bad = await writer.post("/documents/upload", files={"file": ("x.pdf", b"lixo", "application/pdf")}, data=data)
     assert bad.status_code == 400
+
+
+async def test_dash_imports_scanned_pdf_through_ocr(editor, make_scanned_pdf, monkeypatch):
+    engine = EchoOcr()
+    monkeypatch.setattr(file_import, "get_engine", lambda: engine)
+    await documents.create_collection(ADMIN, "fi-ocr")
+    files = [("files", ("laudo.pdf", make_scanned_pdf(["a", "b"]), "application/pdf"))]
+    resp = await editor.post("/dash/api/import/files", files=files, data={"collection": "fi-ocr"})
+    snap = await _wait_job(editor, resp.json()["job_id"])
+    assert snap["status"] == "done" and snap["notes"] == 1, snap
+
+    [doc] = await documents.list_documents(ADMIN, "fi-ocr")
+    full = await documents.get_document(ADMIN, str(doc["id"]))
+    assert full["content"] == "Laudo tecnico escaneado pagina 1\n\nLaudo tecnico escaneado pagina 2"
+    assert full["metadata"]["ocr_pages"] == [1, 2] and full["metadata"]["ocr_engine"] == "fake"
+    hits = await search.search_knowledge(ADMIN, "Laudo tecnico escaneado", collections=["fi-ocr"])
+    assert any(str(h["document_id"]) == str(doc["id"]) for h in hits)
+
+
+async def test_rest_upload_caps_ocr_pages(writer, make_scanned_pdf, monkeypatch):
+    engine = EchoOcr()
+    monkeypatch.setattr(file_import, "get_engine", lambda: engine)
+    await documents.create_collection(ADMIN, "fi-ocr-rest")
+    data = {"collection": "fi-ocr-rest"}
+
+    ok = await writer.post("/documents/upload", files={"file": ("um.pdf", make_scanned_pdf(["a"]))}, data=data)
+    assert ok.status_code == 200, ok.text
+
+    pages = ["p"] * (file_import.REST_MAX_OCR_PAGES + 1)
+    big = await writer.post("/documents/upload", files={"file": ("grande.pdf", make_scanned_pdf(pages))}, data=data)
+    assert big.status_code == 400 and "importe pela tela" in big.json()["detail"]
+    assert engine.calls == 1  # o PDF grande foi recusado antes de rodar o OCR

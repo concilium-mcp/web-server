@@ -1,6 +1,7 @@
 """Fixtures compartilhadas por unit e integration: arquivos PDF/.docx mínimos montados à mão.
 
-Montados em bytes (sem reportlab/python-docx) para não puxar dependência só de teste.
+Montados em bytes (sem reportlab/python-docx) para não puxar dependência só de teste; o PDF
+escaneado usa Pillow e pypdf, que já são dependências do app.
 """
 
 import io
@@ -8,6 +9,8 @@ import zipfile
 from collections.abc import Callable
 
 import pytest
+from PIL import Image, ImageDraw, ImageFont
+from pypdf import PdfWriter
 
 
 def build_pdf(pages: list[str]) -> bytes:
@@ -40,6 +43,28 @@ def build_pdf(pages: list[str]) -> bytes:
         out.write(f"{offset:010d} 00000 n \n".encode())
     out.write(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
     return out.getvalue()
+
+
+def build_scanned_pdf(pages: list[str]) -> bytes:
+    """PDF só de imagem (como um escaneado): cada página é uma figura com o texto desenhado, sem camada de texto."""
+    font = ImageFont.load_default(size=56)
+    images = []
+    for text in pages:
+        image = Image.new("L", (1700, 2200), 255)
+        ImageDraw.Draw(image).text((150, 300), text, fill=0, font=font)
+        images.append(image)
+    buf = io.BytesIO()
+    images[0].save(buf, format="PDF", resolution=200, save_all=True, append_images=images[1:])
+    return buf.getvalue()
+
+
+def merge_pdf_files(*pdfs: bytes) -> bytes:
+    writer = PdfWriter()
+    for pdf in pdfs:
+        writer.append(io.BytesIO(pdf))
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
 
 
 _DOCX_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -80,6 +105,16 @@ def docx_paragraph(text: str, style: str | None = None, bold: bool = False) -> s
 @pytest.fixture
 def make_pdf() -> Callable[[list[str]], bytes]:
     return build_pdf
+
+
+@pytest.fixture
+def make_scanned_pdf() -> Callable[[list[str]], bytes]:
+    return build_scanned_pdf
+
+
+@pytest.fixture
+def merge_pdfs() -> Callable[..., bytes]:
+    return merge_pdf_files
 
 
 @pytest.fixture

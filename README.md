@@ -42,7 +42,7 @@ Agents also get a home: a profile (system prompt), persistent memory, session su
 - Nested folders with no depth limit (like Notion), a WYSIWYG editor with a Markdown tab, tags and note templates
 - `[[Wikilinks]]` and backlinks, Obsidian style. Links to notes that don't exist yet resolve on their own once the note is created
 - **Obsidian vault import**: upload the `.zip` from the dashboard and watch real-time progress — folders become collections, notes become fully embedded documents, and re-importing updates instead of duplicating
-- **File import**: drop PDF, Word (`.docx`), Markdown or text files into any folder from the dashboard, or send them to `POST /documents/upload`. They are converted to Markdown and embedded right away (no OCR for scanned PDFs yet)
+- **File import**: drop PDF, Word (`.docx`), Markdown or text files into any folder from the dashboard, or send them to `POST /documents/upload`. They are converted to Markdown and embedded right away; scanned pages are read with OCR (Tesseract, bundled in the image)
 - Version history with restore, conflict detection and local drafts, so nothing gets lost
 
 **🔎 Real RAG for agents**
@@ -204,7 +204,7 @@ Yes, for teams. You get folders, Markdown, `[[wikilinks]]`, backlinks and a grap
 For knowledge that agents need to use, it can: customer profiles, playbooks, runbooks, product docs. Concilium focuses on notes, search and agents rather than databases, kanban boards or real-time co-editing.
 
 **Can I import my Obsidian vault, PDFs or Word documents?**
-Yes. In the dashboard, **Notes → Import** takes either a zipped Obsidian vault (folders become collections, `[[wikilinks]]` are kept) or loose PDF, `.docx`, Markdown and text files sent to a folder of your choice. Integrations can use `POST /documents/upload` for files or `PUT /documents/upsert` for text. Scanned PDFs need OCR first.
+Yes. In the dashboard, **Notes → Import** takes either a zipped Obsidian vault (folders become collections, `[[wikilinks]]` are kept) or loose PDF, `.docx`, Markdown and text files sent to a folder of your choice. Integrations can use `POST /documents/upload` for files or `PUT /documents/upsert` for text. Scanned PDFs are read with OCR (`OCR_PROVIDER`).
 
 **Does it work with ChatGPT, Cursor or other LLM tools?**
 Any client that speaks the **Model Context Protocol** can connect. Everything else can use the REST API. Embeddings are independent of the chat model.

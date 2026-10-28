@@ -646,8 +646,10 @@ async def import_files(
             )
         pending.append((name, data))
 
+    engine, max_ocr_pages = file_import.ocr_options()
+
     async def handle(item: tuple[str, bytes]) -> str:
-        converted = await asyncio.to_thread(file_import.convert_file, *item)
+        converted = await asyncio.to_thread(file_import.convert_file, *item, engine, max_ocr_pages)
         await file_import.import_file(writer, collection, folder_path, converted)
         return collection
 

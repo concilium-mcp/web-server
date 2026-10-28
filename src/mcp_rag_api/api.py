@@ -258,7 +258,8 @@ async def upload_document(
     if len(data) > file_import.MAX_FILE_BYTES:
         mb = file_import.MAX_FILE_BYTES // (1024 * 1024)
         raise HTTPException(status_code=413, detail=f"'{name}' passa de {mb} MB.")
-    converted = await asyncio.to_thread(file_import.convert_file, name, data)
+    engine, max_ocr_pages = file_import.ocr_options(rest=True)
+    converted = await asyncio.to_thread(file_import.convert_file, name, data, engine, max_ocr_pages)
     return await file_import.import_file(p, collection, folder_path or None, converted)
 
 

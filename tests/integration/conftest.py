@@ -43,12 +43,17 @@ async def database():
     os.environ["DATABASE_URL"] = TEST_DB
     os.environ["EMBEDDING_PROVIDER"] = "fake"
     os.environ["KB_AUTH_DISABLED"] = "false"
+    # sem OCR por padrão (o resultado não pode depender de ter o tesseract instalado); os testes de
+    # OCR trocam o motor por um falso
+    os.environ["OCR_PROVIDER"] = "none"
     from mcp_rag_api import db
     from mcp_rag_api.config import get_settings
     from mcp_rag_api.core.embeddings import get_embedder
+    from mcp_rag_api.core.ocr import get_engine
 
     get_settings.cache_clear()
     get_embedder.cache_clear()
+    get_engine.cache_clear()
 
     conn = await asyncpg.connect(TEST_DB)
     await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")

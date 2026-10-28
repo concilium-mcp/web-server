@@ -55,6 +55,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     PORT=8000
 
+# OCR de PDF escaneado (plan-web-29): tesseract com português e inglês (~40 MB).
+# Outros idiomas: acrescente tesseract-ocr-<código> e ajuste OCR_LANGUAGES.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 # Criar usuário não-root
 RUN groupadd -g 1000 appuser \
     && useradd -u 1000 -g appuser -s /bin/bash -m appuser

@@ -1,3 +1,4 @@
+import shutil
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -37,6 +38,16 @@ class Settings(BaseSettings):
     embedding_api_url: str = ""
     # textos por requisição ao provedor (0 = padrão de cada provedor)
     embedding_batch_size: int = 0
+
+    # OCR das páginas de PDF sem texto (plan-web-29): tesseract (local, padrão), openai (API de
+    # visão compatível com OpenAI) ou none. OCR_LANGUAGES usa os códigos do tesseract (por+eng).
+    ocr_provider: Literal["tesseract", "openai", "none"] = "tesseract"
+    ocr_languages: str = "por+eng"
+    ocr_max_pages: int = Field(default=200, ge=0)
+    # openai: chave própria ou, vazia, a OPENAI_API_KEY; a URL aceita qualquer API compatível
+    ocr_api_key: str = ""
+    ocr_api_url: str = "https://api.openai.com/v1"
+    ocr_model: str = "gpt-4o-mini"
 
     chunk_words: int = 450
     chunk_overlap_words: int = 60
@@ -136,6 +147,8 @@ def check_config() -> list[str]:
     env_name, key = required_key.get(s.embedding_provider, ("", ""))
     if env_name and not key:
         raise RuntimeError(f"EMBEDDING_PROVIDER={s.embedding_provider} exige {env_name}: defina a variável no .env")
+    if s.ocr_provider == "openai" and not (s.ocr_api_key or s.openai_api_key):
+        raise RuntimeError("OCR_PROVIDER=openai exige OCR_API_KEY ou OPENAI_API_KEY: defina a variável no .env")
     public = urlparse(s.public_url).hostname not in LOCAL_HOSTS
     if s.kb_auth_disabled and public:
         # auth desligada com URL pública = API e MCP abertos como admin para a internet
@@ -154,6 +167,8 @@ def check_config() -> list[str]:
         warnings.append("PUBLIC_URL é o padrão http://localhost:8000 — defina a URL pública em produção")
     if s.oauth_enabled and (issue := oauth_issue()):
         warnings.append(issue)
+    if s.ocr_provider == "tesseract" and not shutil.which("tesseract"):
+        warnings.append("OCR_PROVIDER=tesseract, mas o 'tesseract' não está instalado: PDF escaneado não será lido")
     if s.kb_auth_disabled:
         warnings.append("KB_AUTH_DISABLED=true: AUTENTICAÇÃO DESLIGADA — use apenas em desenvolvimento!")
     return warnings

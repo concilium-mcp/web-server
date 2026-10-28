@@ -1,4 +1,4 @@
-"""Provider huggingface: lotes, retry em 429/503 e validação da resposta (sem rede: MockTransport)."""
+"""Provider huggingface: lotes, retry em 429/503/timeout e validação da resposta (sem rede: MockTransport)."""
 
 import httpx
 import numpy as np
@@ -49,6 +49,33 @@ async def test_retries_on_model_loading_then_succeeds():
     p = HuggingFaceProvider("hf_x", "", transport=httpx.MockTransport(handler))
     vec = await p.embed_one("olá")
     assert vec.shape == (EMBEDDING_DIM,)
+
+
+async def test_retries_on_timeout_then_succeeds():
+    attempts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise httpx.ReadTimeout("lento", request=request)
+        return httpx.Response(200, json=[_vec(1)])
+
+    p = HuggingFaceProvider("hf_x", "", transport=httpx.MockTransport(handler))
+    assert (await p.embed_one("olá")).shape == (EMBEDDING_DIM,)
+    assert len(attempts) == 3
+
+
+async def test_timeout_on_every_attempt_is_raised():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("lento", request=request)
+
+    p = HuggingFaceProvider("hf_x", "", transport=httpx.MockTransport(handler))
+    with pytest.raises(httpx.ReadTimeout):
+        await p.embed_one("olá")
+
+
+def test_default_batch_is_small():
+    assert HuggingFaceProvider("hf_x", "").batch_size == 8
 
 
 async def test_gives_up_after_retries():

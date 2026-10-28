@@ -165,10 +165,12 @@ class HuggingFaceProvider(EmbeddingProvider):
     """Hugging Face Inference API (pipeline feature-extraction).
 
     Padrão BAAI/bge-m3: 1024 dims, bom em PT-BR — o mesmo modelo do provider "local", sem baixar ~2 GB.
-    Repete em 429/503 (limite de taxa / modelo "acordando" no plano gratuito).
+    Repete em 429/503 (limite de taxa / modelo "acordando" no plano gratuito) e em timeout ou falha de
+    rede. Lote pequeno de propósito: no plano gratuito, 32 trechos de ~450 palavras numa chamada só
+    passavam dos 120 s e a edição de um documento grande caía inteira.
     """
 
-    batch_size = 32
+    batch_size = 8
     retries = 4
     name = "huggingface"
 
@@ -196,7 +198,13 @@ class HuggingFaceProvider(EmbeddingProvider):
 
     async def _embed_batch(self, texts: list[str], input_type: InputType) -> list[list[float]]:
         for attempt in range(self.retries):
-            resp = await self.client.post(self.url, json={"inputs": texts})
+            try:
+                resp = await self.client.post(self.url, json={"inputs": texts})
+            except httpx.TransportError:  # inclui timeout
+                if attempt == self.retries - 1:
+                    raise
+                await asyncio.sleep(2**attempt)
+                continue
             if resp.status_code in (429, 503) and attempt < self.retries - 1:
                 await asyncio.sleep(2**attempt)
                 continue
