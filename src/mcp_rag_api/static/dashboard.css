@@ -1077,6 +1077,15 @@ select option {
   color: var(--text-dim);
 }
 
+/* endereço completo de retorno (plan-web-32): o host sozinho não diz para qual página o código vai */
+.consent-return-uri {
+  margin: 0 0 4px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
 .consent-login {
   display: flex;
   flex-direction: column;

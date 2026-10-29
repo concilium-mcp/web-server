@@ -38,7 +38,8 @@ const header = (info) => `
   <div class="consent-badge">${icon("shield-check", 26)}</div>
   <h1 class="consent-title">${t("oauth.title", { app: escHtml(info.client_name) })}</h1>
   <p class="muted consent-intro">${t("oauth.intro", { app: escHtml(info.client_name) })}</p>
-  ${info.redirect_host ? `<p class="consent-return">${icon("external-link", 13)}<span>${t("oauth.returnsTo", { host: `<strong>${escHtml(info.redirect_host)}</strong>` })}</span></p>` : ""}`;
+  ${info.redirect_host ? `<p class="consent-return">${icon("external-link", 13)}<span>${t("oauth.returnsTo", { host: `<strong>${escHtml(info.redirect_host)}</strong>` })}</span></p>` : ""}
+  ${info.redirect_uri ? `<p class="consent-return-uri"><code>${escHtml(info.redirect_uri)}</code></p>` : ""}`;
 
 function renderError(message) {
   shell(`

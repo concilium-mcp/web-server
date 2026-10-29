@@ -75,9 +75,22 @@ class Settings(BaseSettings):
     oauth_enabled: bool = True
     oauth_access_ttl_minutes: int = Field(default=60, gt=0)
     oauth_refresh_ttl_days: int = Field(default=30, gt=0)
-    # hosts https aceitos como redirect_uri no registro dinâmico (subdomínios inclusos; loopback http
-    # sempre aceito): Claude, ChatGPT, VS Code (web), Mistral Le Chat
-    oauth_redirect_allowlist: str = "claude.ai,claude.com,chatgpt.com,openai.com,vscode.dev,mistral.ai"
+    # redirect_uri https aceitos no registro dinâmico (plan-web-32): endereço exato, ou caminho fixo
+    # terminado em "*" quando o cliente põe um código no fim (ChatGPT: um por conector). Sem subdomínios.
+    # Loopback http (Claude Code, Inspector) segue sempre aceito.
+    oauth_redirect_uris: str = ",".join(
+        [
+            "https://claude.ai/api/mcp/auth_callback",
+            "https://claude.com/api/mcp/auth_callback",
+            "https://chatgpt.com/connector/oauth/*",
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+            "https://platform.openai.com/oauth/callback",
+            "https://vscode.dev/redirect",
+            "https://chat.mistral.ai/mcp/callback",
+        ]
+    )
+    # obsoleto (até o plan-web-31): lista de hosts com qualquer subdomínio/caminho. Ignorado; só gera aviso.
+    oauth_redirect_allowlist: str = ""
     # esquemas de app nativo aceitos como redirect_uri (ex.: cursor://anysphere.cursor-mcp/oauth/callback)
     oauth_redirect_schemes: str = "cursor,vscode,vscode-insiders"
 
@@ -109,8 +122,9 @@ def _csv(value: str) -> set[str]:
     return {item.strip().lower() for item in value.split(",") if item.strip()}
 
 
-def oauth_redirect_hosts(s: Settings) -> set[str]:
-    return _csv(s.oauth_redirect_allowlist)
+def oauth_redirect_uris(s: Settings) -> list[str]:
+    # o caminho diferencia maiúsculas: só tira espaços
+    return [item.strip() for item in s.oauth_redirect_uris.split(",") if item.strip()]
 
 
 def oauth_redirect_schemes(s: Settings) -> set[str]:
@@ -183,4 +197,9 @@ def check_config() -> list[str]:
         warnings.append("OCR_PROVIDER=tesseract, mas o 'tesseract' não está instalado: PDF escaneado não será lido")
     if s.kb_auth_disabled:
         warnings.append("KB_AUTH_DISABLED=true: AUTENTICAÇÃO DESLIGADA — use apenas em desenvolvimento!")
+    if s.oauth_redirect_allowlist.strip():
+        warnings.append(
+            "OAUTH_REDIRECT_ALLOWLIST não é mais usado (aceitava qualquer subdomínio): "
+            "liste os endereços exatos em OAUTH_REDIRECT_URIS e apague a variável"
+        )
     return warnings

@@ -12,7 +12,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 import asyncpg
 from mcp.server.auth.provider import (
@@ -28,7 +28,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from ..config import get_settings, oauth_redirect_hosts, oauth_redirect_schemes
+from ..config import get_settings, oauth_redirect_schemes, oauth_redirect_uris
 from ..db import pool
 from ..logging_config import get_logger
 from ..security import (
@@ -71,15 +71,32 @@ def _valid_resource(resource: str | None) -> bool:
     return resource.rstrip("/") in (base, base + "/mcp")
 
 
+def _matches_redirect(url: ParseResult, entry: str) -> bool:
+    """Endereço exato de OAUTH_REDIRECT_URIS, ou caminho fixo + qualquer final quando termina em "*"."""
+    prefix = entry.endswith("*")
+    allowed = urlparse(entry.rstrip("*"))
+    if allowed.scheme.lower() != "https" or (allowed.hostname or "").lower() != (url.hostname or "").lower():
+        return False
+    if allowed.port != url.port or url.query:
+        return False
+    return url.path.startswith(allowed.path) if prefix else url.path == allowed.path
+
+
 def redirect_allowed(uri: str) -> bool:
-    """https em host da allowlist (ou subdomínio dele), loopback http (Claude Code, Inspector) ou
-    esquema de app nativo da allowlist (Cursor, VS Code)."""
+    """https num endereço de OAUTH_REDIRECT_URIS (sem subdomínios: um subdomínio ou caminho qualquer de
+    um site grande pode ter conteúdo de terceiros e receberia o código), loopback http (Claude Code,
+    Inspector) ou esquema de app nativo da allowlist (Cursor, VS Code)."""
     url = urlparse(uri)
     scheme, host = url.scheme.lower(), (url.hostname or "").lower()
     if scheme == "http":
         return host in ("localhost", "127.0.0.1", "::1")
     if scheme == "https":
-        return bool(host) and any(host == h or host.endswith("." + h) for h in oauth_redirect_hosts(get_settings()))
+        path = url.path.lower()
+        if not host or url.username or url.password or url.fragment or "\\" in uri:
+            return False
+        if ".." in path.split("/") or "%2e" in path or "%2f" in path or "%5c" in path:
+            return False  # nada de sair do caminho fixo por "..", nem codificado
+        return any(_matches_redirect(url, entry) for entry in oauth_redirect_uris(get_settings()))
     return scheme in oauth_redirect_schemes(get_settings())
 
 
@@ -152,7 +169,7 @@ class ConciliumOAuthProvider(
             raise RegistrationError(
                 "invalid_redirect_uri",
                 f"redirect_uri não permitido neste servidor: {', '.join(refused)} "
-                "(aceitos: https nos hosts de OAUTH_REDIRECT_ALLOWLIST, esquemas de OAUTH_REDIRECT_SCHEMES "
+                "(aceitos: os endereços https de OAUTH_REDIRECT_URIS, esquemas de OAUTH_REDIRECT_SCHEMES "
                 "ou http://localhost).",
             )
         # o cliente pode pedir no /authorize qualquer escopo do Concilium (o SDK valida contra este campo);
@@ -348,6 +365,8 @@ async def consent_info(request_id: str, user: DashUser | None) -> dict[str, Any]
     info: dict[str, Any] = {
         "client_name": row["client_name"] or "Aplicativo MCP",
         "redirect_host": redirect_label(row["redirect_uri"]),
+        # endereço completo na tela: o host sozinho ("claude.ai") esconde para qual página o código vai
+        "redirect_uri": row["redirect_uri"],
         "requested_scopes": [s for s in row["scopes"] if s in OAUTH_SCOPES],
         "user": None,
     }

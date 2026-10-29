@@ -172,6 +172,10 @@ async def test_register_allowlist():
         "https://notchatgpt.com/cb",
         "evilapp://callback",
         "javascript://alert(1)",
+        # plan-web-32: subdomínio ou outro caminho dos sites liberados também não
+        "https://x.claude.ai/api/mcp/auth_callback",
+        "https://claude.ai/outra/pagina",
+        "https://chatgpt.com/share/abc",
     ]
     for bad in bad_uris:
         resp = await _register(bad)
@@ -188,6 +192,7 @@ async def test_full_flow_and_tokens_work_on_rest(admin, editor):
     request_id = await _start(client_id, challenge)
     info = (await anon.get(f"/oauth/api/requests/{request_id}")).json()
     assert info["user"] is None and info["client_name"] == "Claude" and info["redirect_host"] == "claude.ai"
+    assert info["redirect_uri"] == CLAUDE_CB  # a tela mostra o endereço inteiro, não só o host
     assert info["requested_scopes"] == ["read", "write"]
     await anon.aclose()
     info = (await editor.get(f"/oauth/api/requests/{request_id}")).json()
