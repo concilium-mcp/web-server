@@ -147,6 +147,9 @@ async def revoke_user_sessions(user_id: str) -> None:
 # contra um usuário inexistente também conta — senão o limite seria trivial de furar.
 LOGIN_BLOCK_BASE_SECONDS = 2.0
 LOGIN_BLOCK_MAX_SECONDS = 900.0
+# Cada entrada tem tamanho fixo (~200 bytes): o teto rígido limita a memória a poucos MB.
+LOGIN_LIMITER_PRUNE_AT = 10_000
+LOGIN_LIMITER_MAX_ENTRIES = 50_000
 
 
 class LoginRateLimiter:
@@ -161,11 +164,16 @@ class LoginRateLimiter:
         self.base_seconds = base_seconds
         self._failures: dict[tuple[str, str], tuple[int, float]] = {}
 
+    @staticmethod
+    def _key(key: tuple[str, str]) -> tuple[str, str]:
+        """Chave de tamanho fixo: o username vem de requisição anônima e pode ter qualquer tamanho."""
+        return hashlib.sha256(key[0].encode()).hexdigest(), key[1][:64]
+
     def blocked_for(self, key: tuple[str, str]) -> float:
         """Segundos restantes de bloqueio para a chave (0 = pode tentar)."""
         if self.max_failures <= 0:
             return 0.0
-        entry = self._failures.get(key)
+        entry = self._failures.get(self._key(key))
         if not entry:
             return 0.0
         _, blocked_until = entry
@@ -174,7 +182,8 @@ class LoginRateLimiter:
     def register_failure(self, key: tuple[str, str]) -> None:
         if self.max_failures <= 0:
             return
-        failures, _ = self._failures.get(key, (0, 0.0))
+        key = self._key(key)
+        failures, _ = self._failures.pop(key, (0, 0.0))  # pop + reinserção: a ordem do dict = mais antiga primeiro
         failures += 1
         blocked_until = 0.0
         # atingiu o limite: bloqueia a próxima tentativa; cada nova falha dobra a espera
@@ -182,12 +191,14 @@ class LoginRateLimiter:
             delay = min(self.base_seconds * 2 ** (failures - self.max_failures), LOGIN_BLOCK_MAX_SECONDS)
             blocked_until = time.monotonic() + delay
         self._failures[key] = (failures, blocked_until)
-        if len(self._failures) > 10_000:  # sanity: não deixa o dict crescer para sempre
+        if len(self._failures) > LOGIN_LIMITER_PRUNE_AT:  # não deixa o dict crescer para sempre
             now = time.monotonic()
             self._failures = {k: v for k, v in self._failures.items() if v[1] > now - LOGIN_BLOCK_MAX_SECONDS}
+            while len(self._failures) > LOGIN_LIMITER_MAX_ENTRIES:  # teto rígido: sai a falha mais antiga
+                self._failures.pop(next(iter(self._failures)))
 
     def reset(self, key: tuple[str, str]) -> None:
-        self._failures.pop(key, None)
+        self._failures.pop(self._key(key), None)
 
 
 # O IP do cliente é só uma dica (atrás de proxy dá para forjar ou rodar IPs), então cada

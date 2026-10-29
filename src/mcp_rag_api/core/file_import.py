@@ -16,6 +16,7 @@ mesmo lugar atualiza a nota (nova versão) em vez de duplicar.
 
 import io
 import re
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,6 +35,9 @@ MAX_FILE_BYTES = 25 * 1024 * 1024  # arquivo individual
 MAX_FILES = 50  # arquivos por import na dash
 MAX_TOTAL_BYTES = 100 * 1024 * 1024  # soma do upload na dash
 MAX_PDF_PAGES = 2000
+# XML descomprimido de um .docx: o mammoth gasta ~60 MB de RAM por MB de XML, e o limite de upload
+# só vê o zip (um .docx de 20 KB pode ter 7 MB de XML). Imagens não contam: são descartadas sem ler.
+MAX_DOCX_XML_BYTES = 10 * 1024 * 1024
 # página com menos caracteres visíveis que isso é tratada como imagem e vai para o OCR
 MIN_PAGE_TEXT_CHARS = 20
 # a REST converte dentro da requisição: OCR de muitas páginas passaria do timeout do proxy
@@ -162,7 +166,23 @@ def _unescape_markdown(text: str) -> str:
     return "\n".join(lines)
 
 
+def _check_docx_size(data: bytes, filename: str) -> None:
+    """Recusa o .docx cujo XML descomprimido passa do orçamento, antes de o mammoth carregá-lo.
+    O tamanho declarado no zip é confiável aqui: o zipfile para nele e falha no CRC se for mentira."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml_bytes = sum(i.file_size for i in zf.infolist() if i.filename.lower().endswith((".xml", ".rels")))
+    except zipfile.BadZipFile as e:
+        raise KBError(f"'{filename}': não foi possível ler o .docx ({e}).") from e
+    if xml_bytes > MAX_DOCX_XML_BYTES:
+        raise KBError(
+            f"'{filename}': o documento é grande demais para importar "
+            f"({xml_bytes // (1024 * 1024)} MB de texto/estrutura; limite {MAX_DOCX_XML_BYTES // (1024 * 1024)} MB)."
+        )
+
+
 def _convert_docx(data: bytes, filename: str) -> str:
+    _check_docx_size(data, filename)
     try:
         # imagens viram nada (data URI em base64 incharia a nota e os chunks)
         result = mammoth.convert_to_markdown(io.BytesIO(data), convert_image=mammoth.images.img_element(lambda _: {}))

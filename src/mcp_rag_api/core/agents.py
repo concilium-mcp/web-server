@@ -15,7 +15,8 @@ _ELEVATED_SCOPES = {"admin", "agents:manage"}
 
 
 async def resolve_agent(conn: asyncpg.Connection, p: Principal, slug: str | None) -> asyncpg.Record:
-    """Agente alvo da operação. Um agente só acessa a si mesmo; agents:manage acessa qualquer um."""
+    """Agente alvo da operação. Um agente só acessa a si mesmo; agents:manage acessa os agentes que
+    cobre (escopos e coleções — `_check_reach`). Vale para perfil, memórias, sessões e tarefas."""
     if not slug:
         if p.agent_slug is None:
             raise KBError("Informe agent_slug: esta chave não pertence a um agente.")
@@ -25,6 +26,8 @@ async def resolve_agent(conn: asyncpg.Connection, p: Principal, slug: str | None
     row = await conn.fetchrow("SELECT * FROM agents WHERE slug = $1", slug)
     if row is None:
         raise NotFound(f"Agente '{slug}' não encontrado.")
+    if slug != p.agent_slug:
+        _check_reach(p, row)
     return row
 
 
@@ -417,6 +420,7 @@ async def propose_agent_update(
     description: str | None = None,
     config: dict[str, Any] | None = None,
 ) -> dict:
+    p.require("write")  # o mesmo escopo de TOOL_SCOPES: a visibilidade da tool não é a permissão
     if p.agent_slug is None:
         raise KBError("propose_agent_update é para o próprio agente. Para cadastro use update_agent.")
     if not change_note or not change_note.strip():

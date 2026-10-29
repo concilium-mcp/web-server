@@ -2,9 +2,18 @@
 /* ---------------------------------------------------------------- ícones Lucide (SVG inline) */
 
 const iconCache = new Map();
+const ICON_NAME_RE = /^[a-z0-9-]+$/;
+
+// Só ícones da própria interface: o conteúdo de uma nota pode trazer data-icon (o DOMPurify
+// mantém data-*), e um nome com "../" faria o fetch buscar outra rota e jogar a resposta crua no DOM.
+const iconElements = (root) =>
+  [...root.querySelectorAll("[data-icon]")].filter(
+    (el) => ICON_NAME_RE.test(el.dataset.icon) && !el.closest(".toastui-editor-contents"),
+  );
 
 async function loadIcons(root = document) {
-  const names = [...new Set([...root.querySelectorAll("[data-icon]")].map((el) => el.dataset.icon))];
+  const els = iconElements(root);
+  const names = [...new Set(els.map((el) => el.dataset.icon))];
   await Promise.all(
     names.map(async (name) => {
       if (!iconCache.has(name)) {
@@ -13,7 +22,7 @@ async function loadIcons(root = document) {
       }
     }),
   );
-  for (const el of root.querySelectorAll("[data-icon]")) {
+  for (const el of els) {
     el.innerHTML = iconCache.get(el.dataset.icon) || "";
     const svg = el.querySelector("svg");
     if (svg) {

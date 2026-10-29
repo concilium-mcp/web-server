@@ -30,6 +30,8 @@ MAX_ZIP_BYTES = 100 * 1024 * 1024  # 100 MB de zip
 MAX_MD_FILES = 5000  # notas .md por import
 MAX_NOTE_BYTES = 10 * 1024 * 1024  # nota individual descomprimida (10 MB)
 MAX_TOTAL_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # trava anti zip-bomb
+MAX_TAGS = 100  # tags do frontmatter por nota
+MAX_TAG_CHARS = 100  # tamanho de cada tag
 ROOT_COLLECTION_NAME = "Obsidian Import"  # notas direto na raiz do vault
 
 # Extensões de anexo/mídia: `![[foto.png]]` é descartado (anexos ficam fora da v1).
@@ -99,20 +101,26 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def _frontmatter_tags(value: Any) -> list[str]:
-    """Obsidian aceita `tags: [a, b]`, `tags: a b` e `tags: a, b` — tudo vira list[str]."""
+    """Obsidian aceita `tags: [a, b]`, `tags: a b` e `tags: a, b` — tudo vira list[str].
+
+    Só escalares viram tag: `str()` de uma lista aninhada expande os aliases do YAML (`*a`) de forma
+    exponencial — uma nota de poucos bytes pediria gigabytes.
+    """
     if isinstance(value, str):
-        items = re.split(r"[,\s]+", value)
+        items = re.split(r"[,\s]+", value[: MAX_TAGS * (MAX_TAG_CHARS + 1)])
     elif isinstance(value, list):
-        items = [str(v) for v in value]
+        items = [str(v) for v in value[:MAX_TAGS] if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
     else:
         return []
     seen: set[str] = set()
     tags: list[str] = []
     for item in items:
-        tag = item.strip().lstrip("#").strip()
+        tag = item.strip().lstrip("#").strip()[:MAX_TAG_CHARS]
         if tag and tag not in seen:
             seen.add(tag)
             tags.append(tag)
+            if len(tags) >= MAX_TAGS:
+                break
     return tags
 
 

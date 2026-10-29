@@ -4,7 +4,7 @@
 import pytest
 
 from mcp_rag_api import db
-from mcp_rag_api.core import agents, documents
+from mcp_rag_api.core import agents, documents, memory
 from mcp_rag_api.security import DEV_PRINCIPAL as ADMIN
 from mcp_rag_api.security import PermissionDenied, Principal, resolve_key
 
@@ -81,3 +81,32 @@ async def test_scoped_manager_cannot_widen_collections():
         await agents.update_agent(SCOPED_MANAGER, "sec-unscoped", "x", system_prompt="y")
     with pytest.raises(PermissionDenied):
         await agents.archive_agent(SCOPED_MANAGER, "sec-unscoped", "x")
+
+
+async def test_manager_cannot_touch_context_of_agents_out_of_reach():
+    """Memórias, sessões e tarefas seguem o mesmo alcance da edição do perfil (auditoria 2026-10-29)."""
+    await _agent("sec-ctx-admin", ["admin"])
+    await _agent("sec-ctx-plain", ["read", "write"])
+    rw_manager = Principal(actor="key:rw-manager", scopes=frozenset({"read", "write", "agents:manage"}))
+    planted = await memory.remember(ADMIN, "memória legítima", agent_slug="sec-ctx-admin")
+
+    calls = [
+        lambda p: memory.remember(p, "plantada", importance=5, agent_slug="sec-ctx-admin"),
+        lambda p: memory.forget(p, planted["memory_id"], None, "sec-ctx-admin"),
+        lambda p: memory.save_session(p, "sessão plantada", next_steps="x", agent_slug="sec-ctx-admin"),
+        lambda p: memory.upsert_task(p, title="tarefa plantada", agent_slug="sec-ctx-admin"),
+        lambda p: memory.load_agent(p, "sec-ctx-admin"),
+        lambda p: memory.recall(p, "memória", agent_slug="sec-ctx-admin"),
+        lambda p: memory.list_sessions(p, "sec-ctx-admin"),
+        lambda p: memory.list_tasks(p, agent_slug="sec-ctx-admin"),
+        lambda p: agents.get_agent(p, "sec-ctx-admin"),
+    ]
+    for principal in (rw_manager, SCOPED_MANAGER):
+        for call in calls:
+            with pytest.raises(PermissionDenied):
+                await call(principal)
+
+    # dentro do alcance continua funcionando, e o admin vê a memória intacta
+    assert (await memory.remember(rw_manager, "ok", agent_slug="sec-ctx-plain"))["memory_id"]
+    ctx = await memory.load_agent(ADMIN, "sec-ctx-admin")
+    assert [m["content"] for m in ctx["memories"]] == ["memória legítima"]

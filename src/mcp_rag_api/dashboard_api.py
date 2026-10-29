@@ -59,8 +59,9 @@ async def require_editor(user: DashUser = Depends(current_user)) -> DashUser:
 
 
 class LoginIn(BaseModel):
-    username: str
-    password: str
+    # rota anônima: sem teto, o corpo vira memória presa no rate limit e linha de log
+    username: str = Field(max_length=254)
+    password: str = Field(max_length=1024)
 
 
 auth_router = APIRouter(
