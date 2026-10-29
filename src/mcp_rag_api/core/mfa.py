@@ -306,22 +306,24 @@ async def create_challenge(user_id: str) -> str:
     return token
 
 
-async def challenge_user(token: str) -> dict | None:
-    """Usuário do desafio ainda válido (não expirado, abaixo do teto de tentativas, conta ativa)."""
+async def claim_challenge_attempt(token: str) -> dict | None:
+    """Gasta uma tentativa do desafio e devolve o usuário (desafio válido, abaixo do teto, conta ativa).
+
+    A tentativa é contada antes de conferir o código, num único UPDATE: requisições simultâneas não
+    passam de CHALLENGE_MAX_ATTEMPTS (antes, o SELECT e o incremento separados deixavam isso acontecer).
+    """
     row = await pool().fetchrow(
         """
-        SELECT u.id, u.username, u.role
-        FROM dash_mfa_challenges c JOIN dash_users u ON u.id = c.user_id
-        WHERE c.token_hash = $1 AND c.expires_at > now() AND c.attempts < $2 AND u.disabled_at IS NULL
+        UPDATE dash_mfa_challenges c SET attempts = c.attempts + 1
+        FROM dash_users u
+        WHERE c.token_hash = $1 AND u.id = c.user_id
+          AND c.expires_at > now() AND c.attempts < $2 AND u.disabled_at IS NULL
+        RETURNING u.id, u.username, u.role
         """,
         _hash(token),
         CHALLENGE_MAX_ATTEMPTS,
     )
     return None if row is None else {"id": str(row["id"]), "username": row["username"], "role": row["role"]}
-
-
-async def register_challenge_failure(token: str) -> None:
-    await pool().execute("UPDATE dash_mfa_challenges SET attempts = attempts + 1 WHERE token_hash = $1", _hash(token))
 
 
 async def consume_challenge(token: str) -> None:

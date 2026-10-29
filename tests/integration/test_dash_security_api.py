@@ -49,6 +49,7 @@ async def test_security_headers_on_all_responses():
             assert "style-src 'self' 'unsafe-inline'" in csp
             assert "img-src 'self' data:" in csp
             assert "connect-src 'self'" in csp
+            assert "form-action 'self'" in csp and "base-uri 'self'" in csp
             assert resp.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
             assert "camera=()" in resp.headers["Permissions-Policy"]
             assert resp.headers["Cross-Origin-Opener-Policy"] == "same-origin"

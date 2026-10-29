@@ -132,11 +132,14 @@ async def revoke_session(token: str) -> None:
     )
 
 
-async def revoke_user_sessions(user_id: str) -> None:
-    """Usado ao desativar/resetar/rebaixar um usuário: derruba todas as sessões dele."""
+async def revoke_user_sessions(user_id: str, keep_token: str | None = None) -> None:
+    """Usado ao desativar/resetar/rebaixar um usuário: derruba todas as sessões dele.
+    `keep_token` preserva a sessão atual (ex.: quem ligou o 2FA continua logado; as outras caem)."""
     await pool().execute(
-        "UPDATE dash_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+        "UPDATE dash_sessions SET revoked_at = now() "
+        "WHERE user_id = $1 AND revoked_at IS NULL AND token_hash IS DISTINCT FROM $2",
         uuid.UUID(user_id),
+        _hash_token(keep_token) if keep_token else None,
     )
 
 

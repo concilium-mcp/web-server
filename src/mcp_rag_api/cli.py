@@ -3,9 +3,11 @@
 import argparse
 import asyncio
 import getpass
+import os
 from pathlib import Path
 
 from . import db
+from .config import get_settings
 
 
 async def _create_key(label: str, scopes: list[str]) -> dict:
@@ -82,16 +84,11 @@ async def _sync_agents(out_dir: Path) -> list[Path]:
 
 
 async def _cleanup() -> dict:
-    from .core import dash_auth, mfa, oauth
-    from .core.memory import cleanup_memories
+    from .core.cleanup import cleanup_all
 
     await db.init_pool()
     try:
-        result = await cleanup_memories()
-        result.update(await dash_auth.cleanup_sessions())
-        result.update(await mfa.cleanup_challenges())
-        result.update(await oauth.cleanup())
-        return result
+        return await cleanup_all()
     finally:
         await db.close_pool()
 
@@ -121,7 +118,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     serve = sub.add_parser("serve", help="API REST + MCP (streamable HTTP em /mcp)")
-    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--host", help="padrão 0.0.0.0; com KB_AUTH_DISABLED=true, 127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--reload", action="store_true")
 
@@ -162,7 +159,11 @@ def main() -> None:
             from .logging_config import setup_logging
 
             setup_logging()
-            uvicorn.run("mcp_rag_api.main:app", host=args.host, port=args.port, reload=args.reload)
+            # auth desligada só em loopback: sem --host, escuta em 127.0.0.1; com --host público,
+            # o check_config do boot recusa (via KB_BIND_HOST, herdado também pelo --reload)
+            host = args.host or ("127.0.0.1" if get_settings().kb_auth_disabled else "0.0.0.0")
+            os.environ["KB_BIND_HOST"] = host
+            uvicorn.run("mcp_rag_api.main:app", host=host, port=args.port, reload=args.reload)
         case "stdio":
             from .mcp_server import mcp
 

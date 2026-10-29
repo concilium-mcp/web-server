@@ -13,6 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from .config import get_settings
 from .core import agents, dash_auth, documents, file_import, folders, graph, links, mfa, oauth, obsidian_import, search
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
@@ -74,8 +75,9 @@ auth_router = APIRouter(
 def client_ip(request: Request) -> str:
     """IP do cliente para o rate limit. Atrás do Cloudflare vale o CF-Connecting-IP (o Cloudflare
     sobrescreve o que vier do cliente); o request.client.host sai do X-Forwarded-For mais à
-    esquerda (--forwarded-allow-ips='*'), que o próprio cliente consegue forjar."""
-    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+    esquerda (--forwarded-allow-ips='*'), que o próprio cliente consegue forjar. Sem Cloudflare na
+    frente, TRUST_CF_CONNECTING_IP=false faz o cabeçalho ser ignorado."""
+    cf_ip = request.headers.get("cf-connecting-ip", "").strip() if get_settings().trust_cf_connecting_ip else ""
     return cf_ip or (request.client.host if request.client else "?")
 
 
@@ -123,14 +125,13 @@ class MfaLoginIn(BaseModel):
 @auth_router.post("/login/mfa")
 async def login_mfa(body: MfaLoginIn, request: Request, response: Response) -> dict:
     """2ª etapa do login: código do app autenticador ou um recovery code."""
-    who = await mfa.challenge_user(body.mfa_token)
+    who = await mfa.claim_challenge_attempt(body.mfa_token)  # já conta a tentativa
     if who is None:
         raise HTTPException(status_code=401, detail="Verificação expirada. Entre com a senha de novo.")
     buckets = _login_buckets(who["username"], request)
     _check_login_blocked(buckets)
     method = await mfa.verify(who["id"], body.code)
     if method is None:
-        await mfa.register_challenge_failure(body.mfa_token)
         for limiter, key in buckets:
             limiter.register_failure(key)
         logger.warning("dash auth: código 2FA inválido (username=%s ip=%s)", who["username"], client_ip(request))
@@ -990,8 +991,10 @@ async def mfa_setup(body: PasswordIn, request: Request, user: DashUser = Depends
 
 
 @router.post("/account/2fa/enable")
-async def mfa_enable(body: CodeIn, user: DashUser = Depends(current_user)) -> dict:
+async def mfa_enable(body: CodeIn, request: Request, user: DashUser = Depends(current_user)) -> dict:
     codes = await mfa.confirm_setup(user.id, body.code)
+    # sessões abertas antes do 2FA (ex.: de quem só tinha a senha) caem; esta continua
+    await dash_auth.revoke_user_sessions(user.id, keep_token=request.cookies.get(dash_auth.SESSION_COOKIE))
     async with pool().acquire() as conn:
         await audit(conn, f"dash:{user.username}", "dash.2fa.enable", user.username)
     return {"recovery_codes": codes}
@@ -1003,6 +1006,7 @@ async def mfa_disable(body: DisableMfaIn, request: Request, user: DashUser = Dep
     if await mfa.verify(user.id, body.code) is None:
         raise HTTPException(status_code=400, detail="Código inválido.")
     await mfa.disable(user.id)
+    await dash_auth.revoke_user_sessions(user.id, keep_token=request.cookies.get(dash_auth.SESSION_COOKIE))
     async with pool().acquire() as conn:
         await audit(conn, f"dash:{user.username}", "dash.2fa.disable", user.username)
     return {"ok": True}

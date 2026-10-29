@@ -308,6 +308,17 @@ async def test_refresh_rotates_and_reuse_revokes(editor):
         assert (await c.get("/collections", headers=_bearer(new["access_token"]))).status_code == 403
 
 
+async def test_reuse_detection_survives_cleanup(editor):
+    """O cleanup (agora periódico) não apaga refresh revogado antes de vencer: o replay ainda derruba a conexão."""
+    tokens = await _connect(editor)
+    form = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": tokens["client_id"]}
+    new = (await _token(form)).json()
+    await oauth.cleanup()
+    assert (await _token(form)).status_code == 400
+    async with _client() as c:
+        assert (await c.get("/collections", headers=_bearer(new["access_token"]))).status_code == 403
+
+
 async def test_connections_list_and_revoke(admin, editor):
     tokens = await _connect(editor)
     grants = (await editor.get("/dash/api/oauth/grants")).json()

@@ -17,6 +17,7 @@ from . import db
 from .api import router
 from .config import EMBEDDING_DIM, check_config, get_settings, oauth_issue
 from .core import graph
+from .core.cleanup import cleanup_all
 from .core.dash_auth import DashUser
 from .core.embeddings import close_embedder, get_embedder
 from .dashboard_api import auth_router, current_user
@@ -67,6 +68,21 @@ def _log_boot_summary() -> None:
     )
 
 
+CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def _periodic_cleanup() -> None:
+    """O `cleanup` da CLI dependia de alguém agendar: clientes OAuth registrados por anônimos, pedidos de
+    autorização e sessões vencidas acumulavam. Roda logo depois do boot e a cada 6 h; erro só vira log."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            logger.info("cleanup periódico: %s", await cleanup_all())
+        except Exception:
+            logger.exception("cleanup periódico falhou")
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS - 60)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
@@ -80,10 +96,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         async with db.lifespan(), mcp.session_manager.run():
             # layout do grafo em segundo plano (plan-web-26): pronto antes de alguém abrir o grafo
             warm = asyncio.create_task(graph.warm_layout())
+            cleanup = asyncio.create_task(_periodic_cleanup())
             try:
                 yield
             finally:
                 warm.cancel()
+                cleanup.cancel()
     finally:
         await close_embedder()
 
@@ -121,7 +139,13 @@ SECURITY_HEADERS = {
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "script-src 'self'; "
-        "connect-src 'self'"
+        "connect-src 'self'; "
+        # HTML injetado não envia formulário para fora nem troca a base dos links relativos
+        # (a tela de consentimento usa <base href="/">, por isso 'self' e não 'none')
+        "form-action 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'"
     ),
     # 1 ano, sem preload; includeSubDomains só alcança *.<host do Concilium>, não o domínio raiz
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",

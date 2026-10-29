@@ -1,3 +1,4 @@
+import os
 import shutil
 from functools import lru_cache
 from importlib.resources import files
@@ -62,6 +63,9 @@ class Settings(BaseSettings):
     # Dashboard: falhas de login permitidas por (usuário, IP) antes do backoff exponencial.
     # 0 desliga o rate limit (só para dev/testes controlados).
     dash_login_rate_limit: int = 5
+    # IP do cliente no rate limit vem do CF-Connecting-IP. Só é confiável se a origem recebe tráfego
+    # apenas do Cloudflare; sem Cloudflare na frente, desligue (qualquer um forjaria o cabeçalho).
+    trust_cf_connecting_ip: bool = True
     # Cifra os segredos do 2FA (TOTP) no banco com AES-256-GCM. Opcional: vazio = texto puro.
     # Gere com `openssl rand -base64 32` e guarde fora do banco; perder a chave = resetar o 2FA de todos.
     dash_totp_encryption_key: str = ""
@@ -150,6 +154,14 @@ def check_config() -> list[str]:
     if s.ocr_provider == "openai" and not (s.ocr_api_key or s.openai_api_key):
         raise RuntimeError("OCR_PROVIDER=openai exige OCR_API_KEY ou OPENAI_API_KEY: defina a variável no .env")
     public = urlparse(s.public_url).hostname not in LOCAL_HOSTS
+    # KB_BIND_HOST é gravado pelo `serve` e pelo CMD do Dockerfile: PUBLIC_URL local não garante
+    # que o processo só escute em loopback (o padrão é 0.0.0.0, ou seja, a rede inteira)
+    bind_host = os.environ.get("KB_BIND_HOST", "").strip()
+    if s.kb_auth_disabled and bind_host and bind_host not in LOCAL_HOSTS:
+        raise RuntimeError(
+            f"KB_AUTH_DISABLED=true só é aceito escutando em loopback; o servidor está em {bind_host}. "
+            "Use --host 127.0.0.1 (ou desligue KB_AUTH_DISABLED)."
+        )
     if s.kb_auth_disabled and public:
         # auth desligada com URL pública = API e MCP abertos como admin para a internet
         raise RuntimeError(

@@ -526,8 +526,9 @@ async def cleanup() -> dict[str, int]:
             "SELECT count(*) FROM d"
         ),
         "oauth_tokens_deleted": await p.fetchval(
-            "WITH d AS (DELETE FROM oauth_tokens WHERE expires_at <= now() OR revoked_at IS NOT NULL RETURNING 1) "
-            "SELECT count(*) FROM d"
+            # revogado fica até vencer: é ele que detecta o reuso de um refresh token roubado (e derruba a
+            # conexão inteira); apagado antes, o replay só daria "não encontrado"
+            "WITH d AS (DELETE FROM oauth_tokens WHERE expires_at <= now() RETURNING 1) SELECT count(*) FROM d"
         ),
         "oauth_grants_deleted": await p.fetchval(
             "WITH d AS (DELETE FROM oauth_grants WHERE revoked_at IS NOT NULL RETURNING 1) SELECT count(*) FROM d"

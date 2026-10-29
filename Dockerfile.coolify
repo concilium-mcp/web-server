@@ -77,5 +77,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"PORT\", \"8000\")}/health').read()" || exit 1
 
-# --proxy-headers: respeita X-Forwarded-* do Traefik (https, IP real do cliente)
-CMD ["sh", "-c", "exec uvicorn mcp_rag_api.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]
+# --proxy-headers: respeita X-Forwarded-* do Traefik (https, IP real do cliente). FORWARDED_ALLOW_IPS
+# restringe de quem esses cabeçalhos valem (IP/CIDR da rede do proxy); '*' confia em qualquer peer,
+# o que só é seguro se a porta 8000 não estiver publicada fora do proxy. KB_BIND_HOST avisa o
+# check_config de que o processo escuta na rede inteira.
+CMD ["sh", "-c", "export KB_BIND_HOST=0.0.0.0; exec uvicorn mcp_rag_api.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --proxy-headers --forwarded-allow-ips=\"${FORWARDED_ALLOW_IPS:-*}\""]

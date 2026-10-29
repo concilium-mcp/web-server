@@ -1,6 +1,8 @@
 """2FA (TOTP) da dashboard ponta a ponta: ativar, login em duas etapas, reuso de código,
 recovery code, desativar e reset pelo admin. Usuários com prefixo "mfa-"."""
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -212,3 +214,41 @@ async def test_encrypted_secrets_and_reseal_of_legacy_plaintext(monkeypatch):
         assert await _stored_secret(user) == secret
     finally:
         get_settings.cache_clear()
+
+
+async def test_concurrent_codes_cannot_exceed_challenge_attempts():
+    """A tentativa é contada antes de conferir o código: rajada simultânea não ganha chutes extras."""
+    user, password = "mfa-juca", "senha-do-juca-10"
+    await dash_auth.create_user(user, password, "viewer")
+    async with _client() as c:
+        await _login(c, user, password)
+        await _enable(c, password)
+    async with _client() as c:
+        token = (await _login(c, user, password)).json()["mfa_token"]
+        burst = [c.post("/dash/api/auth/login/mfa", json={"mfa_token": token, "code": f"{n:06d}"}) for n in range(20)]
+        statuses = [r.status_code for r in await asyncio.gather(*burst)]
+    checked = [s for s in statuses if s == 400]  # 400 = o código chegou a ser conferido
+    assert len(checked) <= mfa.CHALLENGE_MAX_ATTEMPTS
+    assert set(statuses) <= {400, 401, 429}
+
+
+async def test_enabling_and_disabling_2fa_ends_other_sessions_only():
+    user, password = "mfa-lia", "senha-da-lia-11"
+    await dash_auth.create_user(user, password, "viewer")
+    async with _client() as me, _client() as other:
+        await _login(me, user, password)
+        await _login(other, user, password)
+        secret, codes = await _enable(me, password)
+        assert (await me.get("/dash/api/auth/me")).status_code == 200  # quem ligou continua
+        assert (await other.get("/dash/api/auth/me")).status_code == 401  # a sessão antiga cai
+
+    async with _client() as me, _client() as other:
+        # o mesmo passo do TOTP não vale duas vezes: a 2ª sessão e o disable usam recovery codes
+        for c, code in ((me, _code(secret)), (other, codes[0])):
+            token = (await _login(c, user, password)).json()["mfa_token"]
+            resp = await c.post("/dash/api/auth/login/mfa", json={"mfa_token": token, "code": code})
+            assert resp.status_code == 200
+        resp = await me.post("/dash/api/account/2fa/disable", json={"password": password, "code": codes[1]})
+        assert resp.status_code == 200
+        assert (await me.get("/dash/api/auth/me")).status_code == 200
+        assert (await other.get("/dash/api/auth/me")).status_code == 401
