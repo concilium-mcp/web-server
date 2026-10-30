@@ -153,6 +153,7 @@ A tela inicial é **Notas**: pastas (coleções) à esquerda, editor visual (Toa
 | `add_document` / `upsert_document` com `folder_path` | `POST /documents`, `PUT /documents/upsert` | cria a nota já na pasta (criando o que faltar) |
 | `move_document` | `POST /documents/{id}/move` `{collection, folder_path}` | move para outra pasta principal e/ou pasta; sem `folder_path`, vai para a raiz |
 | `get_document` | `GET /documents/{id}` | devolve também `folder_path` (`null` = raiz) |
+| `list_documents` com `folder_path` | `GET /documents?collection=X&folder_path=A/B` | só as notas da pasta e das subpastas (`recursive=false` fica só na pasta); exige `collection`, pasta inexistente dá 404. Cada item traz `folder_path` |
 
 O acesso continua sendo por pasta principal: a chave que só enxerga `Clientes` enxerga todas as pastas dentro dela.
 

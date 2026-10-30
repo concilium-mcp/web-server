@@ -466,6 +466,34 @@ async def place_document_at_path(p: Principal, document_id: str, folder_path: st
     return {"document_id": document_id, "collection": doc["collection"], "folder_path": path}
 
 
+async def list_documents_in_folder(
+    p: Principal,
+    collection: str | None = None,
+    tags: list[str] | None = None,
+    status: str = "active",
+    limit: int = 20,
+    offset: int = 0,
+    folder_path: str | None = None,
+    recursive: bool = True,
+) -> list[dict]:
+    """list_documents do core + folder_path de cada nota (None = raiz) e, opcionalmente, só as notas de
+    uma pasta ("A/B", sem diferenciar maiúsculas) — com as subpastas, salvo recursive=False."""
+    folder_ids: list[uuid.UUID] | None = None
+    if folder_path:
+        if not collection:
+            raise KBError("Para filtrar por folder_path, informe a collection.")
+        p.require("read")
+        async with pool().acquire() as conn:
+            cid = await _collection(conn, p, collection)
+            fid, _, _ = await _resolve_path(conn, p, cid, collection, folder_path, create=False)
+            folder_ids = await folder_subtree_ids(conn, p, str(fid)) if recursive else [fid]
+    docs = await documents.list_documents(p, collection, tags, status, limit, offset, folder_ids=folder_ids)
+    paths = {f["id"]: f["path"] for f in await list_folders(p, collection)} if docs else {}
+    for doc in docs:
+        doc["folder_path"] = paths.get(doc["folder_id"]) if doc["folder_id"] else None
+    return docs
+
+
 async def get_document_with_folder(p: Principal, document_id: str) -> dict:
     """get_document do core + onde a nota está (folder_id / folder_path; None = raiz da coleção)."""
     doc = await documents.get_document(p, document_id)

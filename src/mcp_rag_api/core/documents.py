@@ -163,15 +163,18 @@ async def list_documents(
     status: str = "active",
     limit: int = 20,
     offset: int = 0,
+    folder_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
+    """folder_ids (opcional) restringe às notas dessas pastas — quem resolve caminho/subpastas é core.folders."""
     p.require("read")
     collections = p.collection_filter([collection] if collection else None)
     rows = await pool().fetch(
         f"""
-        SELECT {_DOC_COLUMNS} FROM documents d JOIN collections c ON c.id = d.collection_id
+        SELECT {_DOC_COLUMNS}, d.folder_id FROM documents d JOIN collections c ON c.id = d.collection_id
         WHERE d.status = $1
           AND ($2::text[] IS NULL OR c.name = ANY($2))
           AND ($3::text[] IS NULL OR d.tags && $3)
+          AND ($6::uuid[] IS NULL OR d.folder_id = ANY($6))
         ORDER BY d.updated_at DESC LIMIT $4 OFFSET $5
         """,
         status,
@@ -179,6 +182,7 @@ async def list_documents(
         tags or None,
         min(max(limit, 1), 100),
         max(offset, 0),
+        folder_ids,
     )
     return records(rows)
 

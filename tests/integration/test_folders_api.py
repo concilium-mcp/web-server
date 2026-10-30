@@ -126,3 +126,50 @@ async def test_slash_in_name_is_rejected_and_invalid_path_creates_nothing():
 async def test_mcp_tools_exposed():
     names = {t.name for t in await mcp.list_tools()}
     assert {"list_folders", "create_folder", "move_document"} <= names
+
+
+async def test_list_documents_filters_by_folder_path(writer, reader):
+    await documents.create_collection(ADMIN, "fa-filtro")
+    created = {}
+    for title, path in [
+        ("Planos e preços", "Atendimento/Plataforma"),
+        ("Quando transferir", "Atendimento"),
+        ("Roadmap interno", "Produto"),
+        ("Nota na raiz", None),
+    ]:
+        body = {"collection": "fa-filtro", "title": title, "content": f"Conteúdo exclusivo de {title} para o filtro."}
+        if path:
+            body["folder_path"] = path
+        resp = await writer.post("/documents", json=body)
+        assert resp.json()["created"], resp.text
+        created[title] = resp.json()["document_id"]
+
+    def titles(resp):
+        assert resp.status_code == 200, resp.text
+        return {d["title"]: d["folder_path"] for d in resp.json()}
+
+    # pasta + subpastas, sem diferenciar maiúsculas
+    tree = titles(await reader.get("/documents", params={"collection": "fa-filtro", "folder_path": "atendimento"}))
+    assert tree == {"Planos e preços": "Atendimento/Plataforma", "Quando transferir": "Atendimento"}
+
+    only = titles(
+        await reader.get(
+            "/documents", params={"collection": "fa-filtro", "folder_path": "Atendimento", "recursive": "false"}
+        )
+    )
+    assert only == {"Quando transferir": "Atendimento"}
+
+    # sem filtro: todas, com folder_path (null = raiz)
+    everything = titles(await reader.get("/documents", params={"collection": "fa-filtro"}))
+    assert everything["Nota na raiz"] is None and everything["Roadmap interno"] == "Produto"
+
+    missing = await reader.get("/documents", params={"collection": "fa-filtro", "folder_path": "Nao/Existe"})
+    assert missing.status_code == 404
+    no_collection = await reader.get("/documents", params={"folder_path": "Atendimento"})
+    assert no_collection.status_code == 400
+
+    # MCP: mesmo filtro
+    result = await folders.list_documents_in_folder(
+        ADMIN, "fa-filtro", folder_path="Atendimento/Plataforma", recursive=False
+    )
+    assert [d["id"] for d in result] == [created["Planos e preços"]]

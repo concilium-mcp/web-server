@@ -226,9 +226,15 @@ async def list_documents(
     status: str = "active",
     limit: int = 20,
     offset: int = 0,
+    folder_path: str | None = None,
+    recursive: bool = True,
 ) -> list[dict]:
-    """Lista documentos (sem o conteúdo), filtrando por coleção, tags e status (active|archived)."""
-    return await documents.list_documents(await current_principal(ctx), collection, tags, status, limit, offset)
+    """Lista documentos (sem o conteúdo), filtrando por coleção, tags e status (active|archived). Cada item
+    traz folder_path (null = raiz). folder_path "A/B" (exige collection) lista só essa pasta e as
+    subpastas; recursive=false fica só na pasta."""
+    return await folders.list_documents_in_folder(
+        await current_principal(ctx), collection, tags, status, limit, offset, folder_path, recursive
+    )
 
 
 @tool

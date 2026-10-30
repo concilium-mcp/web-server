@@ -222,9 +222,11 @@ async def list_documents(
     status: str = "active",
     limit: int = 20,
     offset: int = 0,
+    folder_path: str | None = None,
+    recursive: bool = True,
     p: Principal = Auth,
 ) -> list[dict]:
-    return await documents.list_documents(p, collection, tags, status, limit, offset)
+    return await folders.list_documents_in_folder(p, collection, tags, status, limit, offset, folder_path, recursive)
 
 
 @router.post("/documents")
