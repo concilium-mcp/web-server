@@ -46,7 +46,7 @@ async def test_two_reads_same_day_add_up(doc_id):
 
 async def test_search_counts_each_document_once_and_never_negative(doc_id):
     out = await mcp_server.search_knowledge(_ctx(), "reuniao conselho", [COLLECTION], detail="full")
-    assert len(out["results"]) >= 2  # vários trechos do mesmo documento
+    assert len(out) >= 2  # vários trechos do mesmo documento
     await token_meter.flush()
     [row] = await _rows()
     assert row["calls"] == 1 and row["baseline"] >= row["served"] > 0

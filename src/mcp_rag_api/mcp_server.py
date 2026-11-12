@@ -212,14 +212,17 @@ async def search_knowledge(
     top_k: int = 5,
     detail: Literal["snippet", "full"] | None = None,
     max_tokens: int | None = None,
-) -> dict:
+) -> list[dict]:
     """Busca na base (semântica + palavra-chave). Use antes de responder sobre a empresa e antes de
     inserir algo. Padrão: um resultado por documento com trecho curto (snippet); detail="full" traz os
-    trechos inteiros. max_tokens limita o tamanho da resposta."""
+    trechos inteiros. max_tokens limita o tamanho da resposta (a lista vem mais curta)."""
     p = await current_principal(ctx)
     result = await lean.search_lean(p, query, collections, tags, metadata, top_k, detail, max_tokens)
     token_meter.record_documents("search_knowledge", p, token_meter.served_by_document(result["results"]))
-    return result
+    # Continua sendo uma lista, como antes do plan-web-33: clientes MCP guardam o output schema da tool
+    # ({"result": [...]}) e recusam a resposta se o formato mudar (o caso dos que listaram as tools
+    # antes do deploy). O que mudou é só o conteúdo de cada item.
+    return result["results"]
 
 
 @tool

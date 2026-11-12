@@ -61,12 +61,12 @@ async def test_mcp_get_document_big_returns_outline_then_section(docs, monkeypat
 
 async def test_mcp_search_default_is_snippet_and_full_switch(docs, monkeypatch):
     out = await mcp_server.search_knowledge(_ctx(), "reuniao conselho", [COLLECTION])
-    assert "snippet" in out["results"][0]
+    assert isinstance(out, list) and "snippet" in out[0]  # lista, como antes: compatível com clientes antigos
     monkeypatch.setenv("SEARCH_DEFAULT_DETAIL", "full")
     get_settings.cache_clear()
     try:
         out = await mcp_server.search_knowledge(_ctx(), "reuniao conselho", [COLLECTION])
-        assert "content" in out["results"][0]
+        assert "content" in out[0]
     finally:
         get_settings.cache_clear()
 

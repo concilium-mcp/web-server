@@ -66,3 +66,9 @@ def test_visibility_matches_listing_rule(p):
     for name in TOOL_SCOPES:
         if name in AGENT_CONTEXT_TOOLS and p.agent_slug is None and not p.is_manager:
             assert not tool_visible(name, p)
+
+
+async def test_search_knowledge_keeps_list_output_schema():
+    # clientes MCP guardam o output schema; mudar de lista para objeto quebra quem já está conectado
+    tool = next(t for t in await mcp.list_tools() if t.name == "search_knowledge")
+    assert tool.output_schema and tool.output_schema["properties"]["result"]["type"] == "array"

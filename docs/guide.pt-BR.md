@@ -445,7 +445,7 @@ O MCP responde em camadas para o agente gastar pouco contexto:
 
 | Tool | Parâmetros | O que faz |
 |---|---|---|
-| `search_knowledge` | `detail` (`snippet` padrão, ou `full`), `max_tokens` | `snippet`: um resultado por documento, com ~120 palavras em volta do termo buscado, `folder_path` e `more_chunks` (quantos outros trechos do documento bateram). `full`: os trechos inteiros. `max_tokens` corta a lista (`truncated: true`). A resposta é `{results, truncated, tokens_estimate}` |
+| `search_knowledge` | `detail` (`snippet` padrão, ou `full`), `max_tokens` | `snippet`: um resultado por documento, com ~120 palavras em volta do termo buscado, `folder_path` e `more_chunks` (quantos outros trechos do documento bateram). `full`: os trechos inteiros. `max_tokens` corta a lista. No MCP a resposta continua sendo uma lista (como antes); na REST, com `detail`/`max_tokens`, é `{results, truncated, tokens_estimate}` |
 | `get_document` | `outline`, `section`, `offset`, `max_tokens` | `outline=true`: só os títulos das seções e o tamanho de cada uma. `section="2026-10"`: só a seção cujo título contém o texto (com as subseções; `other_matches` lista as outras). `max_tokens`: lê em partes; continue com `offset=next_offset` |
 
 Documento acima de `DOC_FULL_MAX_TOKENS` (padrão 6000 tokens estimados) pedido sem esses parâmetros volta como outline com uma dica, em vez do texto inteiro. As respostas das tools vêm sem campos nulos (ausente = nulo, ex.: sem `folder_path` = raiz).
