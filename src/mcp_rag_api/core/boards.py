@@ -1216,6 +1216,34 @@ async def add_items(p: Principal, card_id: str, items: list[str], origin: Origin
     return await get_card(p, card_id, events=0)
 
 
+async def edit_item(
+    p: Principal,
+    card_id: str,
+    item_id: int,
+    text: str | None = None,
+    delete: bool = False,
+    origin: Origin = NO_ORIGIN,
+) -> dict:
+    """Reescreve (text) ou apaga (delete=true) um passo do checklist."""
+    p.require("write")
+    async with pool().acquire() as conn, conn.transaction():
+        card = await _load_card(conn, p, card_id, lock=True)
+        _writable_card(card)
+        _guard(p, card)
+        item = await _find_item(conn, card["id"], item_id, None)
+        if delete:
+            await conn.execute("DELETE FROM card_items WHERE id = $1", item["id"])
+            await _event(conn, p, origin, card["board_id"], card["id"], "item.delete", {"item": (item["text"], None)})
+        else:
+            new = _clean(text, "Item do checklist", ITEM_TEXT_MAX)
+            if new != item["text"]:
+                await conn.execute("UPDATE card_items SET text = $2 WHERE id = $1", item["id"], new)
+                await _event(conn, p, origin, card["board_id"], card["id"], "item.edit", {"item": (item["text"], new)})
+        await _touch(conn, card["id"], p.actor)
+        await _renew(conn, p, card["id"])
+    return await get_card(p, card_id, events=0)
+
+
 async def log_card(p: Principal, card_id: str, text: str, kind: str = "note", origin: Origin = NO_ORIGIN) -> dict:
     """Registra um fato no log do cartão. kind: note|commit|mr|ci|decision|blocker."""
     p.require("write")
@@ -1588,7 +1616,8 @@ async def board_log(
         rows = await conn.fetch(
             """
             SELECT * FROM board_events
-            WHERE board_id = $1 AND ($2::uuid IS NULL OR card_id = $2) AND ($3::text IS NULL OR actor = $3)
+            WHERE board_id = $1 AND ($2::uuid IS NULL OR card_id = $2)
+              AND ($3::text IS NULL OR actor ILIKE '%' || $3 || '%')
               AND ($4::text IS NULL OR kind = $4 OR kind LIKE $4 || '.%')
               AND ($5::timestamptz IS NULL OR created_at >= $5) AND ($6::timestamptz IS NULL OR created_at < $6)
               AND ($7::bigint IS NULL OR id < $7)

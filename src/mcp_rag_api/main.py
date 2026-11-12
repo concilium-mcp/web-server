@@ -22,6 +22,7 @@ from .core.dash_auth import DashUser
 from .core.embeddings import close_embedder, get_embedder
 from .dashboard_api import auth_router, current_user
 from .dashboard_api import router as dashboard_router
+from .dashboard_boards import router as boards_dash_router
 from .logging_config import get_logger, setup_logging
 from .mcp_server import mcp
 from .oauth_api import consent_router, grants_router, protocol_routes
@@ -117,6 +118,7 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
+app.include_router(boards_dash_router)
 
 # OAuth do MCP (plan-web-17): o cliente descobre pelo 401 do /mcp (resource_metadata) e conecta pela
 # tela "Autorizar". Decidido no import: PUBLIC_URL precisa ser https (ou localhost) — ver oauth_issue().

@@ -18,6 +18,7 @@ const NAV = [
   { id: "notes", iconName: "notebook-pen" },
   { id: "search", iconName: "search" },
   { id: "graph", iconName: "network" },
+  { id: "boards", iconName: "square-kanban" },
   { id: "agents", iconName: "bot" },
 ];
 

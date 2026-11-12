@@ -57,8 +57,11 @@ function renderMfaStep(mfaToken, enter) {
   // o cartão do login é um <form>: o passo do código entra num cartão novo no lugar dele
   // (form dentro de form é descartado pelo parser e o envio cairia no form da senha)
   const card = document.createElement("div");
-  card.className = "login-card";
-  card.innerHTML = `<div class="brand">${brandLogo(30)}<span>Concilium</span></div>${mfaStepHtml()}`;
+  card.className = "login-card login-min login-mfa";
+  card.innerHTML = `
+    <div class="login-mark">${brandLogo(34)}</div>
+    <h1 class="login-title">${t("mfa.loginTitle")}</h1>
+    ${mfaStepHtml()}`;
   document.getElementById("login-form").replaceWith(card);
   bindMfaStep(card, {
     mfaToken,
@@ -66,6 +69,7 @@ function renderMfaStep(mfaToken, enter) {
     onDone: enter,
     onBack: renderLogin,
   });
+  card.querySelector("#mfa-code")?.focus();
 }
 
 // alterações pendentes ao fechar a aba: só persiste o rascunho local (store = localStorage).
