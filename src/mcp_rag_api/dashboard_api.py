@@ -28,6 +28,7 @@ from .core import (
     obsidian_import,
     search,
     token_meter,
+    usage,
 )
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
@@ -1291,6 +1292,7 @@ async def get_insights(
         "health": records([health])[0],
         "recent": records(recent),
         "tokens": await token_meter.summary(days, end_day),
+        "usage": await usage.summary(days, end_day),
     }
 
 

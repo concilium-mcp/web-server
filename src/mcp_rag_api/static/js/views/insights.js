@@ -2,7 +2,7 @@
 import { api } from "../api.js";
 import { t, locale } from "../i18n.js";
 import { icon, loadIcons } from "../icons.js";
-import { escHtml, fmtAgo, debounce, uiError } from "../ui.js";
+import { escHtml, fmtAgo, debounce, uiError, helpTip } from "../ui.js";
 import { state, colorFor } from "../state.js";
 import { emit } from "../events.js";
 import { openRangePicker, closeRangePicker } from "../range-picker.js";
@@ -241,6 +241,8 @@ function overviewTemplate() {
           ${chartCard("viz-tokens", t("overview.tokens"), t("overview.tokensSub", { days }), { wide: true })}
           ${chartCard("viz-tokens-projects", t("overview.tokensByProject"), t("overview.tokensByProjectSub"))}
           ${chartCard("viz-tokens-agents", t("overview.tokensByAgent"), t("overview.tokensByAgentSub"))}
+          ${chartCard("viz-usage", t("usage.title"), t("usage.sub", { days }), { wide: true })}
+          ${chartCard("viz-usage-projects", t("usage.byProject"), t("usage.byProjectSub"))}
           ${chartCard("viz-activity", t("overview.activity"), t("overview.activitySub", { days }), { wide: true })}
           ${chartCard("viz-collections", t("overview.byFolder"), t("overview.byFolderSub"), { more: true })}
           ${chartCard("viz-contributors", t("overview.contributors"), t("overview.contributorsSub", { days }))}
@@ -340,6 +342,7 @@ async function loadInsights() {
   root.querySelector("#viz-activity .muted").textContent = t("overview.activitySub", { days: data.days });
   root.querySelector("#viz-contributors .muted").textContent = t("overview.contributorsSub", { days: data.days });
   root.querySelector("#viz-tokens .muted").textContent = t("overview.tokensSub", { days: data.days });
+  root.querySelector("#viz-usage .muted").textContent = t("usage.sub", { days: data.days });
   renderKpis(data);
   renderOverviewCharts();
   renderHealth(data);
@@ -423,6 +426,7 @@ function renderOverviewCharts() {
   );
 
   renderTokens(d);
+  renderUsage(d);
 
   drawRows(
     card("viz-contributors").querySelector(".viz-body"),
@@ -484,6 +488,49 @@ function renderTokens(d) {
   card("viz-tokens-agents").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.agent"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.saved")],
     tk.by_agent.map((a) => [a.name || a.slug, nf.format(a.calls), nf.format(a.served), nf.format(a.baseline), nf.format(saved(a))]),
+  );
+}
+
+// Gasto real das sessões (plan-web-38): o que a API cobrou, lido do transcript pelo plugin do Claude Code
+function renderUsage(d) {
+  const u = d.usage;
+  const card = (id) => document.querySelector(`#${id}`);
+  if (!u || !card("viz-usage")) return;
+  const body = card("viz-usage").querySelector(".viz-body");
+  if (!u.totals.sessions) {
+    body.innerHTML = `<div class="viz-empty">${escHtml(t("usage.empty"))}</div>`;
+  } else {
+    const w = u.with_concilium;
+    const wo = u.without_concilium;
+    // com poucas sessões de cada lado a comparação engana (sessão longa custa mais por chamada: o contexto
+    // relido cresce); abaixo de MIN_SAMPLE mostra o aviso no lugar do número
+    const MIN_SAMPLE = 5;
+    const enough = w.sessions >= MIN_SAMPLE && wo.sessions >= MIN_SAMPLE;
+    const cmp = enough ? Math.round((1 - w.median_per_request / Math.max(1, wo.median_per_request)) * 100) : null;
+    body.innerHTML = `
+      <div class="tokens-summary">
+        <div class="tokens-hero"><span class="tokens-big">${nfCompact.format(u.totals.cost)}</span></div>
+        <span class="muted">${escHtml(t("usage.detail", { sessions: nf.format(u.totals.sessions), requests: nf.format(u.totals.requests), output: nfCompact.format(u.totals.output_tokens) }))} ${helpTip(t("usage.costHelp"))}</span>
+      </div>
+      <div class="usage-facts">
+        <div><b>${nfCompact.format(w.median_per_session)}</b><span>${escHtml(t("usage.withC", { count: w.sessions }))}</span></div>
+        <div><b>${nfCompact.format(wo.median_per_session)}</b><span>${escHtml(t("usage.withoutC", { count: wo.sessions }))}</span></div>
+        <div><b>${cmp === null ? "—" : `${cmp > 0 ? "−" : "+"}${Math.abs(cmp)}%`}</b><span>${escHtml(enough ? t("usage.perRequest") : t("usage.fewSessions", { min: MIN_SAMPLE }))} ${helpTip(t("usage.perRequestHelp"))}</span></div>
+        <div><b>${(u.concilium_share * 100).toLocaleString(locale(), { maximumFractionDigits: 1 })}%</b><span>${escHtml(t("usage.share"))} ${helpTip(t("usage.shareHelp"))}</span></div>
+      </div>`;
+  }
+  card("viz-usage").querySelector(".viz-table").innerHTML = dataTable(
+    [t("col.project"), t("usage.col.sessions"), t("usage.col.requests"), t("usage.col.avg"), t("usage.col.calls")],
+    u.projects.map((p) => [p.name, nf.format(p.sessions), nf.format(p.requests), nf.format(p.avg_per_session), nf.format(p.concilium_calls)]),
+  );
+  drawRows(
+    card("viz-usage-projects").querySelector(".viz-body"),
+    u.projects.map((p) => ({ label: p.name, value: p.cost, dot: colorFor(p.name) })),
+    { empty: t("usage.empty"), format: (v) => nfCompact.format(v) },
+  );
+  card("viz-usage-projects").querySelector(".viz-table").innerHTML = dataTable(
+    [t("col.project"), t("usage.col.sessions"), t("usage.col.avg")],
+    u.projects.map((p) => [p.name, nf.format(p.sessions), nf.format(p.avg_per_session)]),
   );
 }
 

@@ -9,7 +9,20 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .config import get_settings
-from .core import agents, boards, brief, documents, file_import, folders, lean, links, memory, search, token_meter
+from .core import (
+    agents,
+    boards,
+    brief,
+    documents,
+    file_import,
+    folders,
+    lean,
+    links,
+    memory,
+    search,
+    token_meter,
+    usage,
+)
 from .security import DEV_PRINCIPAL, PermissionDenied, Principal, bearer_token, resolve_bearer
 
 router = APIRouter()
@@ -730,3 +743,30 @@ async def link_card_document(
 @router.get("/documents/{document_id}/cards")
 async def document_cards(document_id: str, p: Principal = Auth) -> list[dict]:
     return await boards.cards_for_document(p, document_id)
+
+
+# ---------------------------------------------------------------- gasto real das sessões (plan-web-38)
+
+
+class SessionUsageIn(BaseModel):
+    session_id: str = Field(min_length=8, max_length=120)
+    collection: str | None = None
+    agent: str | None = None
+    client: str | None = Field(default=None, max_length=120)
+    model: str | None = Field(default=None, max_length=80)
+    repo: str | None = Field(default=None, max_length=200)
+    started_at: str | None = None
+    ended_at: str | None = None
+    requests: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    concilium_calls: int = Field(default=0, ge=0)
+    concilium_result_tokens: int = Field(default=0, ge=0)
+
+
+@router.post("/usage/sessions")
+async def report_session_usage(body: SessionUsageIn, p: Principal = Auth) -> dict:
+    """Uso real de uma sessão do Claude Code (o plugin manda o acumulado; só contadores, sem conteúdo)."""
+    return await usage.record_session(p, body.model_dump())

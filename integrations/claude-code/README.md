@@ -37,4 +37,6 @@ Mark the brief in the dashboard: open the note and click the pin button (**Use a
 
 - With an `agent` in `.concilium.json`, it also sends the repository name (for a git worktree, the main repository's name) and the Claude Code session id, so the brief lists **your cards in this repository** (held, stalled, waiting for review, assigned) and the cards other sessions are working on now. It tells the model which `session` to pass to the board tools.
 
+- **Real token spend (0.3):** an async hook on `Stop` and `SessionEnd` reads the session transcript incrementally and sends only counters to `POST /usage/sessions`: API calls, input, output, cache write and cache read tokens, the model, and how many Concilium tool calls the session made (plus the estimated size of what they returned). No prompt, code or content leaves the machine. The dashboard overview shows the real spend per project, sessions with and without Concilium, and each board card shows the spend of the sessions that touched it.
+
 Clients without hooks (claude.ai, ChatGPT, Cursor) can call the `get_project_brief` MCP tool instead, and `load_agent` already includes the brief of the agent's first allowed collection.

@@ -709,6 +709,7 @@ async function openCard(cardId) {
           </div>
           ${c.mr_url ? `<a class="btn sm ghost" href="${escHtml(c.mr_url)}" target="_blank" rel="noopener noreferrer">${icon("external-link", 14)}<span>${t("boards.openMr")}</span></a>` : ""}
         </details>
+        ${c.usage?.sessions ? `<div class="cd-usage" title="${escHtml(t("usage.costHelp"))}"><span class="prop-k">${t("boards.realCost")}</span><span>${escHtml(t("boards.realCostDetail", { cost: new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(c.usage.cost), count: c.usage.sessions }))}</span></div>` : ""}
         <div class="cd-foot muted">${creator ? t("boards.createdBy", { who: creator, when: fmtAgo(c.created_at) }) : ""}</div>
         ${ro ? "" : `<button class="btn sm ghost danger-text" type="button" id="cd-archive">${icon("archive", 14)}<span>${t("boards.archiveCard")}</span></button>`}
       </aside>

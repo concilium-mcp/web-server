@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .core import boards
+from .core import boards, usage
 from .core.dash_auth import DashUser
 from .dashboard_api import current_user, require_csrf_header, require_editor
 from .security import Principal
@@ -226,7 +226,9 @@ async def create_card(board_id: str, body: CardIn, user: DashUser = Depends(requ
 
 @router.get("/cards/{card_id}")
 async def get_card(card_id: str, user: DashUser = Depends(current_user)) -> dict:
-    return await boards.get_card(_p(user), card_id, events=30)
+    data = await boards.get_card(_p(user), card_id, events=30)
+    data["usage"] = await usage.card_usage(_p(user), card_id)  # gasto real das sessões que mexeram nele
+    return data
 
 
 @router.patch("/cards/{card_id}")
