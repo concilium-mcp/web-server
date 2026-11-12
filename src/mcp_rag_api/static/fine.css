@@ -2294,6 +2294,22 @@ html[data-theme="light"] .user-menu {
   padding: 0 28px 40px;
 }
 
+/* a .content não rola (overflow: hidden), como nas outras telas quem rola é o corpo da página:
+   a lista de quadros, a aba Logs e a tela Integrações cresciam além da janela sem rolagem */
+.boards-page > .boards-col,
+.integrations-page > .boards-col,
+#board-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.boards-page > .boards-col,
+.integrations-page > .boards-col {
+  max-width: none;
+  padding-inline: max(28px, calc((100% - var(--page-max)) / 2 + 28px));
+}
+
 .board-back {
   display: inline-flex;
   align-self: flex-start;

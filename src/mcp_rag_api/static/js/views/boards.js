@@ -126,7 +126,7 @@ async function renderBoardList(main) {
 }
 
 function boardRow(b) {
-  const stat = (n, key, cls = "") => (n ? `<span class="kb-stat ${cls}">${n} ${t(`boards.stat.${key}`)}</span>` : "");
+  const stat = (n, key, cls = "") => (n ? `<span class="kb-stat ${cls}">${n} ${t(`boards.stat.${key}`, { count: n })}</span>` : "");
   return `
     <button class="board-row" data-board="${b.id}">
       <span class="board-row-icon">${icon("square-kanban", 16)}</span>
