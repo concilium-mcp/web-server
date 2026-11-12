@@ -58,6 +58,26 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     "review_agent_update": ("POST", "/agents/proposals/{proposal_id}/review"),
     "add_agent_memory": ("POST", "/agents/{slug}/memories"),
     "add_agent_task": ("POST", "/agents/{slug}/tasks"),
+    # quadros (plan-web-37a)
+    "list_boards": ("GET", "/boards"),
+    "get_board": ("GET", "/boards/{board_id}"),
+    "create_board": ("POST", "/boards"),
+    "update_board": ("PATCH", "/boards/{board_id}"),
+    # set_column cria/edita/apaga; na REST são POST /boards/{id}/columns, PATCH e DELETE /columns/{id}
+    "set_column": ("POST", "/boards/{board_id}/columns"),
+    "my_work": ("GET", "/my-work"),
+    "create_card": ("POST", "/boards/{board_id}/cards"),
+    "get_card": ("GET", "/cards/{card_id}"),
+    "update_card": ("PATCH", "/cards/{card_id}"),
+    "start_card": ("POST", "/cards/{card_id}/start"),
+    "check_item": ("POST", "/cards/{card_id}/check"),
+    "log_card": ("POST", "/cards/{card_id}/log"),
+    "release_card": ("POST", "/cards/{card_id}/release"),
+    "submit_card": ("POST", "/cards/{card_id}/submit"),
+    "finish_card": ("POST", "/cards/{card_id}/finish"),
+    "link_card_document": ("POST", "/cards/{card_id}/documents"),
+    "search_cards": ("GET", "/cards/search"),
+    "board_log": ("GET", "/boards/{board_id}/log"),
 }
 
 # Tools que ficam só no MCP, com justificativa. Entrada nova aqui exige motivo real.

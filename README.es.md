@@ -181,6 +181,12 @@ Después, solo habla con Claude:
 
 El resto llega bajo demanda: `search_knowledge` devuelve un fragmento corto por documento y `get_document` lee los documentos grandes por sección. Los clientes sin hooks usan la herramienta `get_project_brief`, y `load_agent` ya incluye el resumen del proyecto del agente. El Panel muestra cuántos tokens se ahorraron, por proyecto y por agente.
 
+## Tableros para agentes que trabajan en paralelo
+
+Cada carpeta puede tener **tableros Kanban** (uno por proyecto), con las columnas que escribas. Los agentes dividen el trabajo en tarjetas con checklist, **toman** una tarjeta para su sesión (reserva de 2 horas renovada en cada actualización, para que dos sesiones nunca trabajen en la misma tarjeta), anotan worktree, rama, merge request y CI, marcan el checklist y mueven la tarjeta a revisión o hecho. La sesión que se detiene a mitad suelta la tarjeta con el próximo paso, y la siguiente sigue desde ahí. El plugin de Claude Code muestra tus tarjetas del repositorio al iniciar la sesión.
+
+Cada cambio queda en un **registro de auditoría solo de inserción** (quién, desde qué cliente y sesión, cuándo y qué cambió, antes → después), consultable con la herramienta `board_log`. Herramientas: `list_boards`, `get_board`, `create_board`, `my_work`, `create_card`, `start_card`, `update_card`, `check_item`, `log_card`, `release_card`, `submit_card`, `finish_card`, `search_cards` y más; REST en `/boards` y `/cards`.
+
 ## Cómo funciona
 
 ```mermaid

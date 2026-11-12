@@ -7,7 +7,7 @@ import { escHtml, sanitizeNoteHtml, fmtDate, fmtAgo, modalShell, bindModal, uiDi
 import { state, colorFor, store } from "../state.js";
 import { on } from "../events.js";
 import { openConnectModal } from "./docpanel.js";
-import { openImportModal } from "./import.js";
+import { openImportModal, setDropImport } from "./import.js";
 import { loaderHtml } from "../loader.js";
 
 // o import de vault (import.js) avisa quando a árvore precisa ser relida
@@ -75,10 +75,12 @@ async function renderNotesScreen(main, openId) {
   });
   main.querySelector("#note-new")?.addEventListener("click", () => openNewNoteModal());
   main.querySelector("#folder-new")?.addEventListener("click", () => openNewFolderModal());
-  main.querySelector("#note-import")?.addEventListener("click", () =>
-    openImportModal(notes.tree?.collections.length ? { locations: locationOptions(currentLoc()), parseLoc } : {}),
-  );
+  const importOpts = () => (notes.tree?.collections.length ? { locations: locationOptions(currentLoc()), parseLoc } : {});
+  main.querySelector("#note-import")?.addEventListener("click", () => openImportModal(importOpts()));
+  // arrastar arquivos para qualquer lugar da tela de Notas abre a importação (só quem pode importar)
+  setDropImport(main.querySelector("#note-import") ? importOpts : null);
   main.querySelector("#note-side").addEventListener("click", (e) => e.target.closest("[data-side-close]") && setNoteSide(null));
+  bindTreeDragDrop(main.querySelector("#notes-tree-list"));
   main.querySelector("#notes-tree-list").addEventListener("click", async (e) => {
     const addNote = e.target.closest("[data-folder-add-note]");
     const menu = e.target.closest("[data-folder-menu]");
@@ -203,14 +205,14 @@ function renderNotesTree() {
   const ix = treeIndex();
 
   const noteButton = (n) =>
-    `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}">
+    `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}" ${canEdit() ? 'draggable="true"' : ""}>
       <span class="grow">${escHtml(n.title)}</span>${n.is_brief ? `<span class="tree-brief" title="${t("notes.briefBadge")}">${icon("pin", 12)}</span>` : ""}${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="${t("notes.unsaved")}"></span>` : ""}</button>`;
 
   const folderNode = ({ collection, folderId = null, label, html, count, closed }) => {
     const target = `data-collection="${escHtml(collection)}" data-folder-id="${folderId || ""}"`;
     return `
       <div class="tree-folder ${closed && !q ? "collapsed" : ""}">
-        <div class="tree-folder-row">
+        <div class="tree-folder-row" data-drop-col="${escHtml(collection)}" data-drop-folder="${folderId || ""}"${folderId && canEdit() ? ` draggable="true" data-drag-folder="${folderId}"` : ""}>
           <button class="tree-folder-head" type="button" data-toggle-folder="${escHtml(folderId ? folderKey(folderId) : collection)}" title="${escHtml(label)}">
             <span class="tree-chevron">${icon("chevron-right", 13)}</span>
             ${folderId ? `<span class="tree-folder-icon">${icon("folder", 14)}</span>` : `<span class="dot" style="background:${colorFor(collection)}"></span>`}
@@ -655,7 +657,7 @@ async function openNewNoteModal(templateId = "blank", loc = null) {
     id: "note-new",
     iconName: "notebook-pen",
     title: t("notes.new"),
-    subtitle: t("notes.newSub"),
+    help: t("notes.newSub"),
     submitLabel: t("notes.create"),
     width: 640,
     body: `
@@ -731,7 +733,8 @@ async function openNewFolderModal(parent = null) {
     id: "folder-new",
     iconName: parent ? "folder-plus" : "folder",
     title: parent ? t("folders.newSubfolder") : t("folders.new"),
-    subtitle: parent ? t("folders.newSubIn", { path: escHtml(locationLabel(parent.collection, parent.folderId)) }) : t("folders.newSub"),
+    subtitle: parent ? t("folders.newSubIn", { path: escHtml(locationLabel(parent.collection, parent.folderId)) }) : "",
+    help: parent ? "" : t("folders.newSub"),
     submitLabel: t("folders.create"),
     width: 520,
     body: `
@@ -828,8 +831,8 @@ async function openRenameCollectionModal(collection) {
       <label class="form-field">
         <span class="form-label">${t("common.name")}</span>
         <input class="input" id="cr-name" value="${escHtml(collection)}" maxlength="80" required />
-      </label>
-      <p class="muted">${t("collections.renameHint")}</p>`,
+      </label>`,
+    help: t("collections.renameHint"),
   });
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("collection-rename-modal");
@@ -879,7 +882,8 @@ async function openMoveFolderModal(folderId) {
     id: "folder-move",
     iconName: "folder-input",
     title: t("folders.move"),
-    subtitle: t("folders.moveSub", { name: escHtml(folder.name) }),
+    subtitle: escHtml(folder.name),
+    help: t("folders.moveHelp"),
     submitLabel: t("move.submit"),
     submitIcon: "folder-input",
     width: 480,
@@ -974,6 +978,105 @@ async function openMoveNoteModal() {
     }
   });
   setOpen(true);
+}
+
+/* ---------- arrastar e soltar na árvore (plan-web-36): nota ou pasta para dentro de outra pasta */
+
+let dragItem = null; // { kind: "note" | "folder", id }
+
+// pasta `folderId` está dentro de `ancestorId` (ou é ela)? Evita soltar uma pasta dentro dela mesma
+function isInside(folderId, ancestorId) {
+  const byId = new Map((notes.tree?.folders || []).map((f) => [f.id, f]));
+  for (let cur = folderId; cur; cur = byId.get(cur)?.parent_id || null) {
+    if (cur === ancestorId) return true;
+  }
+  return false;
+}
+
+function dropAllowed(row) {
+  if (!dragItem || !row) return false;
+  const collection = row.dataset.dropCol;
+  const folderId = row.dataset.dropFolder || null;
+  if (dragItem.kind === "note") {
+    const note = notes.tree.notes.find((x) => x.id === dragItem.id);
+    return Boolean(note) && !(note.collection === collection && (note.folder_id || null) === folderId);
+  }
+  const folder = notes.tree.folders.find((f) => f.id === dragItem.id);
+  if (!folder) return false;
+  if (folderId && isInside(folderId, folder.id)) return false; // dentro dela mesma ou de uma filha
+  return !(folder.collection === collection && (folder.parent_id || null) === folderId);
+}
+
+function bindTreeDragDrop(list) {
+  let openTimer = null;
+  const clearTargets = () => list.querySelectorAll(".drop-target").forEach((el) => el.classList.remove("drop-target"));
+  list.addEventListener("dragstart", (e) => {
+    const note = e.target.closest?.("[data-note]");
+    const folder = !note && e.target.closest?.("[data-drag-folder]");
+    if (!note && !folder) return;
+    dragItem = note ? { kind: "note", id: note.dataset.note } : { kind: "folder", id: folder.dataset.dragFolder };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragItem.id); // sem "Files": não abre o importar
+    (note || folder).classList.add("dragging");
+  });
+  list.addEventListener("dragend", () => {
+    list.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
+    clearTargets();
+    clearTimeout(openTimer);
+    dragItem = null;
+  });
+  list.addEventListener("dragover", (e) => {
+    const row = e.target.closest?.("[data-drop-col]");
+    if (!dropAllowed(row)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (!row.classList.contains("drop-target")) {
+      clearTargets();
+      row.classList.add("drop-target");
+      // pasta fechada abre sozinha depois de um instante parado em cima
+      clearTimeout(openTimer);
+      const folderBox = row.closest(".tree-folder");
+      if (folderBox?.classList.contains("collapsed")) {
+        openTimer = setTimeout(() => row.querySelector("[data-toggle-folder]")?.click(), 700);
+      }
+    }
+  });
+  list.addEventListener("dragleave", (e) => {
+    const row = e.target.closest?.("[data-drop-col]");
+    if (row && !row.contains(e.relatedTarget)) row.classList.remove("drop-target");
+  });
+  list.addEventListener("drop", async (e) => {
+    const row = e.target.closest?.("[data-drop-col]");
+    if (!dropAllowed(row)) return;
+    e.preventDefault();
+    clearTargets();
+    clearTimeout(openTimer);
+    const item = dragItem;
+    dragItem = null;
+    const collection = row.dataset.dropCol;
+    const folderId = row.dataset.dropFolder || null;
+    try {
+      if (item.kind === "note") {
+        await api.post(`/notes/${item.id}/move`, { collection, folder_id: folderId });
+        if (notes.current?.id === item.id) notes.current.collection = collection;
+      } else {
+        await api.post(`/folders/${item.id}/move`, { collection, parent_id: folderId });
+      }
+      revealInTree(collection, folderId);
+      await loadNotesTree();
+      if (notes.current) {
+        const moved = notes.tree.notes.find((x) => x.id === notes.current.id);
+        if (moved) notes.current.collection = moved.collection;
+        renderNoteMeta();
+      }
+      // a linha que recebeu pisca de leve, para confirmar onde caiu
+      const landed = document.querySelector(`#notes-tree-list [data-drop-col="${CSS.escape(collection)}"][data-drop-folder="${folderId || ""}"]`);
+      landed?.classList.add("dropped");
+      setTimeout(() => landed?.classList.remove("dropped"), 900);
+    } catch (err) {
+      await uiError(item.kind === "note" ? t("move.failed") : t("folders.moveFailed"), err);
+    }
+  });
 }
 
 // Resumo do projeto (plan-web-34): a nota que os agentes recebem no início da sessão
@@ -1122,7 +1225,8 @@ async function openVersionPreview(version) {
   await loadIcons(modal);
   const viewer = toastui.Editor.factory({ el: modal.querySelector("#version-viewer"), viewer: true, initialValue: v.content, theme: currentTheme(), usageStatistics: false, customHTMLSanitizer: sanitizeNoteHtml });
   const setOpen = bindModal("version");
-  if (!canEdit() && !isCurrent) modal.querySelector("button[type=submit]").remove();
+  // versão atual (ou sem permissão de restaurar): nada a fazer além de ler, então sem rodapé — o × fecha
+  if (isCurrent || !canEdit()) modal.querySelector(".modal-foot").remove();
   modal.querySelector("#version-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (isCurrent) {

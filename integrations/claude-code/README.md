@@ -35,4 +35,6 @@ Mark the brief in the dashboard: open the note and click the pin button (**Use a
 - It never blocks a session: no config, no key, a non-`https` URL (other than localhost), a server error or a timeout all end silently with one line on stderr.
 - Requires `python3` on the `PATH` (standard library only).
 
+- With an `agent` in `.concilium.json`, it also sends the repository name (for a git worktree, the main repository's name) and the Claude Code session id, so the brief lists **your cards in this repository** (held, stalled, waiting for review, assigned) and the cards other sessions are working on now. It tells the model which `session` to pass to the board tools.
+
 Clients without hooks (claude.ai, ChatGPT, Cursor) can call the `get_project_brief` MCP tool instead, and `load_agent` already includes the brief of the agent's first allowed collection.

@@ -97,13 +97,20 @@ function renderUserFooter() {
   const trigger = footer.querySelector("#user-trigger");
   const setOpen = (open) => {
     if (open) refreshServerStatus();
-    menu.classList.toggle("hidden", !open);
+    clearTimeout(menu.__closeTimer);
+    if (open) {
+      menu.classList.remove("hidden", "closing");
+    } else if (!menu.classList.contains("hidden")) {
+      // fecha com animação curta (plan-web-36): some de verdade depois que ela termina
+      menu.classList.add("closing");
+      menu.__closeTimer = setTimeout(() => menu.classList.add("hidden"), 140);
+    }
     trigger.classList.toggle("open", open);
     trigger.setAttribute("aria-expanded", String(open));
   };
   trigger.addEventListener("click", (e) => {
     e.stopPropagation();
-    setOpen(menu.classList.contains("hidden"));
+    setOpen(menu.classList.contains("hidden") || menu.classList.contains("closing"));
   });
   // fecha ao clicar fora ou com Esc (listeners no document trocados a cada render)
   document.removeEventListener("click", state.menuOutside);

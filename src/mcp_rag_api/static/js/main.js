@@ -16,15 +16,15 @@ function renderLogin(message = "") {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="login-wrap">
-      <form class="login-card" id="login-form">
-        <div class="brand">${brandLogo(30)}<span>Concilium</span></div>
-        <p class="muted">${t("login.intro")}</p>
-        <label class="form-label" for="login-user">${t("login.username")}</label>
-        <input class="input" id="login-user" type="text" autocomplete="username" required />
-        <label class="form-label" for="login-pass">${t("login.password")}</label>
-        <input class="input" id="login-pass" type="password" autocomplete="current-password" required />
+      <form class="login-card login-min" id="login-form">
+        <div class="login-mark">${brandLogo(34)}</div>
+        <h1 class="login-title">Concilium</h1>
+        <label class="sr-only" for="login-user">${t("login.username")}</label>
+        <input class="input" id="login-user" type="text" autocomplete="username" placeholder="${t("login.username")}" required />
+        <label class="sr-only" for="login-pass">${t("login.password")}</label>
+        <input class="input" id="login-pass" type="password" autocomplete="current-password" placeholder="${t("login.password")}" required />
         <div class="form-error ${message ? "" : "hidden"}" id="login-error"></div>
-        <button class="btn primary" type="submit">${icon("log-in")}<span>${t("login.submit")}</span></button>
+        <button class="btn primary login-submit" type="submit">${t("login.submit")}</button>
       </form>
     </div>`;
   loadIcons(app);

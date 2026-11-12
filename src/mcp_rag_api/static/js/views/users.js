@@ -16,7 +16,7 @@ function userRow(u) {
   const disabled = Boolean(u.disabled_at);
   const self = u.username === state.user.username;
   return `
-    <div class="trow users ${disabled ? "revoked" : ""}">
+    <div class="trow users ${disabled ? "revoked" : ""}" data-name="${escHtml(u.username.toLowerCase())}">
       <div class="tcell-main">
         <span class="avatar">${escHtml(u.username.slice(0, 1).toUpperCase())}</span>
         <div class="grow">
@@ -33,7 +33,7 @@ function userRow(u) {
       <div class="tcell"><span class="status ${disabled ? "" : "ok"}"><span class="status-dot"></span>${disabled ? t("users.disabled") : t("users.active")}</span></div>
       <div class="tcell muted" title="${t("users.createdAt", { date: fmtDate(u.created_at) })}">${fmtAgo(u.created_at)}</div>
       <div class="tcell-actions">
-        ${disabled ? "" : `<button class="btn sm ghost" data-reset="${u.id}" title="${t("users.setPasswordTitle")}">${icon("key-round", 14)}<span>${t("users.password")}</span></button>`}
+        ${disabled ? "" : `<button class="btn sm ghost" data-reset="${u.id}" data-name="${escHtml(u.username)}" title="${t("users.setPasswordTitle")}">${icon("key-round", 14)}<span>${t("users.password")}</span></button>`}
         ${u.totp_enabled && !self ? `<button class="btn sm ghost" data-reset-mfa="${u.id}" data-name="${escHtml(u.username)}" title="${t("users.resetMfaTitle")}">${icon("shield-check", 14)}<span>${t("users.resetMfa")}</span></button>` : ""}
         ${
           self
@@ -44,11 +44,6 @@ function userRow(u) {
               </button>`
         }
       </div>
-      <div class="reset-row hidden" id="reset-${u.id}">
-        <input class="input" type="password" placeholder="${t("users.newPasswordPh", { name: escHtml(u.username) })}" id="reset-pass-${u.id}" minlength="8" />
-        <button class="btn sm" type="button" data-reset="${u.id}">${t("common.cancel")}</button>
-        <button class="btn sm primary" type="button" data-do-reset="${u.id}">${icon("check", 14)}<span>${t("users.savePassword")}</span></button>
-      </div>
     </div>`;
 }
 
@@ -57,7 +52,7 @@ function usersCreateForm() {
     id: "user",
     iconName: "users",
     title: t("users.new"),
-    subtitle: t("users.newSub"),
+    help: t("users.newSub"),
     submitLabel: t("users.create"),
     width: 640,
     body: `
@@ -106,6 +101,8 @@ async function renderUsersList() {
     <div class="page-col">
       <div class="section-head">
         <span class="muted">${t("users.counts", { active, admins, disabled: users.length - active })}</span>
+        <span class="grow"></span>
+        <label class="list-search">${icon("search", 14)}<input type="search" id="user-q" placeholder="${t("users.search")}" autocomplete="off" /></label>
         <button class="btn primary" id="user-new">${icon("plus")}<span>${t("users.new")}</span></button>
       </div>
       ${usersCreateForm()}
@@ -113,6 +110,52 @@ async function renderUsersList() {
     </div>`;
   await loadIcons(body);
   bindUserActions();
+  // busca por nome (plan-web-36): filtra as linhas na hora
+  document.getElementById("user-q").addEventListener("input", (e) => {
+    const needle = e.target.value.trim().toLowerCase();
+    body.querySelectorAll(".trow.users[data-name]").forEach((row) => row.classList.toggle("hidden", Boolean(needle) && !row.dataset.name.includes(needle)));
+  });
+}
+
+// Nova senha numa janela (plan-web-36), no lugar da linha que abria dentro da tabela
+async function openPasswordModal(userId, username) {
+  document.getElementById("user-pass-modal")?.remove();
+  const holder = document.createElement("div");
+  holder.innerHTML = modalShell({
+    id: "user-pass",
+    iconName: "key-round",
+    title: t("users.setPasswordTitle"),
+    subtitle: escHtml(username),
+    submitLabel: t("users.savePassword"),
+    submitIcon: "check",
+    width: 440,
+    body: `
+      <label class="form-field">
+        <span class="form-label">${t("users.newPassword")}</span>
+        <input class="input" type="password" id="up-pass" minlength="8" autocomplete="new-password" placeholder="${t("users.passwordPh")}" required />
+      </label>`,
+  });
+  document.body.appendChild(holder.firstElementChild);
+  const modal = document.getElementById("user-pass-modal");
+  await loadIcons(modal);
+  const setOpen = bindModal("user-pass");
+  modal.querySelector("#user-pass-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const pass = modal.querySelector("#up-pass").value;
+    if (pass.length < 8) {
+      await uiAlert(t("users.shortPasswordTitle"), t("users.shortPasswordMsg"));
+      return;
+    }
+    try {
+      await api.patch(`/users/${userId}`, { password: pass });
+      setOpen(false);
+      modal.remove();
+      await renderUsersList();
+    } catch (err) {
+      await uiError(t("users.passwordFailed"), err);
+    }
+  });
+  setOpen(true);
 }
 
 function bindUserActions() {
@@ -152,22 +195,11 @@ function bindUserActions() {
   });
   body.addEventListener("click", async (e) => {
     const reset = e.target.closest("[data-reset]");
-    const doReset = e.target.closest("[data-do-reset]");
     const toggle = e.target.closest("[data-toggle]");
     const resetMfa = e.target.closest("[data-reset-mfa]");
     try {
       if (reset) {
-        const row = document.getElementById(`reset-${reset.dataset.reset}`);
-        row.classList.toggle("hidden");
-        if (!row.classList.contains("hidden")) row.querySelector("input").focus();
-      } else if (doReset) {
-        const pass = document.getElementById(`reset-pass-${doReset.dataset.doReset}`).value;
-        if (pass.length < 8) {
-          await uiAlert(t("users.shortPasswordTitle"), t("users.shortPasswordMsg"));
-          return;
-        }
-        await api.patch(`/users/${doReset.dataset.doReset}`, { password: pass });
-        await renderUsersList();
+        await openPasswordModal(reset.dataset.reset, reset.dataset.name);
       } else if (resetMfa) {
         if (
           !(await uiConfirm({

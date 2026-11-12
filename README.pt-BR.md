@@ -181,6 +181,12 @@ Cuida de vários projetos? Não carregue um `AGENTS.md` grande em todo chat. Mar
 
 O resto vem sob demanda: `search_knowledge` devolve um trecho curto por documento, e `get_document` lê documento grande por seção. Clientes sem hooks usam a tool `get_project_brief`, e o `load_agent` já traz o resumo do projeto do agente. O Painel mostra quantos tokens isso economizou, por projeto e por agente.
 
+## Quadros para agentes trabalhando em paralelo
+
+Cada pasta pode ter **quadros Kanban** (um por projeto), com as colunas que você digitar. Os agentes quebram o trabalho em cartões com checklist, **pegam** um cartão para a sua sessão (posse de 2 horas renovada a cada atualização, para duas sessões nunca trabalharem no mesmo cartão), anotam worktree, branch, MR e CI, marcam o checklist e movem o cartão para revisão ou feito. A sessão que para no meio solta o cartão com o próximo passo, e a seguinte continua dali. O plugin do Claude Code mostra os seus cartões do repositório no início da sessão.
+
+Toda mudança vai para um **log de auditoria só de acréscimo** (quem, de qual cliente e sessão, quando e o que mudou, antes → depois), consultável pela tool `board_log`. Tools: `list_boards`, `get_board`, `create_board`, `my_work`, `create_card`, `start_card`, `update_card`, `check_item`, `log_card`, `release_card`, `submit_card`, `finish_card`, `search_cards` e outras; REST em `/boards` e `/cards`.
+
 ## Como funciona
 
 ```mermaid

@@ -164,3 +164,23 @@ async def test_insights_endpoint(editor, viewer):
     assert {"documents", "with_tags", "with_links", "stale"} <= set(data["health"])
     assert data["created"]["current"] >= 1 and len(data["recent"]) >= 1
     assert (await viewer.get("/dash/api/insights", params={"days": 0})).status_code == 422
+
+
+async def test_insights_custom_range(editor, viewer):
+    # período personalizado (plan-web-36): início e fim inclusivos, a série termina no fim pedido
+    from datetime import date, timedelta
+
+    end = date.today()
+    start = end - timedelta(days=9)
+    data = (await viewer.get("/dash/api/insights", params={"start": start.isoformat(), "end": end.isoformat()})).json()
+    assert data["days"] == 10 and len(data["activity"]) == 10
+    assert data["start"] == start.isoformat() and data["end"] == end.isoformat()
+    assert data["activity"][-1]["day"] == end.isoformat() and len(data["tokens"]["daily"]) == 10
+    # período no passado, antes de qualquer nota: tudo zero
+    old = (await viewer.get("/dash/api/insights", params={"start": "2020-01-01", "end": "2020-01-31"})).json()
+    assert old["days"] == 31 and sum(p["edits"] for p in old["activity"]) == 0 and old["created"]["current"] == 0
+    bad = {"start": end.isoformat(), "end": start.isoformat()}
+    assert (await viewer.get("/dash/api/insights", params=bad)).status_code == 422
+    assert (await viewer.get("/dash/api/insights", params={"start": start.isoformat()})).status_code == 422
+    too_long = {"start": "2024-01-01", "end": "2025-06-01"}
+    assert (await viewer.get("/dash/api/insights", params=too_long)).status_code == 422

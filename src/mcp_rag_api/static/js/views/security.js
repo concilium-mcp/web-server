@@ -20,14 +20,15 @@ async function renderSecurityPage() {
   body.innerHTML = `
     <div class="page-col mfa-page">
       <div class="card mfa-card">
-        <div class="card-row">
-          <span class="row-icon">${icon("shield-check")}</span>
+        <div class="card-row mfa-head">
+          <span class="mfa-shield ${status.enabled ? "on" : ""}">${icon("shield-check", 22)}</span>
           <div class="grow">
             <div class="card-title">${t("mfa.title")}
               <span class="status ${status.enabled ? "ok" : ""}"><span class="status-dot"></span>${status.enabled ? t("mfa.on") : t("mfa.off")}</span>
             </div>
             <div class="muted">${status.enabled ? t("mfa.onSince", { date: fmtDate(status.enabled_at) }) : t("mfa.offHint")}</div>
           </div>
+          ${status.enabled ? "" : `<button class="btn primary" type="button" id="mfa-begin">${t("mfa.enable")}</button>`}
         </div>
         ${status.enabled ? enabledHtml(status) : disabledHtml()}
       </div>
@@ -42,17 +43,23 @@ async function renderSecurityPage() {
 
 function disabledHtml() {
   return `
-    <form class="mfa-step" id="mfa-start">
+    <form class="mfa-step hidden" id="mfa-start">
       <label class="form-field">
         <span class="form-label">${t("mfa.confirmPassword")}</span>
         <input class="input" type="password" id="mfa-start-pass" autocomplete="current-password" required />
       </label>
-      <div><button class="btn primary" type="submit">${icon("shield-check")}<span>${t("mfa.enable")}</span></button></div>
+      <div><button class="btn primary" type="submit">${t("mfa.continue")}</button></div>
     </form>
     <div class="mfa-step hidden" id="mfa-setup"></div>`;
 }
 
 function bindDisabled(body) {
+  // a senha só aparece depois do clique em "Ativar 2FA" (plan-web-36)
+  body.querySelector("#mfa-begin").addEventListener("click", (e) => {
+    e.currentTarget.classList.add("hidden");
+    body.querySelector("#mfa-start").classList.remove("hidden");
+    body.querySelector("#mfa-start-pass").focus();
+  });
   body.querySelector("#mfa-start").addEventListener("submit", async (e) => {
     e.preventDefault();
     let setup;

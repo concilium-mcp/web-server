@@ -137,14 +137,13 @@ async function renderSearchResults() {
       <div class="grow">
         <div class="result-title">
           <span class="title">${escHtml(r.title)}</span>
-          <span class="chip"><span class="dot" style="background:${colorFor(r.collection)}"></span>${escHtml(r.collection)}</span>
-          <span class="chip subtle tech">chunk #${r.chunk_index}</span>
+          <span class="result-col"><span class="dot" style="background:${colorFor(r.collection)}"></span>${escHtml(r.collection)}</span>
         </div>
         <p class="snippet">${highlightTerms(snippet, state.lastSearch)}</p>
         <div class="result-meta">
           <span class="relbar" title="${t("search.relevance")}"><span style="width:${rel}%"></span></span>
           <span class="tech">${sim > 0 ? t("search.semantic", { pct: sim }) : t("search.fulltextOnly")}</span>
-          <span class="mono tech">score ${Number(r.score).toFixed(4)}</span>
+          <span class="mono tech">score ${Number(r.score).toFixed(4)} · chunk #${r.chunk_index}</span>
         </div>
       </div>
     </button>`;

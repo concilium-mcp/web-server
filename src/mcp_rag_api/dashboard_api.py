@@ -7,7 +7,7 @@ separada do Bearer da API pública (api_keys continua valendo para agentes/integ
 import asyncio
 import secrets
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -1168,13 +1168,28 @@ async def get_stats(_user: DashUser = Depends(current_user)) -> dict:
 
 
 @router.get("/insights")
-async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
+async def get_insights(
+    days: int = Query(default=30, ge=1, le=366),
+    start: date | None = None,
+    end: date | None = None,
+) -> dict:
     """Tela Painel: indicadores, atividade no período e saúde da base — uma consulta só por bloco.
 
-    O período (últimos `days` dias) vale para atividade, contribuidores e o delta de notas criadas
-    (comparado com o período anterior de mesmo tamanho).
+    O período vale para atividade, contribuidores, tokens e o delta de notas criadas (comparado com o
+    período anterior de mesmo tamanho). Padrão: os últimos `days` dias até hoje. Personalizado
+    (plan-web-36): `start` e `end` (datas, inclusive), no máximo 366 dias.
     """
+    if start is not None or end is not None:
+        if start is None or end is None or start > end:
+            raise HTTPException(
+                status_code=422, detail="Período inválido: informe início e fim, com o início antes do fim."
+            )
+        days = (end - start).days + 1
+        if days > 366:
+            raise HTTPException(status_code=422, detail="Período longo demais: no máximo 366 dias.")
     async with pool().acquire() as conn:
+        # fim do período: a data pedida ou hoje (no relógio do banco); E nas consultas abaixo
+        end_day: date = end or await conn.fetchval("SELECT current_date")
         totals = await conn.fetchrow(
             """
             SELECT (SELECT count(*) FROM documents WHERE status = 'active') AS documents,
@@ -1195,12 +1210,13 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
         )
         created = await conn.fetchrow(
             """
-            SELECT count(*) FILTER (WHERE created_at >= now() - make_interval(days => $1)) AS current,
-                   count(*) FILTER (WHERE created_at <  now() - make_interval(days => $1)
-                                      AND created_at >= now() - make_interval(days => $1 * 2)) AS previous
+            SELECT count(*) FILTER (WHERE created_at >= $2::date - ($1 - 1) AND created_at < $2::date + 1) AS current,
+                   count(*) FILTER (WHERE created_at <  $2::date - ($1 - 1)
+                                      AND created_at >= $2::date - ($1 * 2 - 1)) AS previous
             FROM documents WHERE status = 'active'
             """,
             days,
+            end_day,
         )
         # uma linha por dia do período, inclusive os sem edição (zeros explícitos para o gráfico).
         # Agregação única por dia (GROUP BY) em vez de ~2×days subconsultas correlatas.
@@ -1208,14 +1224,14 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
             """
             WITH days AS (
                 SELECT d::date AS day
-                FROM generate_series(current_date - ($1 - 1), current_date, interval '1 day') AS d
+                FROM generate_series($2::date - ($1 - 1), $2::date, interval '1 day') AS d
             ),
             counts AS (
                 SELECT created_at::date AS day,
                        count(*) AS edits,
                        count(*) FILTER (WHERE version = 1) AS created
                 FROM document_versions
-                WHERE created_at >= current_date - ($1 - 1)
+                WHERE created_at >= $2::date - ($1 - 1) AND created_at < $2::date + 1
                 GROUP BY 1
             )
             SELECT days.day,
@@ -1225,6 +1241,7 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
             ORDER BY day
             """,
             days,
+            end_day,
         )
         by_collection = await conn.fetch(
             """
@@ -1237,10 +1254,11 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
             """
             SELECT coalesce(changed_by, '—') AS actor, count(*) AS edits
             FROM document_versions
-            WHERE created_at >= now() - make_interval(days => $1)
+            WHERE created_at >= $2::date - ($1 - 1) AND created_at < $2::date + 1
             GROUP BY 1 ORDER BY edits DESC, actor LIMIT 8
             """,
             days,
+            end_day,
         )
         health = await conn.fetchrow(
             """
@@ -1263,6 +1281,8 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
         )
     return {
         "days": days,
+        "start": (end_day - timedelta(days=days - 1)).isoformat(),
+        "end": end_day.isoformat(),
         "totals": records([totals])[0],
         "created": records([created])[0],
         "activity": records(edits),
@@ -1270,7 +1290,7 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
         "contributors": records(contributors),
         "health": records([health])[0],
         "recent": records(recent),
-        "tokens": await token_meter.summary(days),
+        "tokens": await token_meter.summary(days, end_day),
     }
 
 

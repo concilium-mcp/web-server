@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from ..config import get_settings
 from ..db import audit, pool
 from ..security import KBError, NotFound, Principal
-from . import documents, folders
+from . import boards, documents, folders
 from .tokens import estimate_tokens, trim_to_tokens
 
 STALE_DAYS = 60
@@ -68,7 +68,14 @@ async def _folder_lines(p: Principal, collection: str) -> list[str]:
     return lines
 
 
-async def get_brief(p: Principal, collection: str, agent_slug: str | None = None) -> dict:
+async def get_brief(
+    p: Principal,
+    collection: str,
+    agent_slug: str | None = None,
+    *,
+    repo: str | None = None,
+    work_session: str | None = None,
+) -> dict:
     """Texto Markdown pronto para injetar + metadados (documento, data, tamanho, se cortou)."""
     p.require("read")
     p.require_collection(collection)
@@ -105,6 +112,19 @@ async def get_brief(p: Principal, collection: str, agent_slug: str | None = None
             )
 
     folder_lines = await _folder_lines(p, collection)
+    work_lines: list[str] = []
+    mine: set[str] = set()
+    if agent_slug:
+        work = await boards.my_work(p, session=work_session, repo=repo, actor=f"agent:{agent_slug}")
+        work_lines = boards.my_work_lines(work)
+        mine = {c["id"] for group in ("holding", "stale", "review", "assigned") for c in work[group]}
+    active_lines = [
+        f"- {c['title']} ({c['board']}) com {c['claimed_by']}"
+        + (f" · {c['progress']}" if c.get("progress") else "")
+        + (f" · worktree {c['worktree']}" if c.get("worktree") else "")
+        for c in await boards.active_cards(p, collection)
+        if c["id"] not in mine
+    ]
     parts: list[str] = []
     truncated = False
     brief_id = str(col["brief_document_id"]) if col["content"] is not None else None
@@ -133,6 +153,17 @@ async def get_brief(p: Principal, collection: str, agent_slug: str | None = None
         parts.append(text)
     if tasks:
         parts.append("## Tarefas abertas\n\n" + "\n".join(f"- [{t['status']}] {t['title']}" for t in tasks))
+    if work_lines:
+        parts.append(
+            "## Seus cartões\n\n" + "\n".join(work_lines) + "\n\nContinue pelo cartão (get_card) e siga o protocolo"
+            " dos quadros: start_card → check_item/log_card → submit_card ou finish_card; parou, release_card."
+        )
+    if active_lines:
+        parts.append(
+            "## Em andamento agora (outras sessões)\n\n"
+            + "\n".join(active_lines)
+            + "\n\nNão mexa nesses cartões nem nos worktrees deles."
+        )
     parts.append(
         f'Detalhes sob demanda: search_knowledge com collections=["{collection}"]; '
         'get_document com outline=true e depois section="<título>".'

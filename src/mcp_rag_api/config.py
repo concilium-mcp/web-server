@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     token_meter_enabled: bool = True
     # Resumo do projeto no início da sessão (plan-web-34): teto do texto da nota de resumo.
     brief_max_tokens: int = Field(default=800, ge=50)
+    # Quadros (plan-web-37a): posse de um cartão por uma sessão, renovada a cada atualização dela.
+    card_lease_minutes: int = Field(default=120, ge=5, le=24 * 60)
 
     duplicate_threshold: float = 0.92
     memory_duplicate_threshold: float = 0.90

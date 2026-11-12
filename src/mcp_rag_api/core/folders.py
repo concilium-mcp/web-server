@@ -240,6 +240,9 @@ async def delete_folder(p: Principal, folder_id: str) -> dict:
         folder = await _load_folder(conn, p, folder_id)
         await _lock_collection(conn, folder["collection_id"])
         fid, parent = folder["id"], folder["parent_id"]
+        from . import boards  # import tardio: boards importa folders
+
+        moved_boards = await boards.lift_boards_from_folder(conn, p, folder)
         moved_folders = await conn.execute("UPDATE folders SET parent_id = $2 WHERE parent_id = $1", fid, parent)
         moved_notes = await conn.execute("UPDATE documents SET folder_id = $2 WHERE folder_id = $1", fid, parent)
         await conn.execute("DELETE FROM folders WHERE id = $1", fid)
@@ -249,6 +252,7 @@ async def delete_folder(p: Principal, folder_id: str) -> dict:
         "id": folder_id,
         "moved_folders": int(moved_folders.split()[-1]),
         "moved_notes": int(moved_notes.split()[-1]),
+        "moved_boards": moved_boards,
     }
 
 

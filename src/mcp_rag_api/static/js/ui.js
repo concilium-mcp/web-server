@@ -46,14 +46,18 @@ function debounce(fn, ms) {
 /* ---------------------------------------------------------------- modais de formulário */
 
 // Moldura padrão: cabeçalho (ícone, título, subtítulo, fechar), corpo rolável e rodapé com ações.
-function modalShell({ id, iconName, title, subtitle = "", body, submitLabel, submitIcon = "plus", width = 880 }) {
+// (?) com a explicação no hover/foco (plan-web-36): descrição longa sai da tela e fica aqui
+const helpTip = (text) =>
+  `<span class="help-tip" tabindex="0" role="note" aria-label="${escHtml(text)}" data-tip="${escHtml(text)}">?</span>`;
+
+function modalShell({ id, iconName, title, subtitle = "", help = "", body, submitLabel, submitIcon = "plus", width = 880, lead = "" }) {
   return `
     <div class="modal-backdrop hidden" id="${id}-modal">
       <form class="modal" id="${id}-form" role="dialog" aria-modal="true" aria-labelledby="${id}-title" style="width:min(${width}px, 100%)">
         <header class="modal-head">
-          <span class="row-icon">${icon(iconName)}</span>
+          ${lead ? `<span class="modal-lead">${lead}</span>` : `<span class="row-icon">${icon(iconName)}</span>`}
           <div class="grow">
-            <h2 id="${id}-title">${title}</h2>
+            <h2 id="${id}-title">${title}${help ? ` ${helpTip(help)}` : ""}</h2>
             ${subtitle ? `<span class="muted">${subtitle}</span>` : ""}
           </div>
           <button class="icon-btn" type="button" data-close-modal title="${t("common.closeEsc")}">${icon("x", 18)}</button>
@@ -214,4 +218,4 @@ function scrollArrows(strip) {
   update();
 }
 
-export { escHtml, sanitizeNoteHtml, fmtDate, fmtAgo, debounce, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError, brandLogo, enhancePasswordFields, disclosure, scrollArrows };
+export { helpTip, escHtml, sanitizeNoteHtml, fmtDate, fmtAgo, debounce, modalShell, bindModal, uiDialog, uiConfirm, uiAlert, uiError, brandLogo, enhancePasswordFields, disclosure, scrollArrows };

@@ -182,6 +182,12 @@ Working on several projects? Don't load a big `AGENTS.md` into every chat. Mark 
 
 Everything else comes on demand: `search_knowledge` returns one short snippet per document, and `get_document` reads big documents by section. Clients without hooks can call the `get_project_brief` tool, and `load_agent` already includes the brief of the agent's project. The overview shows how many tokens this saved, per project and per agent.
 
+## Boards for agents working in parallel
+
+Each folder can hold **Kanban boards** (one per project), with columns you name yourself. Agents break the work into cards with a checklist, **claim** a card for their session (a 2-hour lease renewed on every update, so two sessions never work on the same card), record the worktree, branch, merge request and CI status, tick the checklist and move the card to review or done. A session that stops halfway releases the card with the next step, and the next session picks it up from there. The Claude Code plugin shows your cards for the current repository when a session starts.
+
+Every change is written to an **append-only audit log** (who, from which client and session, when, and what changed, before → after), readable through the `board_log` tool. Tools: `list_boards`, `get_board`, `create_board`, `my_work`, `create_card`, `start_card`, `update_card`, `check_item`, `log_card`, `release_card`, `submit_card`, `finish_card`, `search_cards` and more; REST under `/boards` and `/cards`.
+
 ## How it works
 
 ```mermaid

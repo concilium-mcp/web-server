@@ -41,10 +41,13 @@ def server():
     httpd.shutdown()
 
 
-def _run(cwd: Path, env: dict) -> subprocess.CompletedProcess:
+def _run(cwd: Path, env: dict, session_id: str | None = None) -> subprocess.CompletedProcess:
+    payload = {"cwd": str(cwd), "hook_event_name": "SessionStart"}
+    if session_id:
+        payload["session_id"] = session_id
     return subprocess.run(
         [sys.executable, str(HOOK)],
-        input=json.dumps({"cwd": str(cwd), "hook_event_name": "SessionStart"}),
+        input=json.dumps(payload),
         capture_output=True,
         text=True,
         env={"PATH": "/usr/bin:/bin", **env},
@@ -94,3 +97,20 @@ def test_unreachable_server(tmp_path):
     cwd = _repo(tmp_path, {"url": "http://127.0.0.1:9", "collection": "X"})
     out = _run(cwd, {"CONCILIUM_API_KEY": "kb_sk_test"})
     assert out.returncode == 0 and out.stdout == "" and "indisponível" in out.stderr
+
+
+def test_sends_repo_and_session_for_cards(tmp_path, server):
+    # worktree: o .git é um arquivo que aponta para <repo principal>/.git/worktrees/<nome>
+    (tmp_path / "web-server" / ".git" / "worktrees" / "wt-x").mkdir(parents=True)
+    wt = tmp_path / "worktrees" / "web-server-plan-x"
+    wt.mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {tmp_path}/web-server/.git/worktrees/wt-x\n", encoding="utf-8")
+    (tmp_path / ".concilium.json").write_text(
+        json.dumps({"url": server, "collection": "Concilium", "agent": "concilium-dev"}), encoding="utf-8"
+    )
+    out = _run(wt, {"CONCILIUM_API_KEY": "kb_sk_test"}, session_id="abc-123")
+    assert out.returncode == 0
+    [req] = _Handler.seen
+    assert req["path"] == "/context/brief?collection=Concilium&agent=concilium-dev&repo=web-server&session=abc-123"
+    text = json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert text.startswith("# Projeto X — resumo") and 'session="abc-123"' in text

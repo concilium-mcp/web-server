@@ -21,8 +21,30 @@ function matchNoteRoute(hash) {
   return hash.match(/^#\/(?:notes|notas)\/([0-9a-f-]{36})$/);
 }
 
+// transição entre telas (plan-web-36): a atual sai em ~120 ms (desce um pouco e esmaece) e a nova
+// entra com os blocos em cascata (CSS .page-enter). Sem animação para quem pede menos movimento.
+const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+async function leaveScreen() {
+  const current = document.getElementById("main");
+  if (!current?.childElementCount || reduceMotion()) return;
+  current.classList.add("page-leave");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+}
+
+function enterScreen(main) {
+  if (reduceMotion()) return;
+  main.classList.remove("page-enter");
+  void main.offsetWidth; // reinicia a animação
+  main.classList.add("page-enter");
+  clearTimeout(main.__enterTimer);
+  // a cascata vale para o que chega logo depois (listas carregadas da API); depois para de animar
+  main.__enterTimer = setTimeout(() => main.classList.remove("page-enter"), 1200);
+}
+
 async function goTo(screen, openId = null) {
   if (notes.editor) await notesLeave();
+  await leaveScreen();
   state.screen = screen;
   notes.openId = openId;
   if (screen !== "notes" && location.hash) history.replaceState(null, "", location.pathname);
@@ -39,6 +61,8 @@ window.addEventListener("hashchange", () => {
 
 async function renderScreen() {
   const main = document.getElementById("main");
+  main.classList.remove("page-leave");
+  enterScreen(main);
   closePanel();
   destroyGraph();
   hideTip();
@@ -92,7 +116,8 @@ function pageTemplate(iconName, title, sub) {
 
 // navegação pedida por outros módulos (menu do usuário, Painel, busca) sem criar ciclos de import
 on("navigate", ({ screen, openId = null }) => goTo(screen, openId));
-on("screen:show", (screen) => {
+on("screen:show", async (screen) => {
+  await leaveScreen();
   state.screen = screen;
   renderShell();
   renderScreen();

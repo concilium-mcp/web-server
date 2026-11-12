@@ -2,9 +2,11 @@
 import { api } from "../api.js";
 import { t } from "../i18n.js";
 import { icon, loadIcons } from "../icons.js";
-import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiConfirm, uiAlert, uiError, disclosure } from "../ui.js";
+import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiConfirm, uiAlert, uiError, disclosure, helpTip } from "../ui.js";
 import { state, colorFor } from "../state.js";
-import { accessChips, accessPreset, accessPresetsHtml, scopesBlockHtml, bindAccessPicker, readScopes } from "../access.js";
+import { agentAvatar } from "../agent-avatar.js";
+import { folderPickerHtml } from "../folder-picker.js";
+import { accessPreset, accessPresetsHtml, scopesBlockHtml, bindAccessPicker, readScopes } from "../access.js";
 
 /* ---------------------------------------------------------------- tela: agents */
 
@@ -46,7 +48,7 @@ function agentCreateForm(collections) {
       id: "agent",
       iconName: "bot",
       title: t("agents.new"),
-      subtitle: t("agents.newSub"),
+      help: t("agents.newSub"),
       submitLabel: t("agents.create"),
       submitIcon: "bot",
       body: `
@@ -54,9 +56,8 @@ function agentCreateForm(collections) {
         <div class="form-section-title"><span class="step">1</span>${t("agents.identity")}</div>
         <div class="create-grid">
           <label class="form-field">
-            <span class="form-label">${t("common.name")}</span>
+            <span class="form-label">${t("common.name")} ${helpTip(t("agents.nameHelp"))}</span>
             <input class="input" id="a-name" placeholder="${t("agents.namePh")}" required />
-            <span class="form-help">${t("agents.nameHelp")}</span>
           </label>
           <label class="form-field">
             <span class="form-label">${t("agents.desc")}</span>
@@ -90,20 +91,7 @@ function agentCreateForm(collections) {
       <div class="form-section">
         <div class="form-section-title"><span class="step">3</span>${t("agents.access")}</div>
         <span class="form-label">${t("agents.collections")} <span class="muted">${t("agents.collectionsHint")}</span></span>
-        <div class="chip-picks" id="a-cols">
-          ${
-            collections.length
-              ? collections
-                  .map(
-                    (c) => `
-              <label class="chip-pick"><input type="checkbox" value="${escHtml(c.name)}" />
-                <span class="dot" style="background:${colorFor(c.name)}"></span>${escHtml(c.name)}<span class="muted">${c.documents}</span>
-              </label>`,
-                  )
-                  .join("")
-              : `<span class="muted">${t("agents.noCollections")}</span>`
-          }
-        </div>
+        ${folderPickerHtml("a-cols", collections)}
         <span class="form-label">${t("agents.permissions")}</span>
         ${accessPresetsHtml("a", "write")}
       </div>
@@ -113,7 +101,7 @@ function agentCreateForm(collections) {
         hint: t("agents.advancedHint"),
         body: `
         <label class="form-field">
-          <span class="form-label">${t("agents.slug")} <span class="muted">${t("agents.slugHint")}</span></span>
+          <span class="form-label">${t("agents.slug")} ${helpTip(t("agents.slugHint"))}</span>
           <input class="input mono" id="a-slug" placeholder="${t("agents.slugPh")}" />
         </label>
         <label class="form-field">
@@ -132,43 +120,40 @@ function agentCreateForm(collections) {
     })}`;
 }
 
+function accessLabel(scopes) {
+  const preset = accessPreset(scopes || []);
+  return preset ? t(`access.${preset.id}`) : (scopes || []).join(", ");
+}
+
+function collectionsLabel(cols) {
+  if (!cols.length) return t("agents.allCollections");
+  return cols.length <= 2 ? cols.join(", ") : `${cols.slice(0, 2).join(", ")} +${cols.length - 2}`;
+}
+
+// linha do agente (plan-web-36): avatar gerado do slug, nome e descrição, fatos em texto e ações só no hover
 function agentCard(a, isAdmin) {
   const archived = a.status !== "active";
+  const facts = [accessLabel(a.scopes), collectionsLabel(a.allowed_collections), t("agents.keysCount", { count: a.active_keys })];
   return `
-    <div class="agent-card ${archived ? "revoked" : ""}">
-      <div class="agent-head">
-        <span class="row-icon">${icon("bot")}</span>
-        <div class="grow">
-          <div class="row-title">${escHtml(a.name)} <span class="chip subtle mono">${escHtml(a.slug)}</span>
-            ${archived ? `<span class="chip danger-chip">${t("agents.archived")}</span>` : ""}
-            ${a.proposals ? `<span class="chip accent">${icon("git-pull-request-arrow", 12)} ${t("agents.proposals", { count: a.proposals })}</span>` : ""}
-          </div>
-          ${a.description ? `<div class="agent-desc">${escHtml(a.description)}</div>` : ""}
+    <div class="agent-row ${archived ? "archived" : ""}" title="${escHtml(t("agents.updatedAgo", { ago: fmtAgo(a.updated_at) }))} · v${a.version}">
+      <span class="agent-ava">${agentAvatar(a.slug, 40, { archived })}</span>
+      <div class="agent-main">
+        <div class="agent-name">${escHtml(a.name)}<span class="agent-slug">${escHtml(a.slug)}</span>
+          ${a.proposals ? `<span class="agent-flag">${t("agents.proposals", { count: a.proposals })}</span>` : ""}
         </div>
-        ${
-          isAdmin && !archived
-            ? `<div class="agent-actions">
-                 <button class="btn sm ghost" data-autonomy="${escHtml(a.slug)}" data-on="${a.auto_apply_updates}" title="${t("agents.autonomyBtnTitle")}">
-                   ${icon("zap", 14)}<span>${a.auto_apply_updates ? t("agents.autonomyOn") : t("agents.autonomyOff")}</span>
-                 </button>
-                 <button class="btn sm" type="button" data-manage="${escHtml(a.slug)}" data-tab="keys" title="${t("agents.keys")}">${icon("key-round", 14)}<span>${t("agents.keys")}</span></button>
-                 <button class="btn sm" type="button" data-manage="${escHtml(a.slug)}" data-tab="profile" title="${t("agents.edit")}">${icon("pencil", 14)}<span>${t("agents.edit")}</span></button>
-               </div>`
-            : `<span class="muted">${a.auto_apply_updates ? t("agents.autonomous") : t("agents.underReview")}</span>`
-        }
+        <div class="agent-sub">${escHtml(a.description || facts.join(" · "))}</div>
       </div>
-      <div class="agent-meta">
-        <span>${accessChips(a.scopes)}</span>
-        <span>${
-          a.allowed_collections.length
-            ? a.allowed_collections.map((c) => `<span class="chip"><span class="dot" style="background:${colorFor(c)}"></span>${escHtml(c)}</span>`).join(" ")
-            : `<span class="chip subtle">${t("agents.allCollections")}</span>`
-        }</span>
-        <span class="grow"></span>
-        <span class="muted">${icon("key-round", 12)} ${t("agents.keysCount", { count: a.active_keys })}</span>
-        <span class="muted mono">v${a.version}</span>
-        <span class="muted" title="${fmtDate(a.updated_at)}">${t("agents.updatedAgo", { ago: fmtAgo(a.updated_at) })}</span>
-      </div>
+      <div class="agent-facts">${a.description ? escHtml(facts.join(" · ")) : ""}</div>
+      ${
+        isAdmin && !archived
+          ? `<button class="agent-state ${a.auto_apply_updates ? "on" : ""}" type="button" data-autonomy="${escHtml(a.slug)}" data-on="${a.auto_apply_updates}" title="${t("agents.autonomyBtnTitle")}">
+               ${a.auto_apply_updates ? t("agents.autonomous") : t("agents.underReview")}</button>
+             <div class="agent-actions">
+               <button class="icon-btn" type="button" data-manage="${escHtml(a.slug)}" data-tab="keys" title="${t("agents.keys")}">${icon("key-round", 15)}</button>
+               <button class="icon-btn" type="button" data-manage="${escHtml(a.slug)}" data-tab="profile" title="${t("agents.edit")}">${icon("pencil", 15)}</button>
+             </div>`
+          : `<span class="agent-state ${a.auto_apply_updates ? "on" : ""}">${archived ? t("agents.archived") : a.auto_apply_updates ? t("agents.autonomous") : t("agents.underReview")}</span>`
+      }
     </div>`;
 }
 
@@ -194,13 +179,27 @@ async function renderAgentsList(created) {
       <div id="agent-banner"></div>
       <div class="agent-list">
         ${
-          list.map((a) => agentCard(a, isAdmin)).join("") ||
+          list
+            .filter((a) => a.status === "active")
+            .map((a) => agentCard(a, isAdmin))
+            .join("") ||
           `<div class="results-empty">
              <div class="results-empty-title">${t("agents.emptyTitle")}</div>
              ${isAdmin ? t("agents.emptyAdmin", { prompt: '<span class="mono">design_agent</span>' }) : t("agents.emptyViewer")}
            </div>`
         }
       </div>
+      ${
+        list.length > active
+          ? `<details class="agent-archived">
+               <summary>${t("agents.archivedSection", { count: list.length - active })}</summary>
+               <div class="agent-list">${list
+                 .filter((a) => a.status !== "active")
+                 .map((a) => agentCard(a, isAdmin))
+                 .join("")}</div>
+             </details>`
+          : ""
+      }
     </div>`;
   await loadIcons(body);
   if (isAdmin) bindAgentCreate();
@@ -346,20 +345,7 @@ function manageProfileHtml(a) {
     </div>
     <div class="form-field">
       <span class="form-label">${t("agents.collections")} <span class="muted">${t("agents.collectionsHint")}</span></span>
-      <div class="chip-picks" id="e-cols">
-        ${
-          cols.length
-            ? cols
-                .map(
-                  (c) => `
-            <label class="chip-pick"><input type="checkbox" value="${escHtml(c.name)}" ${a.allowed_collections.includes(c.name) ? "checked" : ""} />
-              <span class="dot" style="background:${colorFor(c.name)}"></span>${escHtml(c.name)}<span class="muted">${c.documents}</span>
-            </label>`,
-                )
-                .join("")
-            : `<span class="muted">${t("agents.noCollections")}</span>`
-        }
-      </div>
+      ${folderPickerHtml("e-cols", cols, a.allowed_collections)}
     </div>
     <div class="form-field">
       <span class="form-label">${t("agents.permissions")}</span>
@@ -370,9 +356,8 @@ function manageProfileHtml(a) {
       hint: t("agents.advancedHintEdit"),
       body: `
       <label class="form-field">
-        <span class="form-label">${t("agents.slug")}</span>
+        <span class="form-label">${t("agents.slug")} ${helpTip(t("agents.slugFixed"))}</span>
         <input class="input mono" value="${escHtml(a.slug)}" readonly />
-        <span class="form-help">${t("agents.slugFixed")}</span>
       </label>
       <label class="form-field">
         <span class="form-label">${t("agents.prompt")}</span>
@@ -389,7 +374,7 @@ function manageProfileHtml(a) {
         <strong>${t("agents.archiveZoneTitle")}</strong>
         <span class="muted">${t("agents.archiveZoneDesc")}</span>
       </div>
-      <button class="btn sm danger" type="button" id="e-archive">${icon("archive", 14)}<span>${t("agents.archive")}</span></button>
+      <button class="link-btn danger-link" type="button" id="e-archive">${t("agents.archive")}</button>
     </div>`;
 }
 
@@ -415,7 +400,7 @@ function manageKeysHtml(keys) {
     </div>`;
   return `
     <div class="section-head">
-      <span class="muted">${t("agents.keysIntro")}</span>
+      <span class="muted keys-title">${t("agents.tabKeys")} ${helpTip(t("agents.keysIntro"))}</span>
       <button class="btn sm primary" type="button" id="e-key-new">${icon("plus", 14)}<span>${t("agents.newKey")}</span></button>
     </div>
     <div id="e-key-reveal"></div>
@@ -457,6 +442,7 @@ async function openAgentManage(slug, tab = "profile") {
   holder.innerHTML = modalShell({
     id: "agent-manage",
     iconName: "bot",
+    lead: agentAvatar(a.slug, 36, { archived: a.status !== "active" }),
     title: escHtml(a.name),
     subtitle: t("agents.manageSub", { slug: `<span class="mono">${escHtml(a.slug)}</span>`, version: a.version }),
     submitLabel: t("agents.save"),
@@ -480,13 +466,12 @@ async function openAgentManage(slug, tab = "profile") {
   bindAccessPicker(form, "e");
   let changedSomething = false; // chave criada/revogada ou perfil salvo: a lista precisa ser relida ao fechar
 
-  const submit = form.querySelector("button[type=submit]");
-  const cancel = form.querySelector(".modal-foot [data-close-modal]");
+  const foot = form.querySelector(".modal-foot");
   const showTab = (name) => {
-    cancel.textContent = name === "profile" ? t("common.cancel") : t("common.close"); // fora do perfil não há o que cancelar
+    // Chaves e Histórico não têm o que salvar nem cancelar: sem rodapé (o × fecha a janela)
+    foot.classList.toggle("hidden", name !== "profile");
     modal.querySelectorAll(".manage-tabs [data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     modal.querySelectorAll(".manage-panel").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== name));
-    submit.classList.toggle("hidden", name !== "profile"); // salvar só faz sentido no perfil
   };
   showTab(tab);
   modal.querySelector(".manage-tabs").addEventListener("click", (e) => {

@@ -6,6 +6,13 @@ import { escHtml, fmtDate, fmtAgo, uiConfirm, uiError } from "../ui.js";
 import { state } from "../state.js";
 import { accessChips } from "../access.js";
 
+// endereço do conector MCP com botão de copiar (plan-web-36)
+const connectUrlHtml = () => `
+  <div class="connect-url">
+    <code>${escHtml(location.origin)}/mcp</code>
+    <button class="btn sm" type="button" data-copy-url>${icon("copy", 14)}<span>${t("common.copy")}</span></button>
+  </div>`;
+
 function grantRow(g, showUser) {
   const who = g.agent_slug
     ? `<span class="chip">${icon("bot", 12)}<span class="chip-text">${escHtml(g.agent_name || g.agent_slug)}</span></span>`
@@ -47,15 +54,29 @@ async function renderConnectionsList() {
         <span class="muted">${t("connections.count", { count: grants.length })}</span>
         ${isAdmin ? `<label class="consent-perm"><input type="checkbox" id="connections-all" ${all ? "checked" : ""} /><span>${t("connections.showAll")}</span></label>` : ""}
       </div>
-      <div class="data-table">
-        <div class="trow thead">
-          <div>${t("connections.col.app")}</div><div>${t("keys.col.scopes")}</div><div>${t("connections.col.as")}</div><div>${t("connections.col.connected")}</div><div>${t("keys.col.lastUsed")}</div><div></div>
-        </div>
-        ${grants.map((g) => grantRow(g, all)).join("") || `<div class="results-empty">${t("connections.empty")}</div>`}
-      </div>
-      <p class="muted">${t("connections.howTo", { url: `<code>${escHtml(location.origin)}/mcp</code>` })}</p>
+      ${
+        grants.length
+          ? `<div class="data-table">
+               <div class="trow thead">
+                 <div>${t("connections.col.app")}</div><div>${t("keys.col.scopes")}</div><div>${t("connections.col.as")}</div><div>${t("connections.col.connected")}</div><div>${t("keys.col.lastUsed")}</div><div></div>
+               </div>
+               ${grants.map((g) => grantRow(g, all)).join("")}
+             </div>
+             <div class="connect-foot">${connectUrlHtml()}</div>`
+          : `<div class="empty-hero">
+               <span class="empty-hero-icon">${icon("plug", 22)}</span>
+               <strong>${t("connections.empty")}</strong>
+               <span class="muted">${t("connections.emptyHint")}</span>
+               ${connectUrlHtml()}
+             </div>`
+      }
     </div>`;
   await loadIcons(body);
+  body.querySelector("[data-copy-url]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await navigator.clipboard.writeText(`${location.origin}/mcp`);
+    btn.querySelector("span:not([data-icon])").textContent = t("common.copied");
+  });
   body.querySelector("#connections-all")?.addEventListener("change", (e) => {
     state.connectionsAll = e.target.checked;
     renderConnectionsList();

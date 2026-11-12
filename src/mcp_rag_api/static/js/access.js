@@ -1,7 +1,7 @@
 /* Acesso em linguagem simples — atalhos (só leitura / leitura e escrita / administrador) por cima dos
    escopos da API. Usado pelos formulários de chave e de agente e pelos chips das listas. */
 import { t } from "./i18n.js";
-import { escHtml } from "./ui.js";
+import { escHtml, helpTip } from "./ui.js";
 
 // [escopo, descrição, rótulo curto]
 const SCOPES = [
@@ -57,7 +57,7 @@ function accessPresetsHtml(prefix, selected) {
 function scopesBlockHtml(prefix, initial) {
   return `
     <div class="form-field">
-      <span class="form-label">${t("access.scopes")}</span>
+      <span class="form-label">${t("access.scopes")} ${helpTip(t("access.scopesHelp"))}</span>
       <div class="scope-grid two" id="${prefix}-scopes">
         ${SCOPES.map(
           ([sc, desc]) => `
@@ -67,7 +67,6 @@ function scopesBlockHtml(prefix, initial) {
           </label>`,
         ).join("")}
       </div>
-      <span class="form-help">${t("access.scopesHelp")}</span>
       <span class="form-help access-custom hidden" id="${prefix}-custom">${t("access.custom")}</span>
     </div>`;
 }

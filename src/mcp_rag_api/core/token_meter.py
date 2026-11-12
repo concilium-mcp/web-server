@@ -133,50 +133,57 @@ async def shutdown() -> None:
     await flush()
 
 
-async def summary(days: int) -> dict:
-    """Bloco "tokens" do Painel: totais, série diária e quebra por projeto e por agente."""
+async def summary(days: int, end: date | None = None) -> dict:
+    """Bloco "tokens" do Painel: totais, série diária e quebra por projeto e por agente, nos `days` dias
+    que terminam em `end` (padrão: hoje)."""
     async with pool().acquire() as conn:
+        if end is None:
+            end = await conn.fetchval("SELECT current_date")
         totals = await conn.fetchrow(
             """
             SELECT coalesce(sum(calls), 0) AS calls, coalesce(sum(served), 0) AS served,
                    coalesce(sum(baseline), 0) AS baseline
-            FROM token_stats_daily WHERE day >= current_date - ($1 - 1)
+            FROM token_stats_daily WHERE day BETWEEN $2::date - ($1 - 1) AND $2::date
             """,
             days,
+            end,
         )
         daily = await conn.fetch(
             """
             WITH days AS (
                 SELECT d::date AS day
-                FROM generate_series(current_date - ($1 - 1), current_date, interval '1 day') AS d
+                FROM generate_series($2::date - ($1 - 1), $2::date, interval '1 day') AS d
             ),
             sums AS (
                 SELECT day, sum(served) AS served, sum(baseline) AS baseline
-                FROM token_stats_daily WHERE day >= current_date - ($1 - 1) GROUP BY day
+                FROM token_stats_daily WHERE day BETWEEN $2::date - ($1 - 1) AND $2::date GROUP BY day
             )
             SELECT days.day, coalesce(sums.served, 0) AS served, coalesce(sums.baseline, 0) AS baseline
             FROM days LEFT JOIN sums USING (day) ORDER BY day
             """,
             days,
+            end,
         )
         by_collection = await conn.fetch(
             """
             SELECT coalesce(c.name, '—') AS name, sum(t.calls) AS calls, sum(t.served) AS served,
                    sum(t.baseline) AS baseline
             FROM token_stats_daily t LEFT JOIN collections c ON c.id = t.collection_id
-            WHERE t.day >= current_date - ($1 - 1)
+            WHERE t.day BETWEEN $2::date - ($1 - 1) AND $2::date
             GROUP BY 1 ORDER BY sum(t.baseline) - sum(t.served) DESC LIMIT 20
             """,
             days,
+            end,
         )
         by_agent = await conn.fetch(
             """
             SELECT a.slug, a.name, sum(t.calls) AS calls, sum(t.served) AS served, sum(t.baseline) AS baseline
             FROM token_stats_daily t JOIN agents a ON a.id = t.agent_id
-            WHERE t.day >= current_date - ($1 - 1)
+            WHERE t.day BETWEEN $2::date - ($1 - 1) AND $2::date
             GROUP BY a.slug, a.name ORDER BY sum(t.baseline) - sum(t.served) DESC LIMIT 20
             """,
             days,
+            end,
         )
 
     def ints(rows: list[dict]) -> list[dict]:

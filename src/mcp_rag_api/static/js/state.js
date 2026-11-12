@@ -5,6 +5,7 @@ const state = {
   user: null,
   screen: "overview", // tela inicial ao entrar
   insightsDays: 30, // período do Painel (7 | 30 | 90)
+  insightsRange: null, // período personalizado {start, end} (AAAA-MM-DD); null = últimos insightsDays dias
   insights: null,
   foldersExpanded: false, // Painel: "Notas por pasta" mostrando todas as pastas (Ver mais)
   level: "documents",

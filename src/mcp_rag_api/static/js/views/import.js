@@ -36,7 +36,7 @@ async function openImportModal(opts = {}) {
     id: "obsidian-import",
     iconName: "folder-input",
     title: t("import.title"),
-    subtitle: t("import.subtitle"),
+    help: t("import.subtitle"),
     submitLabel: t("import.start"),
     submitIcon: "folder-input",
     width: 640,
@@ -46,29 +46,20 @@ async function openImportModal(opts = {}) {
         ${mode("vault", "import.modeVault", "import.modeVaultDesc", !target)}
       </div>
       <div data-import-mode="files" class="${target ? "" : "hidden"}">
-        <p class="muted">${t("import.filesHelp")}</p>
-        <div class="create-grid">
-          <label class="form-field">
-            <span class="form-label">${t("import.filesLabel")}</span>
-            <input class="input" id="oi-files" type="file" multiple accept="${FILE_EXTENSIONS.join(",")}" />
-          </label>
-          <label class="form-field">
-            <span class="form-label">${t("import.destination")}</span>
-            <select class="input" id="oi-location">${target?.locations || ""}</select>
-          </label>
-        </div>
+        ${dropzone("oi-files", `multiple accept="${FILE_EXTENSIONS.join(",")}"`, t("import.dropTitle"), t("import.filesLabel"), t("import.filesHelp"))}
+        <label class="form-field import-dest">
+          <span class="form-label">${t("import.destination")}</span>
+          <select class="input" id="oi-location">${target?.locations || ""}</select>
+        </label>
       </div>
       <div data-import-mode="vault" class="${target ? "hidden" : ""}">
-        <p class="muted">${t("import.help")}</p>
-        <label class="form-field">
-          <span class="form-label">${t("import.fileLabel")}</span>
-          <input class="input" id="oi-file" type="file" accept=".zip,application/zip" />
-        </label>
+        ${dropzone("oi-file", 'accept=".zip,application/zip"', t("import.dropZip"), t("import.fileLabel"), t("import.help"))}
       </div>`,
   });
   document.body.appendChild(holder.firstElementChild);
   const modal = document.getElementById("obsidian-import-modal");
   await loadIcons(modal);
+  bindDropzones(modal);
   modal.querySelector("#obsidian-import-form").addEventListener("submit", onStart);
   modal.querySelectorAll("input[name=oi-mode]").forEach((r) =>
     r.addEventListener("change", () => {
@@ -85,6 +76,123 @@ async function openImportModal(opts = {}) {
   document.addEventListener("keydown", onEsc);
   modal.classList.remove("hidden");
 }
+
+/* ---------------------------------------------------------------- área de soltar (plan-web-36) */
+
+// área clicável/soltável no lugar do <input type=file> nativo; o input continua lá (escondido) e é ele que
+// o envio lê, então soltar = colocar os arquivos no input
+function dropzone(inputId, attrs, title, sub, help) {
+  return `
+    <label class="dropzone" for="${inputId}">
+      <input class="dz-input" id="${inputId}" type="file" ${attrs} />
+      <span class="dz-icon">${icon("upload", 20)}</span>
+      <span class="dz-title">${escHtml(title)}</span>
+      <span class="dz-sub">${escHtml(sub)} <span class="help-tip" tabindex="0" role="note" aria-label="${escHtml(help)}" data-tip="${escHtml(help)}">?</span></span>
+      <span class="dz-picked hidden"></span>
+    </label>`;
+}
+
+function showPicked(input) {
+  const box = input.closest(".dropzone");
+  const files = [...input.files];
+  const picked = box.querySelector(".dz-picked");
+  picked.classList.toggle("hidden", !files.length);
+  box.classList.toggle("has-files", files.length > 0);
+  const names = files.slice(0, 3).map((f) => f.name).join(", ") + (files.length > 3 ? "…" : "");
+  picked.textContent = t("import.picked", { count: files.length, names });
+}
+
+function bindDropzones(modal) {
+  modal.querySelectorAll(".dropzone").forEach((box) => {
+    const input = box.querySelector(".dz-input");
+    input.addEventListener("change", () => showPicked(input));
+    box.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      box.classList.add("over");
+    });
+    box.addEventListener("dragleave", () => box.classList.remove("over"));
+    box.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      box.classList.remove("over");
+      putFiles(modal, [...e.dataTransfer.files]);
+    });
+  });
+}
+
+// .zip sozinho vai para o modo vault; o resto, para arquivos
+function putFiles(modal, files) {
+  if (!files.length) return;
+  const isZip = files.length === 1 && files[0].name.toLowerCase().endsWith(".zip");
+  const mode = isZip ? "vault" : "files";
+  const radio = modal.querySelector(`input[name=oi-mode][value=${mode}]`);
+  if (radio.disabled) return;
+  radio.checked = true;
+  radio.dispatchEvent(new Event("change"));
+  const input = modal.querySelector(isZip ? "#oi-file" : "#oi-files");
+  const dt = new DataTransfer();
+  files.forEach((f) => dt.items.add(f));
+  input.files = dt.files;
+  showPicked(input);
+}
+
+/* ---------------------------------------------------------------- arrastar e soltar na tela toda */
+
+// a tela de Notas registra de onde vêm os destinos; sem registro (outras telas, leitor) não há soltar
+let dropProvider = null;
+function setDropImport(provider) {
+  dropProvider = provider;
+}
+
+const hasFiles = (e) => Boolean(e.dataTransfer?.types?.includes("Files"));
+const dropEnabled = () => Boolean(dropProvider && document.getElementById("notes-tree-list"));
+let dragDepth = 0;
+
+function overlay(show) {
+  let el = document.getElementById("drop-overlay");
+  if (show && !el) {
+    el = document.createElement("div");
+    el.id = "drop-overlay";
+    el.className = "drop-overlay";
+    el.innerHTML = `
+      <div class="drop-frame"></div>
+      <div class="drop-card">
+        <span class="drop-icon">${icon("upload", 26)}</span>
+        <strong>${t("import.dropOverlay")}</strong>
+        <span>${t("import.dropOverlaySub")}</span>
+      </div>`;
+    document.body.appendChild(el);
+    loadIcons(el);
+    requestAnimationFrame(() => el.classList.add("on"));
+  } else if (!show && el) {
+    el.remove();
+  }
+}
+
+window.addEventListener("dragenter", (e) => {
+  if (!hasFiles(e) || !dropEnabled()) return;
+  e.preventDefault();
+  dragDepth += 1;
+  if (!document.getElementById("obsidian-import-modal")) overlay(true);
+});
+window.addEventListener("dragover", (e) => {
+  if (hasFiles(e) && dropEnabled()) e.preventDefault(); // sem isso o navegador abre o arquivo
+});
+window.addEventListener("dragleave", (e) => {
+  if (!hasFiles(e) || !dropEnabled()) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) overlay(false);
+});
+window.addEventListener("drop", async (e) => {
+  if (!hasFiles(e) || !dropEnabled()) return;
+  e.preventDefault();
+  dragDepth = 0;
+  overlay(false);
+  const files = [...e.dataTransfer.files];
+  if (!files.length) return;
+  if (!document.getElementById("obsidian-import-modal")) await openImportModal(dropProvider());
+  putFiles(document.getElementById("obsidian-import-modal"), files);
+});
 
 const selectedMode = (modal) => modal.querySelector("input[name=oi-mode]:checked")?.value || "vault";
 
@@ -281,12 +389,9 @@ function renderFinished(snap, pollError = null) {
       </div>
     </div>
     ${snap ? `<div id="oi-errors">${renderErrorsHtml(snap.errors)}</div>` : ""}`;
-  const foot = modal.querySelector(".modal-foot");
-  foot.classList.remove("hidden");
-  foot.innerHTML = `
-    <button class="btn primary" type="button" id="oi-close">${icon("check", 14)}<span>${t("import.closeSummary")}</span></button>`;
+  // resumo final: só leitura, sem rodapé — o × fecha (mesmo caminho do antigo "Concluir")
+  modal.querySelector(".modal-foot").classList.add("hidden");
   loadIcons(modal);
-  foot.querySelector("#oi-close").addEventListener("click", () => closeModal());
 }
 
 function renderErrorsHtml(errors) {
@@ -315,4 +420,4 @@ async function cancelJob() {
   }
 }
 
-export { openImportModal };
+export { setDropImport, openImportModal };

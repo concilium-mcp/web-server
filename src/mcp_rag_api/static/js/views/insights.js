@@ -5,6 +5,7 @@ import { icon, loadIcons } from "../icons.js";
 import { escHtml, fmtAgo, debounce, uiError } from "../ui.js";
 import { state, colorFor } from "../state.js";
 import { emit } from "../events.js";
+import { openRangePicker, closeRangePicker } from "../range-picker.js";
 
 /* ---------------------------------------------------------------- tela: painel (indicadores e gráficos) */
 
@@ -13,6 +14,18 @@ import { emit } from "../events.js";
 // tooltip por marca e alternância "Tabela" em todo gráfico (o tooltip nunca é o único caminho).
 
 const PERIODS = [7, 30, 90];
+
+const isoDaysAgo = (n) => {
+  const d = new Date();
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate() - n)).toISOString().slice(0, 10);
+};
+
+// rótulo do botão personalizado: "Personalizado" ou "1 out – 15 out"
+function rangeLabel() {
+  const r = state.insightsRange;
+  if (!r) return t("overview.custom");
+  return `${fmtDay(r.start)} – ${fmtDay(r.end)}`;
+}
 // formatadores seguem o idioma atual (criados na hora: a troca de idioma vale sem recarregar)
 const nf = { format: (v) => new Intl.NumberFormat(locale()).format(v) };
 const nfCompact = { format: (v) => new Intl.NumberFormat(locale(), { notation: "compact", maximumFractionDigits: 1 }).format(v) };
@@ -99,108 +112,72 @@ function bindTip(el, value, label) {
 
 /* ---------- gráficos */
 
-// Colunas por dia (série única). points: [{label, value, tip}]
-function drawColumns(box, points, { valueName }) {
+// Área fina (série única): linha de 1,5px + degradê suave, um ponto no pico e alvo de hover por dia.
+// points: [{label, value, tip}]
+let areaSeq = 0;
+function drawArea(box, points, { valueName }) {
   box.replaceChildren();
   const W = Math.max(280, box.clientWidth);
-  const H = 200;
-  const pad = { top: 18, right: 8, bottom: 26, left: 34 };
+  const H = 150;
+  const pad = { top: 22, right: 6, bottom: 24, left: 6 };
   const plotW = W - pad.left - pad.right;
   const plotH = H - pad.top - pad.bottom;
   const max = Math.max(...points.map((p) => p.value), 0);
-  const ticks = niceTicks(max);
-  const top = ticks[ticks.length - 1];
-  const slot = plotW / points.length;
-  const barW = Math.max(2, Math.min(24, slot - 2)); // 2px de superfície entre colunas vizinhas
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img" });
-
-  for (const tick of ticks) {
-    const y = pad.top + plotH - (tick / top) * plotH;
-    svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: y, y2: y, class: tick === 0 ? "viz-axis" : "viz-gridline" }));
-    const label = svgEl("text", { x: pad.left - 8, y: y + 4, class: "viz-tick", "text-anchor": "end" });
-    label.textContent = nf.format(tick);
-    svg.append(label);
-  }
-  // rótulos do eixo X esparsos: ~6 ao longo do período
-  const every = Math.max(1, Math.ceil(points.length / 6));
+  const top = max || 1;
+  const step = points.length > 1 ? plotW / (points.length - 1) : plotW;
+  const xy = points.map((p, i) => [pad.left + i * step, pad.top + plotH - (p.value / top) * plotH]);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", class: "viz-area" });
+  const id = `area-grad-${++areaSeq}`;
+  const defs = svgEl("defs");
+  const grad = svgEl("linearGradient", { id, x1: 0, x2: 0, y1: 0, y2: 1 });
+  grad.append(svgEl("stop", { offset: "0", class: "area-stop-top" }), svgEl("stop", { offset: "1", class: "area-stop-bottom" }));
+  defs.append(grad);
+  svg.append(defs);
+  svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: pad.top + plotH, y2: pad.top + plotH, class: "viz-axis" }));
+  const line = xy.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  svg.append(svgEl("path", { d: `${line} L${xy[xy.length - 1][0].toFixed(1)},${pad.top + plotH} L${pad.left},${pad.top + plotH} Z`, fill: `url(#${id})` }));
+  svg.append(svgEl("path", { d: line, class: "area-line" }));
   const maxIdx = points.findIndex((p) => p.value === max && max > 0);
   points.forEach((p, i) => {
-    const x = pad.left + i * slot + (slot - barW) / 2;
-    const h = top ? (p.value / top) * plotH : 0;
-    const y = pad.top + plotH - h;
-    // área de hover = a fatia inteira do dia (maior que a marca)
-    const hit = svgEl("rect", { x: pad.left + i * slot, y: pad.top, width: slot, height: plotH, class: "viz-hit" });
+    const [x, y] = xy[i];
     const g = svgEl("g", { class: "viz-col" });
-    if (p.value > 0) g.append(svgEl("path", { d: columnPath(x, y, barW, h), class: "viz-mark" }));
-    g.append(hit);
+    g.append(svgEl("circle", { cx: x, cy: y, r: i === maxIdx ? 3 : 2.5, class: i === maxIdx ? "area-dot peak" : "area-dot" }));
+    g.append(svgEl("rect", { x: x - step / 2, y: pad.top, width: Math.max(step, 4), height: plotH, class: "viz-hit" }));
     bindTip(g, `${nf.format(p.value)} ${valueName(p.value)}`, p.tip);
     svg.append(g);
-    if (i % every === 0 || i === points.length - 1) {
-      const lx = svgEl("text", { x: x + barW / 2, y: H - 8, class: "viz-tick", "text-anchor": "middle" });
-      lx.textContent = p.label;
-      svg.append(lx);
-    }
-    if (i === maxIdx) {
-      // rótulo direto só no pico (nunca um número em cada coluna)
-      const lv = svgEl("text", { x: x + barW / 2, y: y - 6, class: "viz-value", "text-anchor": "middle" });
-      lv.textContent = nf.format(p.value);
-      svg.append(lv);
-    }
+  });
+  if (maxIdx >= 0) {
+    const lv = svgEl("text", { x: xy[maxIdx][0], y: xy[maxIdx][1] - 9, class: "viz-value", "text-anchor": "middle" });
+    lv.textContent = nfCompact.format(max);
+    svg.append(lv);
+  }
+  const edge = [0, Math.floor((points.length - 1) / 2), points.length - 1];
+  edge.forEach((i, k) => {
+    if (!points[i]) return;
+    const lx = svgEl("text", { x: xy[i][0], y: H - 6, class: "viz-tick", "text-anchor": k === 0 ? "start" : k === 2 ? "end" : "middle" });
+    lx.textContent = points[i].label;
+    svg.append(lx);
   });
   box.append(svg);
 }
 
-// Barras horizontais (série única). rows: [{label, value, dot?, tip?}]
-function drawBars(box, rows, { valueName, empty }) {
-  box.replaceChildren();
+// Lista em linhas com filete: rótulo, barra de 3px e valor. rows: [{label, value, dot?, tip?}]
+function drawRows(box, rows, { empty, format = (v) => nf.format(v) }) {
   if (!rows.length || rows.every((r) => !r.value)) {
     box.innerHTML = `<div class="viz-empty">${escHtml(empty)}</div>`;
     return;
   }
-  const W = Math.max(260, box.clientWidth);
-  const rowH = 30;
-  const barH = 12;
-  const labelW = Math.min(150, Math.round(W * 0.38));
-  const valueW = 44;
-  const plotW = W - labelW - valueW - 8;
   const max = Math.max(...rows.map((r) => r.value));
-  const H = rows.length * rowH;
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img" });
-  svg.append(svgEl("line", { x1: labelW, x2: labelW, y1: 0, y2: H, class: "viz-axis" }));
-  rows.forEach((r, i) => {
-    const cy = i * rowH + rowH / 2;
-    const w = max ? Math.max(r.value ? 3 : 0, (r.value / max) * plotW) : 0;
-    let tx = 0;
-    if (r.dot) {
-      svg.append(svgEl("circle", { cx: 5, cy, r: 4, fill: r.dot }));
-      tx = 16;
-    }
-    const label = svgEl("text", { x: tx, y: cy + 4, class: "viz-label" });
-    const maxChars = Math.floor((labelW - tx - 8) / 7);
-    label.textContent = r.label.length > maxChars ? `${r.label.slice(0, maxChars - 1)}…` : r.label;
-    svg.append(label);
-    const g = svgEl("g", { class: "viz-col" });
-    if (w > 0) g.append(svgEl("path", { d: barPath(labelW + 1, cy - barH / 2, w, barH), class: "viz-mark" }));
-    g.append(svgEl("rect", { x: 0, y: i * rowH, width: W, height: rowH, class: "viz-hit" }));
-    bindTip(g, `${nf.format(r.value)} ${valueName(r.value)}`, r.tip || r.label);
-    svg.append(g);
-    const v = svgEl("text", { x: labelW + 1 + w + 6, y: cy + 4, class: "viz-value" });
-    v.textContent = nf.format(r.value);
-    svg.append(v);
-  });
-  box.append(svg);
-}
-
-function sparkline(values) {
-  const W = 96;
-  const H = 28;
-  const max = Math.max(...values, 1);
-  const step = values.length > 1 ? W / (values.length - 1) : W;
-  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(H - 3 - (v / max) * (H - 6)).toFixed(1)}`);
-  const last = pts[pts.length - 1].split(",");
-  return `<svg class="sparkline" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">
-    <polyline points="${pts.join(" ")}" />
-    <circle cx="${last[0]}" cy="${last[1]}" r="3" /></svg>`;
+  box.innerHTML = `<div class="rowlist">${rows
+    .map(
+      (r) => `
+      <div class="rowlist-row" title="${escHtml(r.tip || r.label)}">
+        <span class="rowlist-label">${r.dot ? `<span class="dot" style="background:${r.dot}"></span>` : ""}<span>${escHtml(r.label)}</span></span>
+        <span class="rowlist-bar"><i style="width:${max ? Math.max(r.value ? 2 : 0, (r.value / max) * 100) : 0}%"></i></span>
+        <span class="rowlist-value">${format(r.value)}</span>
+      </div>`,
+    )
+    .join("")}</div>`;
 }
 
 function meter(label, value, total, hint) {
@@ -249,8 +226,11 @@ function overviewTemplate() {
       <div class="overview-col" id="overview">
         <div class="overview-filters">
           <span class="filter-label">${icon("calendar", 14)}${t("overview.period")}</span>
-          <div class="period-seg" id="period-seg" role="radiogroup" aria-label="${t("overview.period")}">
-            ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${d === days}" data-days="${d}" class="${d === days ? "active" : ""}">${t("overview.periodDays", { count: d })}</button>`).join("")}
+          <div class="period-wrap">
+            <div class="period-seg" id="period-seg" role="radiogroup" aria-label="${t("overview.period")}">
+              ${PERIODS.map((d) => `<button type="button" role="radio" aria-checked="${!state.insightsRange && d === days}" data-days="${d}" class="${!state.insightsRange && d === days ? "active" : ""}">${t("overview.periodDays", { count: d })}</button>`).join("")}
+              <button type="button" role="radio" aria-checked="${Boolean(state.insightsRange)}" data-custom class="${state.insightsRange ? "active" : ""}">${rangeLabel()}</button>
+            </div>
           </div>
           <span class="grow"></span>
           <span class="muted overview-updated" id="overview-updated"></span>
@@ -280,14 +260,32 @@ function overviewTemplate() {
 async function renderOverview(main) {
   main.innerHTML = overviewTemplate();
   await loadIcons(main);
-  main.querySelector("#period-seg").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-days]");
-    if (!b || Number(b.dataset.days) === state.insightsDays) return;
-    state.insightsDays = Number(b.dataset.days);
+  const markActive = (b) =>
     main.querySelectorAll("#period-seg button").forEach((x) => {
       x.classList.toggle("active", x === b);
       x.setAttribute("aria-checked", String(x === b));
     });
+  main.querySelector("#period-seg").addEventListener("click", (e) => {
+    if (e.target.closest("[data-custom]")) {
+      // período personalizado (plan-web-36): calendário de dois meses com atalhos
+      const range = state.insightsRange || { start: isoDaysAgo(state.insightsDays - 1), end: isoDaysAgo(0) };
+      openRangePicker(main.querySelector(".period-wrap"), range, (picked) => {
+        state.insightsRange = picked;
+        const custom = main.querySelector("[data-custom]");
+        custom.textContent = rangeLabel();
+        markActive(custom);
+        loadInsights();
+      });
+      return;
+    }
+    const b = e.target.closest("[data-days]");
+    if (!b) return;
+    closeRangePicker();
+    if (Number(b.dataset.days) === state.insightsDays && !state.insightsRange) return;
+    state.insightsDays = Number(b.dataset.days);
+    state.insightsRange = null;
+    main.querySelector("[data-custom]").textContent = rangeLabel();
+    markActive(b);
     loadInsights();
   });
   main.querySelector("#overview-refresh").addEventListener("click", () => loadInsights());
@@ -325,7 +323,7 @@ async function loadInsights() {
   document.getElementById("overview-refresh")?.classList.add("spinning");
   let data;
   try {
-    data = await api.get("/insights", { days: state.insightsDays });
+    data = await api.get("/insights", state.insightsRange ? { ...state.insightsRange } : { days: state.insightsDays });
   } catch (err) {
     root.classList.remove("loading");
     stopSpin();
@@ -377,11 +375,8 @@ function renderKpis(d) {
       return `
       <div class="kpi-cell ${k.tech ? "tech" : ""}">
         <${tag} class="kpi"${k.goto ? ` type="button" data-goto="${k.goto}"` : ""}>
-          <span class="kpi-label"><span class="kpi-icon">${icon(k.iconName, 14)}</span>${escHtml(k.label)}</span>
-          <div class="kpi-row">
-            <span class="kpi-value" title="${nf.format(k.value)}">${k.value >= 10000 ? nfCompact.format(k.value) : nf.format(k.value)}</span>
-            ${k.spark ? sparkline(k.spark) : ""}
-          </div>
+          <span class="kpi-value" title="${nf.format(k.value)}">${k.value >= 10000 ? nfCompact.format(k.value) : nf.format(k.value)}</span>
+          <span class="kpi-label">${escHtml(k.label)}</span>
           ${k.goto ? `<span class="kpi-go">${icon("chevron-right", 14)}</span>` : ""}
         </${tag}>
         ${k.sub ? `<span class="kpi-sub ${k.trend || ""}" ${k.subTip ? `title="${escHtml(k.subTip)}"` : ""}>${k.trend === "up" ? "▲ " : k.trend === "down" ? "▼ " : ""}${escHtml(k.sub)}</span>` : ""}
@@ -401,7 +396,7 @@ function renderOverviewCharts() {
     tip: fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" }) + (p.created ? t("chart.newNotes", { count: p.created }) : ""),
   }));
   const card = (id) => document.querySelector(`#${id}`);
-  drawColumns(card("viz-activity").querySelector(".viz-body"), activity, { valueName: (v) => t("unit.edit", { count: v }) });
+  drawArea(card("viz-activity").querySelector(".viz-body"), activity, { valueName: (v) => t("unit.edit", { count: v }) });
   card("viz-activity").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.day"), t("col.edits"), t("col.newNotes")],
     d.activity.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), p.edits, p.created]),
@@ -410,10 +405,10 @@ function renderOverviewCharts() {
   const folders = d.by_collection;
   const hiddenCount = folders.length - FOLDERS_PREVIEW;
   const shown = state.foldersExpanded || hiddenCount <= 0 ? folders : folders.slice(0, FOLDERS_PREVIEW);
-  drawBars(
+  drawRows(
     card("viz-collections").querySelector(".viz-body"),
     shown.map((c) => ({ label: c.name, value: c.documents, dot: colorFor(c.name) })),
-    { valueName: (v) => t("unit.note", { count: v }), empty: t("chart.noFolders") },
+    { empty: t("chart.noFolders") },
   );
   const more = card("viz-collections").querySelector(".viz-more");
   more.classList.toggle("hidden", hiddenCount <= 0);
@@ -429,10 +424,10 @@ function renderOverviewCharts() {
 
   renderTokens(d);
 
-  drawBars(
+  drawRows(
     card("viz-contributors").querySelector(".viz-body"),
     d.contributors.map((c) => ({ label: actorName(c.actor), value: c.edits })),
-    { valueName: (v) => t("unit.edit", { count: v }), empty: t("chart.noEdits", { days: d.days }) },
+    { empty: t("chart.noEdits", { days: d.days }) },
   );
   card("viz-contributors").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.who"), t("col.edits")],
@@ -453,12 +448,14 @@ function renderTokens(d) {
     const pct = tk.baseline ? Math.round((saved(tk) / tk.baseline) * 100) : 0;
     body.innerHTML = `
       <div class="tokens-summary">
-        <strong>${escHtml(t("tokens.saved", { saved: nfCompact.format(saved(tk)) }))}</strong>
-        <span>${escHtml(t("tokens.detail", { served: nf.format(tk.served), baseline: nf.format(tk.baseline), pct, calls: nf.format(tk.calls) }))}</span>
-        <span class="muted">${escHtml(t("tokens.estimate"))}</span>
+        <div class="tokens-hero">
+          <span class="tokens-big">${nfCompact.format(saved(tk))}</span>
+          <span class="tokens-ratio" title="${escHtml(t("tokens.estimate"))}"><i style="width:${pct}%"></i></span>
+        </div>
+        <span class="muted">${escHtml(t("tokens.detail", { served: nf.format(tk.served), baseline: nf.format(tk.baseline), pct, calls: nf.format(tk.calls) }))}</span>
       </div>
       <div class="tokens-chart"></div>`;
-    drawColumns(
+    drawArea(
       body.querySelector(".tokens-chart"),
       tk.daily.map((p) => ({ label: fmtDay(p.day), value: saved(p), tip: fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" }) })),
       { valueName: (v) => t("unit.token", { count: v }) },
@@ -469,20 +466,20 @@ function renderTokens(d) {
     tk.daily.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), nf.format(p.served), nf.format(p.baseline), nf.format(saved(p))]),
   );
 
-  drawBars(
+  drawRows(
     card("viz-tokens-projects").querySelector(".viz-body"),
     tk.by_collection.map((c) => ({ label: c.name, value: saved(c), dot: colorFor(c.name) })),
-    { valueName: (v) => t("unit.token", { count: v }), empty: t("tokens.empty") },
+    { empty: t("tokens.empty"), format: (v) => nfCompact.format(v) },
   );
   card("viz-tokens-projects").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.project"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.saved")],
     tk.by_collection.map((c) => [c.name, nf.format(c.calls), nf.format(c.served), nf.format(c.baseline), nf.format(saved(c))]),
   );
 
-  drawBars(
+  drawRows(
     card("viz-tokens-agents").querySelector(".viz-body"),
     tk.by_agent.map((a) => ({ label: a.name || a.slug, value: saved(a), tip: a.slug })),
-    { valueName: (v) => t("unit.token", { count: v }), empty: t("tokens.noAgents") },
+    { empty: t("tokens.noAgents"), format: (v) => nfCompact.format(v) },
   );
   card("viz-tokens-agents").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.agent"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.saved")],

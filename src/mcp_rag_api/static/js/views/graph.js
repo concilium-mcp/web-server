@@ -50,7 +50,7 @@ function graphTemplate() {
   loadGraphPrefs();
   return `
     <div class="split">
-      <section class="page">
+      <section class="page graph-page">
         <header class="page-header">
           <h1>${icon("network", 18)} ${t("graph.title")}</h1>
           <span class="sub" id="graph-sub"></span>
@@ -62,6 +62,9 @@ function graphTemplate() {
               <button data-view="groups" role="radio" aria-checked="false" title="${t("graph.viewGroupsTitle")}">${t("graph.viewGroups")}</button>
               <button data-view="all" role="radio" aria-checked="false">${t("graph.viewAll")}</button>
             </div>
+            <details class="graph-tune">
+              <summary class="btn sm">${icon("sliders-horizontal", 14)}<span>${t("graph.tune")}</span></summary>
+              <div class="tune-panel">
             <div class="field">${icon("sliders-horizontal")}<label for="f-sim">${t("graph.similarity")} <span id="f-sim-val" class="mono">${state.minSimilarity.toFixed(2)}</span></label>
               <input type="range" id="f-sim" min="0" max="0.95" step="0.05" value="${state.minSimilarity}" />
             </div>
@@ -71,6 +74,8 @@ function graphTemplate() {
             <div class="field tech"><label for="f-k">Top-k</label>
               <select id="f-k">${[1, 2, 3, 5, 8, 12, 20].map((k) => `<option ${k === state.k ? "selected" : ""}>${k}</option>`).join("")}</select>
             </div>
+              </div>
+            </details>
             <div class="seg tech" id="f-level">
               <button data-level="documents" class="${state.level === "documents" ? "active" : ""}">${t("graph.documents")}</button>
               <button data-level="chunks" class="${state.level === "chunks" ? "active" : ""}">${t("graph.chunks")}</button>
@@ -446,15 +451,16 @@ function buildView(data) {
   const strengthLevel = (l) =>
     l.similarity == null ? STRENGTH_STEPS : Math.round(Math.max(0, Math.min(1, (l.similarity - state.minSimilarity) / (1 - state.minSimilarity || 1))) * STRENGTH_STEPS);
   const levelOf = (l) => l.__lvl ?? (l.__lvl = strengthLevel(l));
-  const semanticColor = [...Array(STRENGTH_STEPS + 1)].map((_, k) => `rgba(${colors.edgeRgb}, ${(0.1 + (k / STRENGTH_STEPS) * 0.4).toFixed(3)})`);
-  const semanticWidth = [...Array(STRENGTH_STEPS + 1)].map((_, k) => 0.6 + (k / STRENGTH_STEPS) * 1.6);
+  // traço fino e translúcido (plan-web-36): a similaridade aparece mais pela opacidade que pela espessura
+  const semanticColor = [...Array(STRENGTH_STEPS + 1)].map((_, k) => `rgba(${colors.edgeRgb}, ${(0.06 + (k / STRENGTH_STEPS) * 0.24).toFixed(3)})`);
+  const semanticWidth = [...Array(STRENGTH_STEPS + 1)].map((_, k) => 0.4 + (k / STRENGTH_STEPS) * 0.9);
   const C = {
     faint: `rgba(${colors.edgeRgb}, 0.04)`,
     legendFaint: `rgba(${colors.edgeRgb}, 0.05)`,
-    link: `rgba(${colors.accentRgb}, 0.85)`,
-    linkFocus: `rgba(${colors.accentRgb}, 1)`,
-    accent: `rgba(${colors.accentRgb}, 0.6)`,
-    group: `rgba(${colors.edgeRgb}, 0.32)`,
+    link: `rgba(${colors.accentRgb}, 0.55)`,
+    linkFocus: `rgba(${colors.accentRgb}, 0.95)`,
+    accent: `rgba(${colors.accentRgb}, 0.45)`,
+    group: `rgba(${colors.edgeRgb}, 0.2)`,
   };
 
   // foco: nó em hover (ou origem do modo conectar) + vizinhos diretos
@@ -470,9 +476,10 @@ function buildView(data) {
 
   const radius = (n) => {
     if (n.__r !== undefined) return n.__r;
-    if (groups) return 8 + 30 * Math.sqrt((n.size || 1) / maxSize);
+    if (groups) return 6 + 22 * Math.sqrt((n.size || 1) / maxSize);
     const deg = degree.get(n.id) || 0;
-    const base = state.level === "documents" ? Math.min(14, 3.5 + 1.7 * Math.sqrt(deg) + 0.6 * Math.sqrt(n.chunks || 1)) : 3.5 + Math.sqrt(deg);
+    // nós menores (plan-web-36): o grau ainda pesa, mas sem bolas grandes dominando a cena
+    const base = state.level === "documents" ? Math.min(9, 2.6 + 1.1 * Math.sqrt(deg) + 0.4 * Math.sqrt(n.chunks || 1)) : 2.4 + 0.7 * Math.sqrt(deg);
     return isHl(n) ? base * 1.4 : base;
   };
 
@@ -501,8 +508,8 @@ function buildView(data) {
   };
 
   const linkWidth = (l) => {
-    const base = l.kind === "group" ? 1 + 4 * Math.sqrt((l.weight || 1) / maxWeight) : l.kind === "link" ? 1.8 : semanticWidth[levelOf(l)];
-    return base * state.linkScale * (linkTouchesFocus(l) ? 1.5 : 1);
+    const base = l.kind === "group" ? 0.8 + 2.5 * Math.sqrt((l.weight || 1) / maxWeight) : l.kind === "link" ? 1.1 : semanticWidth[levelOf(l)];
+    return base * state.linkScale * (linkTouchesFocus(l) ? 1.6 : 1);
   };
 
   return { colors, highlight, isHl, nodeKey, visibleEdges, big, groups, serverLayout, linkTouchesFocus, degree, neighbors, radius, nodeDimmed, nodeColor, linkColor, linkWidth, inFocus, focusId };
@@ -623,7 +630,7 @@ function drawLabels2d(ctx, scale, g) {
     });
     return hit;
   };
-  const fontSize = 12 / scale;
+  const fontSize = 11 / scale;
   const pad = 3 / scale;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
@@ -639,7 +646,7 @@ function drawLabels2d(ctx, scale, g) {
     if (!v.groups && !focused && scale < 0.55 && (v.degree.get(n.id) || 0) < 6) continue;
     const max = hovered ? 64 : v.groups ? 44 : 30;
     const text = n.label.length > max ? n.label.slice(0, max - 1) + "…" : n.label;
-    const weight = hovered ? 600 : 500;
+    const weight = hovered ? 500 : 400;
     const w = measureLabel(ctx, text, weight) / scale;
     const r = n.__r;
     const box = { x: n.x - w / 2 - pad, y: n.y + r + 4 / scale - pad, w: w + 2 * pad, h: fontSize + 2 * pad };
@@ -677,17 +684,23 @@ function draw2d(g, nodes, links) {
       // Grafo grande: só no nó em foco ou destacado — o halo dobra o número de círculos pintados
       if (!dim && (!v.big || hovered || (v.highlight && v.isHl(n)))) {
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r + (hovered ? 7 : 3.5), 0, 2 * Math.PI);
+        ctx.arc(n.x, n.y, r + (hovered ? 6 : 2.2), 0, 2 * Math.PI);
         ctx.fillStyle = hovered ? n.__haloHover : n.__halo;
         ctx.fill();
       }
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
       ctx.fillStyle = v.nodeColor(n);
+      // brilho suave na cor do nó (plan-web-36); grafo grande fica sem (custo por quadro)
+      if (!dim && !v.big) {
+        ctx.shadowColor = n.color;
+        ctx.shadowBlur = hovered ? 18 : 7;
+      }
       ctx.fill();
+      ctx.shadowBlur = 0;
       // grafo grande: nó com menos de ~3 px na tela fica sem contorno (um traço a menos por nó)
       if (v.big && r * scale < 3) return;
-      ctx.lineWidth = 1.5 / scale;
+      ctx.lineWidth = 1 / scale;
       ctx.strokeStyle = v.colors.nodeStroke;
       // contorno esmaece junto com o nó (no tema claro o anel escuro pesava sobre o nó apagado)
       ctx.globalAlpha = dim ? 0.25 : 1;
@@ -735,10 +748,10 @@ function create3dGraph(el) {
     .backgroundColor("rgba(0,0,0,0)")
     .showNavInfo(false)
     .nodeId("id")
-    .nodeRelSize(4)
-    .nodeOpacity(0.95)
-    .nodeResolution(16)
-    .linkOpacity(1) // a opacidade vem do alpha de cada cor (linkColor)
+    .nodeRelSize(3)
+    .nodeOpacity(0.92)
+    .nodeResolution(24)
+    .linkOpacity(0.6) // multiplica o alpha de cada cor (linkColor): linhas mais quietas no 3D (plan-web-36)
     .cooldownTicks(120)
     .onNodeHover((n) => {
       state.hoverNode = n || null;
@@ -771,7 +784,8 @@ function draw3d(g, nodes, links) {
       return `<strong>${escHtml(n.label)}</strong><br><span class="muted">${escHtml(n.collection)} · ${t("graph.connections", { count: deg })}</span>`;
     })
     .linkColor(v.linkColor)
-    .linkWidth(v.linkWidth)
+    // no WebGL largura > 0 vira tubo: similaridade em linha de 1 px, só os links explícitos e grupos com corpo
+    .linkWidth((l) => (l.kind === "link" || l.kind === "group" ? v.linkWidth(l) * 0.5 : 0))
     // curva em WebGL vira tubo segmentado: só vale a pena com poucas arestas
     .linkCurvature((l) => (l.kind === "link" || links.length > 300 ? 0 : 0.12))
     .linkLabel(linkLabel);

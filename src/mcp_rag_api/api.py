@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .config import get_settings
-from .core import agents, brief, documents, file_import, folders, lean, links, memory, search, token_meter
+from .core import agents, boards, brief, documents, file_import, folders, lean, links, memory, search, token_meter
 from .security import DEV_PRINCIPAL, PermissionDenied, Principal, bearer_token, resolve_bearer
 
 router = APIRouter()
@@ -227,9 +227,16 @@ async def search_knowledge(body: SearchIn, p: Principal = Auth) -> list[dict] | 
 
 
 @router.get("/context/brief")
-async def project_brief(collection: str, agent: str | None = None, p: Principal = Auth) -> dict:
-    """Resumo do projeto para o início da sessão (plugin do Claude Code, plan-web-34)."""
-    return await brief.get_brief(p, collection, agent)
+async def project_brief(
+    collection: str,
+    agent: str | None = None,
+    repo: str | None = None,
+    session: str | None = None,
+    p: Principal = Auth,
+) -> dict:
+    """Resumo do projeto para o início da sessão (plugin do Claude Code, plan-web-34), com os cartões
+    do agente (repo filtra pelo repositório; session marca os desta sessão) — plan-web-37a."""
+    return await brief.get_brief(p, collection, agent, repo=repo, work_session=session)
 
 
 @router.get("/documents")
@@ -448,3 +455,278 @@ async def list_tasks(slug: str, status: list[str] | None = Query(default=None), 
 @router.post("/agents/{slug}/tasks")
 async def upsert_task(slug: str, body: TaskIn, p: Principal = Auth) -> dict:
     return await memory.upsert_task(p, agent_slug=slug, **body.model_dump())
+
+
+# ---------------------------------------------------------------- quadros (plan-web-37a)
+# Origem no log: cliente = User-Agent; sessão = cabeçalho X-Concilium-Session (ou "session" no corpo).
+
+
+def board_origin(
+    user_agent: str | None = Header(default=None), x_concilium_session: str | None = Header(default=None)
+) -> boards.Origin:
+    return boards.Origin.of(user_agent or "rest", x_concilium_session)
+
+
+Origin = Depends(board_origin)
+
+
+class BoardIn(BaseModel):
+    collection: str
+    name: str
+    folder_path: str | None = None
+    description: str | None = None
+    columns: list[str | dict[str, Any]] | None = None
+    owner: str | None = None
+
+
+class BoardPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    owner: str | None = None
+    folder_path: str | None = None
+    archived: bool | None = None
+
+
+class ColumnIn(BaseModel):
+    name: str
+    role: str | None = None
+    position: int | None = None
+    wip_limit: int | None = None
+
+
+class ColumnPatch(BaseModel):
+    name: str | None = None
+    role: str | None = None
+    position: int | None = None
+    wip_limit: int | None = None
+
+
+class CardIn(BaseModel):
+    title: str
+    description: str | None = None
+    checklist: list[str] | None = None
+    labels: list[str] | None = None
+    due: str | None = None
+    column: str | None = None
+    assignee: str | None = None
+    repo: str | None = None
+
+
+class CardPatch(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    due: str | None = None
+    labels: list[str] | None = None
+    repo: str | None = None
+    worktree: str | None = None
+    branch: str | None = None
+    mr_url: str | None = None
+    ci_status: str | None = None
+    column: str | None = None
+    position: int | None = None
+    assignee: str | None = None
+    archived: bool | None = None
+    session: str | None = None
+
+
+class StartIn(BaseModel):
+    repo: str | None = None
+    force: bool = False
+    session: str | None = None
+
+
+class ItemsIn(BaseModel):
+    items: list[str]
+    session: str | None = None
+
+
+class CheckIn(BaseModel):
+    item_id: int | None = None
+    text: str | None = None
+    done: bool = True
+    session: str | None = None
+
+
+class CardLogIn(BaseModel):
+    text: str
+    kind: str = "note"
+    session: str | None = None
+
+
+class BlockIn(BaseModel):
+    reason: str | None = None
+    session: str | None = None
+
+
+class ReleaseIn(BaseModel):
+    next_step: str
+    force: bool = False
+    session: str | None = None
+
+
+class SubmitIn(BaseModel):
+    summary: str
+    mr_url: str | None = None
+    session: str | None = None
+
+
+class FinishIn(BaseModel):
+    summary: str
+    append_to_document: str | None = None
+    session: str | None = None
+
+
+class CardDocumentIn(BaseModel):
+    document_id: str
+    unlink: bool = False
+
+
+def _with_session(origin: boards.Origin, session: str | None) -> boards.Origin:
+    return boards.Origin.of(origin.client, session or origin.session)
+
+
+@router.get("/boards")
+async def list_boards(
+    collection: str | None = None, folder_path: str | None = None, include_archived: bool = False, p: Principal = Auth
+) -> list[dict]:
+    return await boards.list_boards(p, collection, folder_path, include_archived)
+
+
+@router.post("/boards")
+async def create_board(body: BoardIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.create_board(p, origin=origin, **body.model_dump())
+
+
+@router.get("/boards/{board_id}")
+async def get_board(board_id: str, include_done: bool = False, p: Principal = Auth) -> dict:
+    return await boards.get_board(p, board_id, include_done=include_done)
+
+
+@router.patch("/boards/{board_id}")
+async def update_board(board_id: str, body: BoardPatch, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.update_board(p, board_id, origin=origin, **body.model_dump())
+
+
+@router.get("/boards/{board_id}/log")
+async def board_log(
+    board_id: str,
+    card_id: str | None = None,
+    actor: str | None = None,
+    kind: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    before_id: int | None = None,
+    p: Principal = Auth,
+) -> dict:
+    return await boards.board_log(p, board_id, card_id, actor, kind, since, until, limit, before_id)
+
+
+@router.post("/boards/{board_id}/columns")
+async def create_column(board_id: str, body: ColumnIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.create_column(p, board_id, origin=origin, **body.model_dump())
+
+
+@router.patch("/columns/{column_id}")
+async def update_column(column_id: str, body: ColumnPatch, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.update_column(p, column_id, origin=origin, **body.model_dump())
+
+
+@router.delete("/columns/{column_id}")
+async def delete_column(
+    column_id: str, move_cards_to: str | None = None, p: Principal = Auth, origin: boards.Origin = Origin
+) -> dict:
+    return await boards.delete_column(p, column_id, move_cards_to, origin=origin)
+
+
+@router.post("/boards/{board_id}/cards")
+async def create_card(board_id: str, body: CardIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.create_card(p, board_id, origin=origin, **body.model_dump())
+
+
+@router.get("/my-work")
+async def my_work(session: str | None = None, repo: str | None = None, p: Principal = Auth) -> dict:
+    return await boards.my_work(p, session, repo)
+
+
+@router.get("/cards/search")
+async def search_cards(
+    q: str,
+    collection: str | None = None,
+    include_done: bool = False,
+    limit: int = Query(default=20, ge=1, le=100),
+    p: Principal = Auth,
+) -> list[dict]:
+    return await boards.search_cards(p, q, collection, include_done, limit)
+
+
+@router.get("/cards/{card_id}")
+async def get_card(card_id: str, p: Principal = Auth) -> dict:
+    return await boards.get_card(p, card_id)
+
+
+@router.patch("/cards/{card_id}")
+async def update_card(card_id: str, body: CardPatch, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    data = body.model_dump()
+    return await boards.update_card(p, card_id, origin=_with_session(origin, data.pop("session")), **data)
+
+
+@router.post("/cards/{card_id}/start")
+async def start_card(card_id: str, body: StartIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.start_card(p, card_id, body.repo, body.force, origin=_with_session(origin, body.session))
+
+
+@router.post("/cards/{card_id}/items")
+async def add_items(card_id: str, body: ItemsIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.add_items(p, card_id, body.items, origin=_with_session(origin, body.session))
+
+
+@router.post("/cards/{card_id}/check")
+async def check_item(card_id: str, body: CheckIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.check_item(
+        p, card_id, body.item_id, body.text, body.done, origin=_with_session(origin, body.session)
+    )
+
+
+@router.post("/cards/{card_id}/log")
+async def log_card(card_id: str, body: CardLogIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.log_card(p, card_id, body.text, body.kind, origin=_with_session(origin, body.session))
+
+
+@router.get("/cards/{card_id}/log")
+async def card_log(card_id: str, limit: int = Query(default=100, ge=1, le=500), p: Principal = Auth) -> dict:
+    return await boards.card_log(p, card_id, limit)
+
+
+@router.post("/cards/{card_id}/block")
+async def block_card(card_id: str, body: BlockIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.block_card(p, card_id, body.reason, origin=_with_session(origin, body.session))
+
+
+@router.post("/cards/{card_id}/release")
+async def release_card(card_id: str, body: ReleaseIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.release_card(p, card_id, body.next_step, body.force, origin=_with_session(origin, body.session))
+
+
+@router.post("/cards/{card_id}/submit")
+async def submit_card(card_id: str, body: SubmitIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.submit_card(p, card_id, body.summary, body.mr_url, origin=_with_session(origin, body.session))
+
+
+@router.post("/cards/{card_id}/finish")
+async def finish_card(card_id: str, body: FinishIn, p: Principal = Auth, origin: boards.Origin = Origin) -> dict:
+    return await boards.finish_card(
+        p, card_id, body.summary, body.append_to_document, origin=_with_session(origin, body.session)
+    )
+
+
+@router.post("/cards/{card_id}/documents")
+async def link_card_document(
+    card_id: str, body: CardDocumentIn, p: Principal = Auth, origin: boards.Origin = Origin
+) -> dict:
+    return await boards.link_card_document(p, card_id, body.document_id, body.unlink, origin=origin)
+
+
+@router.get("/documents/{document_id}/cards")
+async def document_cards(document_id: str, p: Principal = Auth) -> list[dict]:
+    return await boards.cards_for_document(p, document_id)

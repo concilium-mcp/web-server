@@ -2,7 +2,7 @@
 import { api } from "../api.js";
 import { t } from "../i18n.js";
 import { icon, loadIcons } from "../icons.js";
-import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiConfirm, uiAlert, uiError, disclosure } from "../ui.js";
+import { escHtml, fmtDate, fmtAgo, modalShell, bindModal, uiConfirm, uiAlert, uiError, disclosure, helpTip } from "../ui.js";
 import { state } from "../state.js";
 import { accessChips, accessPresetsHtml, scopesBlockHtml, bindAccessPicker, readScopes } from "../access.js";
 
@@ -14,16 +14,15 @@ function keysCreateForm(agents) {
     id: "key",
     iconName: "key-round",
     title: t("keys.new"),
-    subtitle: t("keys.newSub"),
+    help: t("keys.newSub"),
     submitLabel: t("keys.create"),
     submitIcon: "key-round",
     width: 720,
     body: `
       <div class="create-grid">
         <label class="form-field">
-          <span class="form-label">${t("common.name")}</span>
+          <span class="form-label">${t("common.name")} ${helpTip(t("keys.labelHelp"))}</span>
           <input class="input" type="text" id="key-label" placeholder="${t("keys.labelPh")}" required />
-          <span class="form-help">${t("keys.labelHelp")}</span>
         </label>
         <label class="form-field">
           <span class="form-label">${t("keys.owner")}</span>
