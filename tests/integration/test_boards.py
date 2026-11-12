@@ -355,3 +355,27 @@ async def test_mcp_tools_visible_by_scope():
         assert tool_visible(name, READER)
     for name in ("create_card", "start_card", "finish_card", "create_board", "set_column"):
         assert not tool_visible(name, READER) and tool_visible(name, agent("x"))
+
+
+async def test_lean_responses_are_much_smaller():
+    """Tools de escrita do MCP devolvem o essencial (plan-web-38 mostrou ~1,5 mil tokens por chamada)."""
+    import json
+
+    from mcp_rag_api.core.tokens import estimate_tokens
+
+    board = await _board()
+    desc = "Contexto do cartão com bastante texto para pesar na resposta. " * 20
+    card = await boards.create_card(ADMIN, board["id"], "Cartão pesado", desc, ["um", "dois", "três"])
+    a = agent("dev-lean")
+    full = await boards.start_card(a, card["id"], origin=S1)
+    for i in range(5):
+        await boards.log_card(a, card["id"], f"commit {i} com uma mensagem razoável", "commit", origin=S1)
+    full = await boards.update_card(a, card["id"], branch="feat/lean", origin=S1)
+    lean = boards.lean_card(full)
+    assert lean["id"] == card["id"] and lean["branch"] == "feat/lean" and lean["progress"] == "0/3"
+    assert "description" not in lean and "log" not in lean and "items" not in lean
+    assert estimate_tokens(json.dumps(lean)) * 5 < estimate_tokens(json.dumps(full))
+    with_items = boards.lean_card(full, items=True)
+    assert [i["text"] for i in with_items["items"]] == ["um", "dois", "três"]
+    slim = boards.lean_board(await boards.get_board(ADMIN, board["id"]))
+    assert all("cards" not in c for c in slim["columns"]) and slim["columns"][2]["count"] == 1

@@ -16,13 +16,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import db
 from .api import router
 from .config import EMBEDDING_DIM, check_config, get_settings, oauth_issue
-from .core import graph
+from .core import graph, trello
 from .core.cleanup import cleanup_all
 from .core.dash_auth import DashUser
 from .core.embeddings import close_embedder, get_embedder
 from .dashboard_api import auth_router, current_user
 from .dashboard_api import router as dashboard_router
 from .dashboard_boards import router as boards_dash_router
+from .integrations_api import router as integrations_router
 from .logging_config import get_logger, setup_logging
 from .mcp_server import mcp
 from .oauth_api import consent_router, grants_router, protocol_routes
@@ -98,11 +99,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # layout do grafo em segundo plano (plan-web-26): pronto antes de alguém abrir o grafo
             warm = asyncio.create_task(graph.warm_layout())
             cleanup = asyncio.create_task(_periodic_cleanup())
+            # fila de espelho dos quadros (plan-web-37d): envia o que mudou aqui para o Trello
+            mirror = asyncio.create_task(trello.worker())
             try:
                 yield
             finally:
                 warm.cancel()
                 cleanup.cancel()
+                mirror.cancel()
     finally:
         await close_embedder()
 
@@ -119,6 +123,7 @@ app.include_router(router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(boards_dash_router)
+app.include_router(integrations_router)
 
 # OAuth do MCP (plan-web-17): o cliente descobre pelo 401 do /mcp (resource_metadata) e conecta pela
 # tela "Autorizar". Decidido no import: PUBLIC_URL precisa ser https (ou localhost) — ver oauth_issue().

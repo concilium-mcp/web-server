@@ -20,6 +20,7 @@ const NAV = [
   { id: "graph", iconName: "network" },
   { id: "boards", iconName: "square-kanban" },
   { id: "agents", iconName: "bot" },
+  { id: "integrations", iconName: "zap", adminOnly: true },
 ];
 
 function navForRole() {

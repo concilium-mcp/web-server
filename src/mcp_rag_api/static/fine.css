@@ -3270,6 +3270,190 @@ a.btn:hover {
   }
 }
 
+/* ================================================================ Integrações (plan-web-37d) */
+.integrations-page {
+  --page-max: 860px;
+}
+
+.int-warn {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.int-warn.soft {
+  background: var(--soft);
+  color: var(--text-dim);
+}
+
+.int-card {
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--hair);
+}
+
+.int-card.soon {
+  opacity: 0.6;
+}
+
+.int-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.int-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.int-logo {
+  display: inline-flex;
+  gap: 3px;
+  align-items: flex-start;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 7px;
+  border-radius: 9px;
+  background: #0c66e4;
+  flex: 0 0 auto;
+}
+
+.int-logo.trello span {
+  display: block;
+  width: 8px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.int-logo.trello span:first-child {
+  height: 18px;
+}
+
+.int-logo.trello span:last-child {
+  height: 11px;
+}
+
+.int-logo.notion {
+  align-items: center;
+  background: #fff;
+  color: #111;
+  font-weight: 700;
+  font-size: 17px;
+  font-family: Georgia, serif;
+}
+
+.int-logo.sm {
+  width: 18px;
+  height: 18px;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 5px;
+}
+
+.int-logo.sm.trello span {
+  width: 4px;
+}
+
+.int-logo.sm.trello span:first-child {
+  height: 10px;
+}
+
+.int-logo.sm.trello span:last-child {
+  height: 6px;
+}
+
+.int-acc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hair);
+  font-size: 13.5px;
+}
+
+.int-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hair);
+}
+
+.int-steps {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.int-steps a {
+  color: var(--accent);
+}
+
+.int-token {
+  display: flex;
+  gap: 8px;
+}
+
+.int-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+  font-size: 13.5px;
+}
+
+.check-row input {
+  accent-color: var(--accent);
+}
+
+.int-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--hair-strong);
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.int-chip:hover {
+  color: var(--text);
+  background: var(--soft);
+}
+
+.int-chip.error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+.int-chip.pending span:last-child::after {
+  content: "…";
 /* ================================================================ Gasto real (plan-web-38) */
 .usage-facts {
   display: grid;

@@ -221,6 +221,10 @@ def tool[**P, R](fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     return mcp.tool()(_errors(fn))
 
 
+def _lean_items(full: dict) -> dict:
+    return boards.lean_card(full, items=True)
+
+
 def _origin(ctx: Context, session: str | None = None) -> boards.Origin:
     """Cliente MCP (nome do initialize, ou o User-Agent) e a sessão informada pelo agente, para o log."""
     client = None
@@ -760,8 +764,10 @@ async def create_board(
     """Cria um quadro (projeto) na pasta. columns: nomes livres (o papel é deduzido do nome); sem
     columns: Ideias, Pronto para pegar, Em andamento, Aguardando revisão, Feito."""
     p = await current_principal(ctx)
-    return await boards.create_board(
-        p, collection, name, folder_path, description, list(columns or []) or None, origin=_origin(ctx)
+    return boards.lean_board(
+        await boards.create_board(
+            p, collection, name, folder_path, description, list(columns or []) or None, origin=_origin(ctx)
+        )
     )
 
 
@@ -776,15 +782,17 @@ async def update_board(
     archived: bool | None = None,
 ) -> dict:
     """Renomeia, descreve, move de pasta (folder_path="" = raiz) ou arquiva (archived=true) um quadro."""
-    return await boards.update_board(
-        await current_principal(ctx),
-        board_id,
-        name=name,
-        description=description,
-        owner=owner,
-        folder_path=folder_path,
-        archived=archived,
-        origin=_origin(ctx),
+    return boards.lean_board(
+        await boards.update_board(
+            await current_principal(ctx),
+            board_id,
+            name=name,
+            description=description,
+            owner=owner,
+            folder_path=folder_path,
+            archived=archived,
+            origin=_origin(ctx),
+        )
     )
 
 
@@ -833,18 +841,20 @@ async def create_card(
 ) -> dict:
     """Cartão novo (título no imperativo; checklist = os passos do plano). Sem column vai para
     "Pronto para pegar". due: AAAA-MM-DD. assignee: slug do agente ou usuário da dash."""
-    return await boards.create_card(
-        await current_principal(ctx),
-        board_id,
-        title,
-        description,
-        checklist,
-        labels,
-        due,
-        column,
-        assignee,
-        repo,
-        origin=_origin(ctx),
+    return _lean_items(
+        await boards.create_card(
+            await current_principal(ctx),
+            board_id,
+            title,
+            description,
+            checklist,
+            labels,
+            due,
+            column,
+            assignee,
+            repo,
+            origin=_origin(ctx),
+        )
     )
 
 
@@ -883,23 +893,25 @@ async def update_card(
         await boards.block_card(p, card_id, blocked_reason, origin=origin)
     if add_items:
         await boards.add_items(p, card_id, add_items, origin=origin)
-    return await boards.update_card(
-        p,
-        card_id,
-        title=title,
-        description=description,
-        due=due,
-        labels=labels,
-        repo=repo,
-        worktree=worktree,
-        branch=branch,
-        mr_url=mr_url,
-        ci_status=ci_status,
-        column=column,
-        position=position,
-        assignee=assignee,
-        archived=archived,
-        origin=origin,
+    return boards.lean_card(
+        await boards.update_card(
+            p,
+            card_id,
+            title=title,
+            description=description,
+            due=due,
+            labels=labels,
+            repo=repo,
+            worktree=worktree,
+            branch=branch,
+            mr_url=mr_url,
+            ci_status=ci_status,
+            column=column,
+            position=position,
+            assignee=assignee,
+            archived=archived,
+            origin=origin,
+        )
     )
 
 
@@ -910,7 +922,8 @@ async def start_card(
     """Pega o cartão para a sua sessão (posse de 2 h, renovada a cada atualização), move para "Em
     andamento" e sugere worktree e branch. Recusa se outra sessão segura. force=true retoma uma posse
     sua de outra sessão."""
-    return await boards.start_card(await current_principal(ctx), card_id, repo, force, origin=_origin(ctx, session))
+    full = await boards.start_card(await current_principal(ctx), card_id, repo, force, origin=_origin(ctx, session))
+    return boards.lean_card(full, items=True) | {"suggested": full["suggested"]}
 
 
 @tool

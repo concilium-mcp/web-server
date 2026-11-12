@@ -81,8 +81,9 @@ def actor_kind(actor: str) -> str:
 
 
 def _is_person(p: Principal) -> bool:
-    """Pessoa da dash (ou pelo Claude dela) e admin passam por cima da posse de um agente."""
-    return p.actor.startswith("dash:") or p.has("admin")
+    """Pessoa da dash (ou pelo Claude dela), admin e integração (Trello…: vale a alteração mais recente)
+    passam por cima da posse de um agente."""
+    return p.actor.startswith(("dash:", "integration:")) or p.has("admin")
 
 
 def _clean(text: str | None, label: str, limit: int, *, required: bool = True) -> str | None:
@@ -210,6 +211,47 @@ async def _event(
         kind,
         {k: [_jsonable(a), _jsonable(b)] for k, (a, b) in changes.items()} if changes else None,
         note,
+    )
+    if not actor.startswith("integration:"):
+        await enqueue_mirror(conn, board_id, card_id, kind, note)
+
+
+# alvo da fila de espelho por tipo de evento (o worker relê o estado atual: a fila só diz "o que mudou")
+def _mirror_target(kind: str) -> str | None:
+    if kind.startswith(("card.", "item.", "claim.")):
+        return "card"
+    if kind.startswith("column."):
+        return "columns"
+    if kind in ("board.update",):
+        return "board"
+    if kind.startswith("log."):
+        return "comment"
+    return None
+
+
+async def enqueue_mirror(
+    conn: asyncpg.Connection, board_id: uuid.UUID, card_id: uuid.UUID | None, kind: str, note: str | None
+) -> None:
+    target = _mirror_target(kind)
+    if target is None:
+        return
+    if not await conn.fetchval("SELECT 1 FROM board_links WHERE board_id = $1 AND mode = 'mirror'", board_id):
+        return
+    local = str(card_id) if card_id and target in ("card", "comment") else None
+    if target != "comment" and await conn.fetchval(
+        "SELECT 1 FROM sync_queue WHERE board_id = $1 AND target = $2 AND local_id IS NOT DISTINCT FROM $3 "
+        "AND done_at IS NULL AND attempts = 0",
+        board_id,
+        target,
+        local,
+    ):
+        return  # já tem um envio pendente desse alvo: ele vai ler o estado mais novo
+    await conn.execute(
+        "INSERT INTO sync_queue (board_id, target, local_id, payload) VALUES ($1, $2, $3, $4)",
+        board_id,
+        target,
+        local,
+        {"kind": kind, "note": note} if target == "comment" else None,
     )
 
 
@@ -422,6 +464,46 @@ def _event_out(row: asyncpg.Record, *, drop: tuple[str, ...] = ("board_id",)) ->
     r = record(row)
     assert r is not None
     return {k: v for k, v in r.items() if v is not None and k not in drop}
+
+
+# ---------------------------------------------------------------- respostas enxutas (MCP)
+# As tools de escrita do MCP devolvem só o que o agente usa a seguir: o cartão inteiro (descrição, checklist,
+# log) custava ~1,5 mil tokens por chamada (medido pelo gasto real, plan-web-38). REST e dash seguem completos.
+_LEAN_CARD_KEYS = (
+    "id",
+    "title",
+    "column",
+    "role",
+    "progress",
+    "next_item",
+    "claim",
+    "session",
+    "lease_until",
+    "blocked",
+    "repo",
+    "worktree",
+    "branch",
+    "mr_url",
+    "ci",
+    "done_at",
+    "archived",
+)
+
+
+def lean_card(full: dict, items: bool = False) -> dict:
+    out = {k: full[k] for k in _LEAN_CARD_KEYS if full.get(k) not in (None, "", [])}
+    if items and full.get("items"):
+        out["items"] = [{"id": i["id"], "text": i["text"], "done": i["done"]} for i in full["items"]]
+    return out
+
+
+def lean_board(full: dict) -> dict:
+    """O quadro sem os cartões: ids das colunas (para create_card/set_column) e contagens."""
+    out = {k: full[k] for k in ("id", "name", "collection", "folder_path", "archived") if full.get(k)}
+    out["columns"] = [
+        {k: c[k] for k in ("id", "name", "role", "count") if c.get(k) is not None} for c in full["columns"]
+    ]
+    return out
 
 
 # ---------------------------------------------------------------- quadros

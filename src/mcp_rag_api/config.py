@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     brief_max_tokens: int = Field(default=800, ge=50)
     # Quadros (plan-web-37a): posse de um cartão por uma sessão, renovada a cada atualização dela.
     card_lease_minutes: int = Field(default=120, ge=5, le=24 * 60)
+    # Integrações dos quadros (plan-web-37d): chave para cifrar as credenciais (Trello, Notion) no banco.
+    # Sem ela, conectar uma integração é recusado (credencial nunca fica em texto puro).
+    integrations_encryption_key: str = ""
+    # Intervalo do worker que envia a fila de espelho (segundos).
+    sync_interval_seconds: int = Field(default=5, ge=1, le=300)
+    # Base da API do Trello (troca só em teste local, apontando para um Trello falso).
+    trello_api_url: str = "https://api.trello.com/1"
 
     duplicate_threshold: float = 0.92
     memory_duplicate_threshold: float = 0.90

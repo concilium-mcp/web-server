@@ -62,6 +62,7 @@ async function renderBoardList(main) {
       <div class="boards-toolbar">
         <select class="input boards-loc" id="boards-loc" aria-label="${t("boards.where")}"></select>
         <span class="grow"></span>
+        ${canEdit() ? `<button class="btn hidden" id="board-import">${icon("download", 14)}<span>${t("boards.importTrello")}</span></button>` : ""}
         ${canEdit() ? `<button class="btn primary" id="board-new">${icon("plus")}<span>${t("boards.new")}</span></button>` : ""}
       </div>
       <div id="boards-list" class="boards-list"><div class="muted pad">${t("common.loading")}</div></div>
@@ -123,6 +124,13 @@ async function renderBoardList(main) {
     if (row) openBoard(row.dataset.board);
   });
   document.getElementById("board-new")?.addEventListener("click", () => openNewBoard(tree));
+  const ints = canEdit() ? await api.get("/integrations").catch(() => ({ items: [] })) : { items: [] };
+  const trello = ints.items.find((i) => i.provider === "trello");
+  const imp = document.getElementById("board-import");
+  if (trello && imp) {
+    imp.classList.remove("hidden");
+    imp.addEventListener("click", () => openTrelloImport(tree, trello));
+  }
 }
 
 function boardRow(b) {
@@ -222,6 +230,7 @@ async function renderBoard(main) {
           <h1 id="board-name" ${canEdit() ? `class="editable" title="${t("boards.rename")}"` : ""}>${escHtml(b.name)}</h1>
           <span class="board-path">${icon("folder", 13)}${escHtml([b.collection, ...(b.folder_path ? b.folder_path.split("/") : [])].join(" › "))}</span>
         </div>
+        <div id="board-int"></div>
         <div class="seg board-tabs" role="tablist">
           <button role="tab" data-tab="board" class="${view.tab === "board" ? "active" : ""}">${t("boards.tab.board")}</button>
           <button role="tab" data-tab="logs" class="${view.tab === "logs" ? "active" : ""}">${t("boards.tab.logs")}</button>
@@ -242,6 +251,7 @@ async function renderBoard(main) {
     paintTab();
   });
   if (canEdit()) bindRename(document.getElementById("board-name"), (name) => api.patch(`/boards/${b.id}`, { name }));
+  paintIntegration();
   paintTab();
 }
 
@@ -261,7 +271,10 @@ async function poll() {
   } catch {
     return;
   }
-  if (JSON.stringify(view.board) !== before) paintColumns();
+  if (JSON.stringify(view.board) !== before) {
+    paintColumns();
+    paintIntegration();
+  }
 }
 
 function bindRename(el, save) {
@@ -896,6 +909,182 @@ async function renderLogs() {
   bind("lg-actor", "actor");
   document.getElementById("lg-more").addEventListener("click", () => reload(true));
   await reload().catch((err) => uiError(t("boards.openFailed"), err));
+}
+
+/* ---------------------------------------------------------------- Trello (plan-web-37d) */
+
+function openTrelloImport(tree, conta) {
+  document.getElementById("trello-import-modal")?.remove();
+  const cols = (tree.collections || []).map((c) => `<option value="${escHtml(c.name)}">${escHtml(c.name)}</option>`).join("");
+  const body = `
+    <label class="form-label" for="ti-board">${t("boards.trello.board")}</label>
+    <select class="input" id="ti-board"><option value="">${t("common.loading")}</option></select>
+    <div class="form-grid2">
+      <div><label class="form-label" for="ti-col">${t("boards.collection")}</label><select class="input" id="ti-col">${cols}</select></div>
+      <div><label class="form-label" for="ti-path">${t("boards.folder")}</label><select class="input" id="ti-path"></select></div>
+    </div>
+    <label class="check-row"><input type="checkbox" id="ti-mirror" checked /> <span>${t("boards.trello.mirrorToo")}</span> ${helpTip(t("boards.trello.mirrorHelp"))}</label>
+    <div class="form-error hidden" id="ti-error"></div>`;
+  document.body.insertAdjacentHTML(
+    "beforeend",
+    modalShell({ id: "trello-import", iconName: "download", title: t("boards.importTrello"), subtitle: escHtml(conta.account?.name || ""), body, submitLabel: t("boards.trello.import"), submitIcon: "download", width: 560 }),
+  );
+  const modal = document.getElementById("trello-import-modal");
+  loadIcons(modal);
+  const colSel = document.getElementById("ti-col");
+  const pathSel = document.getElementById("ti-path");
+  const fillPaths = () => {
+    const fs = (tree.folders || []).filter((f) => f.collection === colSel.value).sort((a, b) => a.path.localeCompare(b.path));
+    pathSel.innerHTML = `<option value="">${t("boards.root")}</option>` + fs.map((f) => `<option value="${escHtml(f.path)}">${escHtml(f.path.replaceAll("/", " › "))}</option>`).join("");
+  };
+  colSel.addEventListener("change", fillPaths);
+  fillPaths();
+  const setOpen = bindModal("trello-import");
+  setOpen(true);
+  api
+    .get(`/integrations/${conta.id}/trello/boards`)
+    .then((list) => {
+      document.getElementById("ti-board").innerHTML = list.length
+        ? list.map((b) => `<option value="${escHtml(b.id)}">${escHtml(b.name)}${b.linked_board ? ` (${t("boards.trello.already")})` : ""}</option>`).join("")
+        : `<option value="">${t("boards.trello.none")}</option>`;
+    })
+    .catch((err) => {
+      const e = document.getElementById("ti-error");
+      e.textContent = err.detail || err.message;
+      e.classList.remove("hidden");
+    });
+  document.getElementById("trello-import-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const btn = ev.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const b = await api.post("/boards/import/trello", {
+        integration_id: conta.id,
+        trello_board_id: document.getElementById("ti-board").value,
+        collection: colSel.value,
+        folder_path: pathSel.value || null,
+        mirror: document.getElementById("ti-mirror").checked,
+      });
+      setOpen(false);
+      modal.remove();
+      openBoard(b.id);
+    } catch (err) {
+      btn.disabled = false;
+      const e = document.getElementById("ti-error");
+      e.textContent = err.detail || err.message;
+      e.classList.remove("hidden");
+    }
+  });
+}
+
+function paintIntegration() {
+  const box = document.getElementById("board-int");
+  if (!box || !view.board) return;
+  const it = view.board.integration;
+  if (!it) {
+    box.innerHTML = canEdit() ? `<button class="btn sm ghost" id="int-mirror">${icon("refresh-cw", 14)}<span>${t("boards.trello.mirror")}</span></button>` : "";
+    loadIcons(box);
+    document.getElementById("int-mirror")?.addEventListener("click", openMirror);
+    return;
+  }
+  const state = it.last_error ? "error" : it.mode === "mirror" ? (it.pending ? "pending" : "ok") : "import";
+  const label = { error: t("boards.trello.error"), pending: t("boards.trello.pending", { count: it.pending }), ok: t("boards.trello.synced", { when: fmtAgo(it.last_sync_at) }), import: t("boards.trello.imported") }[state];
+  box.innerHTML = `<button class="int-chip ${state}" id="int-chip" title="${escHtml(it.last_error || "")}"><span class="int-logo trello sm" aria-hidden="true"><span></span><span></span></span><span>Trello · ${escHtml(label)}</span></button>`;
+  document.getElementById("int-chip").addEventListener("click", (e) => integrationMenu(e.currentTarget, it));
+}
+
+function integrationMenu(anchor, it) {
+  document.querySelector(".kb-menu")?.remove();
+  const menu = document.createElement("div");
+  menu.className = "kb-menu";
+  menu.innerHTML = `
+    ${it.last_error ? `<div class="form-error">${escHtml(it.last_error)}</div>` : ""}
+    ${it.external_url ? `<a class="btn sm ghost" href="${escHtml(it.external_url)}" target="_blank" rel="noopener noreferrer">${icon("external-link", 14)}<span>${t("boards.trello.open")}</span></a>` : ""}
+    ${canEdit() && it.mode === "mirror" ? `<button class="btn sm ghost" data-act="sync">${icon("refresh-cw", 14)}<span>${t("boards.trello.syncNow")}</span></button>` : ""}
+    ${canEdit() && it.mode !== "mirror" ? `<button class="btn sm ghost" data-act="mirror">${icon("refresh-cw", 14)}<span>${t("boards.trello.mirror")}</span></button>` : ""}
+    ${canEdit() && it.mode === "mirror" ? `<button class="btn sm ghost danger-text" data-act="stop">${icon("ban", 14)}<span>${t("boards.trello.stop")}</span></button>` : ""}`;
+  document.body.appendChild(menu);
+  loadIcons(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 6 + window.scrollY}px`;
+  menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 280))}px`;
+  const close = (e) => {
+    if (e && menu.contains(e.target)) return;
+    menu.remove();
+    document.removeEventListener("mousedown", close);
+  };
+  setTimeout(() => document.addEventListener("mousedown", close));
+  menu.addEventListener("click", async (e) => {
+    const a = e.target.closest("[data-act]")?.dataset.act;
+    if (!a) return;
+    close();
+    if (a === "mirror") return openMirror();
+    try {
+      if (a === "sync") await api.post(`/boards/${view.boardId}/sync`);
+      if (a === "stop") {
+        const ok = await uiConfirm({ title: t("boards.trello.stopQ"), message: t("boards.trello.stopHelp"), confirmLabel: t("boards.trello.stop"), tone: "danger" });
+        if (!ok) return;
+        await api.del(`/boards/${view.boardId}/mirror`);
+      }
+    } catch (err) {
+      uiError(t("boards.saveFailed"), err);
+    }
+    await fetchBoard().catch(() => {});
+    paintIntegration();
+  });
+}
+
+async function openMirror() {
+  const ints = await api.get("/integrations").catch(() => ({ items: [] }));
+  const conta = ints.items.find((i) => i.provider === "trello");
+  if (!conta) return uiError(t("boards.trello.noAccount"), { message: t("boards.trello.noAccountHelp") });
+  document.getElementById("trello-mirror-modal")?.remove();
+  const body = `
+    <p class="muted">${t("boards.trello.mirrorHelp")}</p>
+    <label class="check-row"><input type="radio" name="tm" value="create" checked /> <span>${t("boards.trello.createThere")}</span></label>
+    <label class="check-row"><input type="radio" name="tm" value="existing" /> <span>${t("boards.trello.useExisting")}</span></label>
+    <select class="input hidden" id="tm-board"><option value="">${t("common.loading")}</option></select>
+    <div class="form-error hidden" id="tm-error"></div>`;
+  document.body.insertAdjacentHTML(
+    "beforeend",
+    modalShell({ id: "trello-mirror", iconName: "refresh-cw", title: t("boards.trello.mirror"), subtitle: escHtml(conta.account?.name || ""), body, submitLabel: t("boards.trello.startMirror"), submitIcon: "refresh-cw", width: 520 }),
+  );
+  const modal = document.getElementById("trello-mirror-modal");
+  loadIcons(modal);
+  const setOpen = bindModal("trello-mirror");
+  setOpen(true);
+  const sel = document.getElementById("tm-board");
+  let loaded = false;
+  modal.querySelectorAll('input[name="tm"]').forEach((r) =>
+    r.addEventListener("change", async () => {
+      const existing = modal.querySelector('input[name="tm"]:checked').value === "existing";
+      sel.classList.toggle("hidden", !existing);
+      if (existing && !loaded) {
+        loaded = true;
+        const list = await api.get(`/integrations/${conta.id}/trello/boards`).catch(() => []);
+        sel.innerHTML = list.filter((b) => !b.linked_board).map((b) => `<option value="${escHtml(b.id)}">${escHtml(b.name)}</option>`).join("") || `<option value="">${t("boards.trello.none")}</option>`;
+      }
+    }),
+  );
+  document.getElementById("trello-mirror-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const existing = modal.querySelector('input[name="tm"]:checked').value === "existing";
+    const btn = ev.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const out = await api.post(`/boards/${view.boardId}/mirror`, { integration_id: conta.id, create: !existing, trello_board_id: existing ? sel.value : null });
+      setOpen(false);
+      modal.remove();
+      if (out.warning) uiError(t("boards.trello.warning"), { message: out.warning });
+      await fetchBoard();
+      paintIntegration();
+    } catch (err) {
+      btn.disabled = false;
+      const e = document.getElementById("tm-error");
+      e.textContent = err.detail || err.message;
+      e.classList.remove("hidden");
+    }
+  });
 }
 
 export { renderBoardsScreen, leaveBoards };

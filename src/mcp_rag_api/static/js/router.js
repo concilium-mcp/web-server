@@ -15,6 +15,7 @@ import { renderUsersList } from "./views/users.js";
 import { renderSecurityPage } from "./views/security.js";
 import { closePanel } from "./views/docpanel.js";
 import { renderBoardsScreen, leaveBoards } from "./views/boards.js";
+import { renderIntegrations } from "./views/integrations.js";
 
 // troca de tela: a de notas guarda o endereço da nota aberta (#/notes/<id>), as outras limpam
 // rota de nota: #/notes/<id>; aceita também #/notas/<id> (links compartilhados antes da troca de nome)
@@ -100,6 +101,8 @@ async function renderScreen() {
     await renderSecurityPage();
   } else if (state.screen === "boards") {
     await renderBoardsScreen(main);
+  } else if (state.screen === "integrations") {
+    await renderIntegrations(main);
   } else if (state.screen === "users") {
     main.innerHTML = pageTemplate("users", t("users.title"), t("users.sub"));
     await loadIcons(main);

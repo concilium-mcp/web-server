@@ -6,15 +6,18 @@ agente não bloqueia uma pessoa (core: _guard), e "Liberar" força a liberação
 
 import csv
 import io
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from .core import boards, usage
+from .config import get_settings
+from .core import boards, integrations, trello, usage
 from .core.dash_auth import DashUser
-from .dashboard_api import current_user, require_csrf_header, require_editor
+from .dashboard_api import current_user, require_admin, require_csrf_header, require_editor
+from .db import pool
 from .security import Principal
 
 router = APIRouter(
@@ -103,6 +106,82 @@ class LinkIn(BaseModel):
     unlink: bool = False
 
 
+class TrelloConnectIn(BaseModel):
+    key: str = Field(max_length=200)
+    token: str = Field(max_length=400)
+    secret: str = Field(max_length=200)
+
+
+class TrelloImportIn(BaseModel):
+    integration_id: str
+    trello_board_id: str = Field(max_length=64)
+    collection: str
+    folder_path: str | None = None
+    mirror: bool = False
+
+
+class MirrorIn(BaseModel):
+    integration_id: str
+    trello_board_id: str | None = None
+    create: bool = False
+
+
+def _admin(user: DashUser) -> Principal:
+    return Principal(actor=f"dash:{user.username}", scopes=frozenset({"admin"}))
+
+
+@router.get("/integrations")
+async def list_integrations(user: DashUser = Depends(current_user)) -> dict:
+    return {
+        "items": await integrations.list_integrations(_p(user)),
+        "encryption": bool(get_settings().integrations_encryption_key),
+        "webhooks": get_settings().public_url.startswith("https://"),
+    }
+
+
+@router.post("/integrations/trello")
+async def connect_trello(body: TrelloConnectIn, user: DashUser = Depends(require_admin)) -> dict:
+    return await trello.connect(_admin(user), body.key, body.token, body.secret)
+
+
+@router.delete("/integrations/{integration_id}")
+async def disconnect(integration_id: str, user: DashUser = Depends(require_admin)) -> dict:
+    return await integrations.disconnect(_admin(user), integration_id)
+
+
+@router.get("/integrations/{integration_id}/trello/boards")
+async def trello_boards(integration_id: str, user: DashUser = Depends(require_editor)) -> list[dict]:
+    return await trello.remote_boards(_p(user), integration_id)
+
+
+@router.post("/boards/import/trello")
+async def import_trello(body: TrelloImportIn, user: DashUser = Depends(require_editor)) -> dict:
+    return await trello.import_board(
+        _p(user), body.integration_id, body.trello_board_id, body.collection, body.folder_path, body.mirror
+    )
+
+
+@router.post("/boards/{board_id}/mirror")
+async def start_mirror(board_id: str, body: MirrorIn, user: DashUser = Depends(require_editor)) -> dict:
+    out = await trello.start_mirror(_p(user), board_id, body.integration_id, body.trello_board_id, body.create)
+    await trello.process_queue()  # manda logo o primeiro lote (o resto segue pelo worker)
+    return out
+
+
+@router.delete("/boards/{board_id}/mirror")
+async def stop_mirror(board_id: str, user: DashUser = Depends(require_editor)) -> dict:
+    return await trello.stop_mirror(_p(user), board_id)
+
+
+@router.post("/boards/{board_id}/sync")
+async def sync_now(board_id: str, user: DashUser = Depends(require_editor)) -> dict:
+    await boards.get_board(_p(user), board_id)
+    await pool().execute(
+        "UPDATE sync_queue SET next_at = now() WHERE board_id = $1 AND done_at IS NULL", uuid.UUID(board_id)
+    )
+    return {"sent": await trello.process_queue()}
+
+
 @router.get("/boards")
 async def list_boards(
     collection: str | None = None, folder_path: str | None = None, user: DashUser = Depends(current_user)
@@ -119,7 +198,17 @@ async def create_board(body: BoardIn, user: DashUser = Depends(require_editor)) 
 
 @router.get("/boards/{board_id}")
 async def get_board(board_id: str, include_done: bool = False, user: DashUser = Depends(current_user)) -> dict:
-    return await boards.get_board(_p(user), board_id, include_done=include_done)
+    data = await boards.get_board(_p(user), board_id, include_done=include_done)
+    link = await integrations.board_link(uuid.UUID(data["id"]))
+    if link:
+        pending = await pool().fetchval(
+            "SELECT count(*) FROM sync_queue WHERE board_id = $1 AND done_at IS NULL", uuid.UUID(data["id"])
+        )
+        data["integration"] = {
+            k: link.get(k) for k in ("provider", "mode", "external_url", "last_sync_at", "last_error", "label")
+        }
+        data["integration"]["pending"] = pending
+    return data
 
 
 @router.patch("/boards/{board_id}")
