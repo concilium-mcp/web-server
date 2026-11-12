@@ -204,7 +204,7 @@ function renderNotesTree() {
 
   const noteButton = (n) =>
     `<button class="tree-note ${notes.current?.id === n.id ? "active" : ""}" type="button" data-note="${n.id}" title="${escHtml(n.title)}">
-      <span class="grow">${escHtml(n.title)}</span>${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="${t("notes.unsaved")}"></span>` : ""}</button>`;
+      <span class="grow">${escHtml(n.title)}</span>${n.is_brief ? `<span class="tree-brief" title="${t("notes.briefBadge")}">${icon("pin", 12)}</span>` : ""}${notes.current?.id === n.id && notes.dirty ? `<span class="dirty-dot" title="${t("notes.unsaved")}"></span>` : ""}</button>`;
 
   const folderNode = ({ collection, folderId = null, label, html, count, closed }) => {
     const target = `data-collection="${escHtml(collection)}" data-folder-id="${folderId || ""}"`;
@@ -418,7 +418,8 @@ function renderNoteMain() {
         <button class="btn sm ghost ${notes.side === "history" ? "active" : ""}" type="button" data-side="history">${icon("history", 14)}<span>${t("notes.history")}</span></button>
         ${
           editable
-            ? `<button class="icon-btn" type="button" id="note-move" title="${t("notes.moveTitle")}">${icon("folder-input", 16)}</button>
+            ? `<button class="icon-btn ${n.is_brief ? "active" : ""}" type="button" id="note-brief" aria-pressed="${Boolean(n.is_brief)}" title="${n.is_brief ? t("notes.briefOn") : t("notes.briefOff")}">${icon("pin", 16)}</button>
+               <button class="icon-btn" type="button" id="note-move" title="${t("notes.moveTitle")}">${icon("folder-input", 16)}</button>
                <button class="icon-btn danger" type="button" id="note-archive" title="${t("notes.archiveTitle")}">${icon("archive", 16)}</button>
                <button class="btn sm primary" type="button" id="note-save" title="${t("notes.saveTitle")}">${icon("save", 14)}<span>${t("notes.save")}</span></button>`
             : ""
@@ -453,6 +454,7 @@ function renderNoteMain() {
     notes.editor.on("change", markDirty);
     main.querySelector("#note-title").addEventListener("input", markDirty);
     main.querySelector("#note-save").addEventListener("click", () => saveNote());
+    main.querySelector("#note-brief").addEventListener("click", toggleBrief);
     main.querySelector("#note-move").addEventListener("click", openMoveNoteModal);
     main.querySelector("#note-archive").addEventListener("click", archiveCurrentNote);
   }
@@ -972,6 +974,28 @@ async function openMoveNoteModal() {
     }
   });
   setOpen(true);
+}
+
+// Resumo do projeto (plan-web-34): a nota que os agentes recebem no início da sessão
+async function toggleBrief() {
+  const n = notes.current;
+  const marking = !n.is_brief;
+  try {
+    await api.put(`/collections/${encodeURIComponent(n.collection)}/brief`, { document_id: marking ? n.id : null });
+  } catch (err) {
+    await uiError(t("notes.briefFailed"), err);
+    return;
+  }
+  n.is_brief = marking;
+  for (const item of notes.tree?.notes || []) {
+    if (item.collection === n.collection) item.is_brief = marking && item.id === n.id;
+  }
+  renderNoteMain();
+  renderNotesTree();
+  if (marking) {
+    const tokens = Math.ceil(((n.title || "").length + (n.content || "").length) / 4);
+    await uiAlert(t("notes.briefDoneTitle"), t("notes.briefDoneMsg", { collection: n.collection, tokens }));
+  }
 }
 
 async function archiveCurrentNote() {

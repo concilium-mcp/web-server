@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -13,7 +13,7 @@ from mcp_types import ListToolsResult
 
 from . import db
 from .config import get_settings
-from .core import agents, documents, folders, links, memory, search
+from .core import agents, brief, documents, folders, lean, links, memory, token_meter
 from .security import DEV_PRINCIPAL, KBError, PermissionDenied, Principal, bearer_token, resolve_bearer
 
 INSTRUCTIONS = """\
@@ -21,6 +21,8 @@ Base de conhecimento compartilhada + registro de agentes.
 - Se você é um agente cadastrado: comece TODA conversa com load_agent e siga o perfil retornado.
   Termine (ou a cada marco) com save_session.
 - Antes de responder sobre assuntos da empresa, use search_knowledge e cite as fontes (título/document_id).
+- Economize contexto: a busca devolve um trecho curto por documento; leia o documento só se precisar.
+  Em documento grande, peça outline=true e depois a section que interessa (ou max_tokens + offset).
 - Antes de inserir, busque: se já existe, prefira update_document a add_document. Para mudar só um
   trecho ou acrescentar uma entrada (changelog, documento grande), use edit_document.
 - Coleções podem ter pastas dentro (caminho "A/B/C"): veja com list_folders e use folder_path em
@@ -54,6 +56,7 @@ TOOL_SCOPES: dict[str, str] = {
     **dict.fromkeys(
         (
             "search_knowledge",
+            "get_project_brief",
             "get_document",
             "list_documents",
             "list_collections",
@@ -145,9 +148,10 @@ class ConciliumMCPServer(MCPServer):
         for t in result.tools:
             if not tool_visible(t.name, p):
                 continue
+            update: dict[str, Any] = {"input_schema": lean.compact_schema(t.input_schema)}
             if t.name in AGENT_CONTEXT_TOOLS and p.agent_slug is None:
-                t = t.model_copy(update={"description": (t.description or "") + _MANAGER_NOTE})
-            tools.append(t)
+                update["description"] = (t.description or "") + _MANAGER_NOTE
+            tools.append(t.model_copy(update=update))
         return ListToolsResult(tools=tools)
 
 
@@ -178,12 +182,13 @@ async def current_principal(ctx: Context) -> Principal:
 
 
 def _errors[**P, R](fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-    """Converte erros esperados em ToolError com mensagem limpa para o modelo."""
+    """Converte erros esperados em ToolError com mensagem limpa e compacta o resultado."""
 
     @functools.wraps(fn)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
-            return await fn(*args, **kwargs)
+            # sem chaves nulas e com floats curtos: o modelo lê menos tokens (plan-web-33)
+            return lean.compact(await fn(*args, **kwargs))  # type: ignore[no-any-return]
         except KBError as e:
             raise ToolError(str(e)) from e
 
@@ -205,17 +210,44 @@ async def search_knowledge(
     tags: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
     top_k: int = 5,
-) -> list[dict]:
-    """Busca na base de conhecimento (semântica + palavra-chave). Use antes de responder sobre assuntos
-    da empresa e antes de inserir algo novo. Retorna trechos com document_id, título, fonte e score."""
-    return await search.search_knowledge(await current_principal(ctx), query, collections, tags, metadata, top_k)
+    detail: Literal["snippet", "full"] | None = None,
+    max_tokens: int | None = None,
+) -> dict:
+    """Busca na base (semântica + palavra-chave). Use antes de responder sobre a empresa e antes de
+    inserir algo. Padrão: um resultado por documento com trecho curto (snippet); detail="full" traz os
+    trechos inteiros. max_tokens limita o tamanho da resposta."""
+    p = await current_principal(ctx)
+    result = await lean.search_lean(p, query, collections, tags, metadata, top_k, detail, max_tokens)
+    token_meter.record_documents("search_knowledge", p, token_meter.served_by_document(result["results"]))
+    return result
 
 
 @tool
-async def get_document(ctx: Context, document_id: str) -> dict:
-    """Retorna um documento completo (conteúdo, tags, metadata, versão e folder_path — a pasta onde está
-    dentro da coleção; null = raiz)."""
-    return await folders.get_document_with_folder(await current_principal(ctx), document_id)
+async def get_project_brief(ctx: Context, collection: str, agent_slug: str | None = None) -> dict:
+    """Resumo curto de um projeto (coleção) para começar: a nota de resumo, as pastas e como pedir
+    detalhes. Com agent_slug, inclui a última sessão e as tarefas abertas desse agente."""
+    return await brief.get_brief(await current_principal(ctx), collection, agent_slug)
+
+
+@tool
+async def get_document(
+    ctx: Context,
+    document_id: str,
+    outline: bool = False,
+    section: str | None = None,
+    offset: int = 0,
+    max_tokens: int | None = None,
+) -> dict:
+    """Lê um documento (sem folder_path = raiz da coleção). outline=true: só os títulos das seções com
+    o tamanho de cada uma. section="<parte do título>": só essa seção. max_tokens + offset: lê em
+    partes (next_offset continua). Documento grande sem esses parâmetros volta como outline."""
+    p = await current_principal(ctx)
+    doc = await folders.get_document_with_folder(p, document_id)
+    shaped = lean.shape_document(
+        doc, outline=outline, section=section, offset=offset, max_tokens=max_tokens, auto_outline=True
+    )
+    token_meter.record_documents("get_document", p, token_meter.served_by_document([shaped]))
+    return shaped
 
 
 @tool
@@ -229,9 +261,8 @@ async def list_documents(
     folder_path: str | None = None,
     recursive: bool = True,
 ) -> list[dict]:
-    """Lista documentos (sem o conteúdo), filtrando por coleção, tags e status (active|archived). Cada item
-    traz folder_path (null = raiz). folder_path "A/B" (exige collection) lista só essa pasta e as
-    subpastas; recursive=false fica só na pasta."""
+    """Lista documentos sem o conteúdo. folder_path "A/B" (com collection) filtra a pasta e subpastas;
+    recursive=false fica só na pasta."""
     return await folders.list_documents_in_folder(
         await current_principal(ctx), collection, tags, status, limit, offset, folder_path, recursive
     )
@@ -239,7 +270,7 @@ async def list_documents(
 
 @tool
 async def list_collections(ctx: Context) -> list[dict]:
-    """Lista as coleções da base que esta chave pode acessar, com a contagem de documentos."""
+    """Coleções acessíveis, com a contagem de documentos."""
     return await documents.list_collections(await current_principal(ctx))
 
 
@@ -251,29 +282,26 @@ async def create_collection(ctx: Context, name: str, description: str | None = N
 
 @tool
 async def rename_collection(ctx: Context, name: str, new_name: str) -> dict:
-    """Renomeia uma coleção (pasta principal). Agentes e acessos restritos a ela passam a apontar para o
-    nome novo. Requer escopo admin."""
+    """Renomeia uma coleção; agentes e acessos restritos a ela acompanham."""
     return await folders.rename_collection(await current_principal(ctx), name, new_name)
 
 
 @tool
 async def delete_collection(ctx: Context, name: str) -> dict:
-    """Exclui uma coleção (pasta principal) — IRREVERSÍVEL. Só funciona sem notas ativas (arquive ou mova
-    antes); notas arquivadas, versões e pastas dela são apagadas junto. Recusa se algum agente ativo ou
-    acesso OAuth estiver restrito a ela. Requer escopo admin. Confirme com o usuário antes de chamar."""
+    """Exclui uma coleção sem notas ativas — IRREVERSÍVEL (arquivadas, versões e pastas vão junto).
+    Confirme com o usuário antes."""
     return await folders.delete_collection(await current_principal(ctx), name)
 
 
 @tool
 async def list_folders(ctx: Context, collection: str | None = None) -> list[dict]:
-    """Lista as pastas dentro das coleções (id, coleção, nome e path completo "A/B/C")."""
+    """Pastas das coleções, com o caminho "A/B/C"."""
     return await folders.list_folders(await current_principal(ctx), collection)
 
 
 @tool
 async def create_folder(ctx: Context, collection: str, path: str) -> dict:
-    """Cria o caminho de pastas na coleção ("Clientes/Acme/Reuniões"), só os níveis que faltam
-    (idempotente). Nomes não podem conter "/". Requer escopo write."""
+    """Cria o caminho de pastas "A/B/C" na coleção (só o que falta; idempotente)."""
     return await folders.ensure_folder_path(await current_principal(ctx), collection, path)
 
 
@@ -290,9 +318,8 @@ async def add_document(
     force: bool = False,
     folder_path: str | None = None,
 ) -> dict:
-    """Insere conhecimento novo. Se já existir conteúdo muito parecido, NÃO insere e devolve o documento
-    similar: nesse caso use update_document (ou repita com force=true se for mesmo outro conteúdo).
-    folder_path ("A/B") põe a nota nessa pasta da coleção, criando o que faltar; sem ele, fica na raiz."""
+    """Insere um documento. Se houver um muito parecido, não insere e devolve esse: use update_document
+    (ou force=true se for outro assunto). folder_path "A/B" põe na pasta (cria o que faltar)."""
     return await folders.add_document_in_folder(
         await current_principal(ctx),
         folder_path,
@@ -318,9 +345,8 @@ async def update_document(
     metadata: dict[str, Any] | None = None,
     source: str | None = None,
 ) -> dict:
-    """Atualiza um documento existente e gera nova versão. change_note (o que mudou e por quê) é
-    obrigatório. content substitui o texto inteiro; metadata é mesclada. Para mudar só um trecho ou
-    acrescentar uma entrada num documento grande (changelog etc.), prefira edit_document."""
+    """Atualiza um documento (nova versão). content substitui o texto inteiro; metadata é mesclada.
+    Para mudar só um trecho, prefira edit_document."""
     return await documents.update_document(
         await current_principal(ctx), document_id, change_note, content, title, tags, metadata, source
     )
@@ -335,12 +361,9 @@ async def edit_document(
     append: str | None = None,
     base_version: int | None = None,
 ) -> dict:
-    """Edita parte de um documento sem reenviar o texto inteiro, gerando nova versão. edits: lista de
-    {old_text, new_text}, aplicadas em ordem; cada old_text precisa aparecer UMA vez (copie do
-    get_document, com texto em volta se ele se repetir; new_text vazio apaga o trecho). append: texto
-    acrescentado no fim. Para inserir no topo (ex.: entrada nova de changelog), use um edit cujo old_text
-    é o cabeçalho e o new_text é o cabeçalho + a entrada. base_version (opcional) recusa se o documento
-    mudou desde a versão lida."""
+    """Edita trechos sem reenviar o documento (nova versão). edits: [{old_text, new_text}] em ordem;
+    cada old_text aparece UMA vez (new_text vazio apaga). append: texto no fim. Para inserir no topo,
+    troque o cabeçalho por cabeçalho + entrada. base_version recusa se o documento mudou."""
     return await documents.edit_document(
         await current_principal(ctx), document_id, change_note, edits, append, base_version
     )
@@ -359,8 +382,7 @@ async def upsert_document(
     change_note: str = "sincronização (upsert)",
     folder_path: str | None = None,
 ) -> dict:
-    """Cria ou atualiza pelo external_id (id do sistema de origem). Idempotente: ideal para sincronizações.
-    folder_path ("A/B") mantém a nota nessa pasta da coleção (cria o que faltar)."""
+    """Cria ou atualiza pelo external_id (idempotente, para sincronizações). folder_path "A/B" fixa a pasta."""
     return await folders.upsert_document_in_folder(
         await current_principal(ctx),
         folder_path,
@@ -377,41 +399,37 @@ async def upsert_document(
 
 @tool
 async def move_document(ctx: Context, document_id: str, collection: str, folder_path: str | None = None) -> dict:
-    """Move um documento para outra coleção e/ou pasta (folder_path "A/B", criando o que faltar;
-    sem folder_path vai para a raiz da coleção). Mantém conteúdo, versão e histórico."""
+    """Move para outra coleção e/ou pasta (sem folder_path = raiz). Mantém versões e histórico."""
     return await folders.move_document_to(await current_principal(ctx), document_id, collection, folder_path)
 
 
 @tool
 async def archive_document(ctx: Context, document_id: str, reason: str) -> dict:
-    """Arquiva um documento (some das buscas, mas o histórico é mantido)."""
+    """Arquiva um documento (sai das buscas; o histórico fica)."""
     return await documents.archive_document(await current_principal(ctx), document_id, reason)
 
 
 @tool
 async def document_history(ctx: Context, document_id: str) -> list[dict]:
-    """Histórico de versões de um documento: quem mudou, quando e por quê."""
+    """Versões do documento: quem mudou, quando e por quê."""
     return await documents.document_history(await current_principal(ctx), document_id)
 
 
 @tool
 async def get_related(ctx: Context, document_id: str, k: int = 5) -> dict:
-    """O que se relaciona a um documento: links explícitos que saem dele ([[wikilinks]] e manuais,
-    inclusive pendentes = título citado que ainda não existe), backlinks (quem aponta para ele) e os
-    k vizinhos semânticos mais próximos (similaridade dos embeddings)."""
+    """Links que saem do documento (inclusive pendentes), backlinks e os k vizinhos semânticos."""
     return await links.get_related(await current_principal(ctx), document_id, k)
 
 
 @tool
 async def link_documents(ctx: Context, source_id: str, target_id: str, note: str | None = None) -> dict:
-    """Liga explicitamente dois documentos (source -> target), com uma nota opcional de por que estão
-    relacionados. Idempotente. Para links dentro do texto, prefira escrever [[Título]] no conteúdo."""
+    """Liga dois documentos (source -> target) com nota opcional. No texto, prefira [[Título]]."""
     return await links.link_documents(await current_principal(ctx), source_id, target_id, note)
 
 
 @tool
 async def unlink_documents(ctx: Context, link_id: int) -> dict:
-    """Remove um link manual (link_id vem de get_related). [[Wikilinks]] saem editando o texto."""
+    """Remove um link manual (link_id de get_related)."""
     return await links.unlink_documents(await current_principal(ctx), link_id)
 
 
@@ -420,16 +438,22 @@ async def unlink_documents(ctx: Context, link_id: int) -> dict:
 
 @tool
 async def load_agent(ctx: Context, agent_slug: str | None = None) -> dict:
-    """CHAME NO INÍCIO DE TODA CONVERSA. Carrega seu perfil (instruções), memórias mais importantes,
-    resumo da última sessão e tarefas abertas. Sem agent_slug usa o agente dono da chave."""
-    return await memory.load_agent(await current_principal(ctx), agent_slug)
+    """CHAME NO INÍCIO DE TODA CONVERSA: seu perfil, memórias principais, última sessão e tarefas abertas."""
+    p = await current_principal(ctx)
+    data = await memory.load_agent(p, agent_slug)
+    # resumo do projeto do agente (1ª coleção permitida com resumo marcado), só no MCP: a REST
+    # /agents/{slug}/context alimenta o bridge do Hermes e mantém o formato
+    project = await brief.brief_for_agent_profile(p, data["agent"].get("allowed_collections"))
+    if project:
+        data["project_brief"] = project
+    return data
 
 
 @tool
 async def recall(
     ctx: Context, query: str, agent_slug: str | None = None, include_shared: bool = True, limit: int = 8
 ) -> list[dict]:
-    """Busca semântica nas memórias do agente (e nas compartilhadas por outros agentes)."""
+    """Busca nas suas memórias (e nas compartilhadas por outros agentes)."""
     return await memory.recall(await current_principal(ctx), query, agent_slug, include_shared, limit)
 
 
@@ -444,9 +468,8 @@ async def remember(
     source: str | None = None,
     agent_slug: str | None = None,
 ) -> dict:
-    """Salva algo durável que você aprendeu. kind: fact|preference|procedure|decision|lesson;
-    importance 1–5; shared=true deixa visível para outros agentes. Se já existir memória quase igual,
-    ela é atualizada em vez de duplicada."""
+    """Guarda algo durável. kind: fact|preference|procedure|decision|lesson; importance 1–5;
+    shared=true para outros agentes. Memória quase igual é atualizada, não duplicada."""
     return await memory.remember(
         await current_principal(ctx), content, kind, importance, shared, expires_in_days, source, agent_slug
     )
@@ -454,7 +477,7 @@ async def remember(
 
 @tool
 async def forget(ctx: Context, memory_id: int, replacement: str | None = None, agent_slug: str | None = None) -> dict:
-    """Apaga uma memória errada/obsoleta, ou a corrige se replacement for informado."""
+    """Apaga uma memória, ou a corrige com replacement."""
     return await memory.forget(await current_principal(ctx), memory_id, replacement, agent_slug)
 
 
@@ -467,8 +490,7 @@ async def save_session(
     metadata: dict[str, Any] | None = None,
     agent_slug: str | None = None,
 ) -> dict:
-    """CHAME AO FIM DA CONVERSA (ou a cada marco). Resumo do que foi feito/decidido e próximos passos,
-    para o próximo chat retomar daqui."""
+    """CHAME AO FIM DA CONVERSA (ou a cada marco): o que foi feito/decidido e os próximos passos."""
     return await memory.save_session(
         await current_principal(ctx), summary, next_steps, started_at, metadata, agent_slug
     )
@@ -496,7 +518,7 @@ async def upsert_task(
     due_at: datetime | None = None,
     agent_slug: str | None = None,
 ) -> dict:
-    """Cria (sem task_id) ou atualiza (com task_id) uma tarefa. status: open|in_progress|done|cancelled."""
+    """Cria (sem task_id) ou atualiza uma tarefa. status: open|in_progress|done|cancelled."""
     return await memory.upsert_task(await current_principal(ctx), task_id, title, details, status, due_at, agent_slug)
 
 
@@ -508,8 +530,7 @@ async def propose_agent_update(
     description: str | None = None,
     config: dict[str, Any] | None = None,
 ) -> dict:
-    """O agente propõe mudança no PRÓPRIO perfil. Se a autoatualização estiver ligada, aplica na hora;
-    senão fica aguardando aprovação. Não altera autonomia, escopos nem coleções permitidas."""
+    """Propõe mudança no SEU perfil; aplica na hora só se a autoatualização estiver ligada."""
     return await agents.propose_agent_update(
         await current_principal(ctx), change_note, system_prompt, description, config
     )
@@ -529,9 +550,8 @@ async def create_agent(
     allowed_collections: list[str] | None = None,
     scopes: list[str] | None = None,
 ) -> dict:
-    """Cadastra um agente novo. Só chame depois que o usuário confirmar o perfil (veja o prompt
-    design_agent). slug: minúsculas/números/hífen. scopes padrão: read, write. allowed_collections vazio
-    = todas. Retorna a API key do agente (exibida uma única vez) e o comando para conectá-lo."""
+    """Cadastra um agente (só após o usuário confirmar o perfil; veja o prompt design_agent). scopes
+    padrão: read, write; allowed_collections vazio = todas. A API key volta uma única vez."""
     return await agents.create_agent(
         await current_principal(ctx), slug, name, system_prompt, description, config, allowed_collections, scopes
     )
@@ -549,8 +569,8 @@ async def update_agent(
     allowed_collections: list[str] | None = None,
     scopes: list[str] | None = None,
 ) -> dict:
-    """Altera o perfil de um agente (gera nova versão). config é mesclada; chave com valor null é removida.
-    system_prompt substitui o texto inteiro: leia com get_agent antes e envie a versão completa."""
+    """Altera o perfil (nova versão). config é mesclada (null remove a chave); system_prompt substitui
+    o texto inteiro."""
     return await agents.update_agent(
         await current_principal(ctx),
         slug,
@@ -566,14 +586,13 @@ async def update_agent(
 
 @tool
 async def set_agent_autonomy(ctx: Context, slug: str, auto_apply_updates: bool, note: str | None = None) -> dict:
-    """Liga/desliga a autoatualização do agente: quando ligada, as propostas do próprio agente
-    (propose_agent_update) são aplicadas sem aprovação. Só o usuário decide isso; o agente não consegue."""
+    """Liga/desliga a aplicação automática das propostas do agente. Decisão só do usuário."""
     return await agents.set_agent_autonomy(await current_principal(ctx), slug, auto_apply_updates, note)
 
 
 @tool
 async def get_agent(ctx: Context, slug: str | None = None) -> dict:
-    """Perfil completo de um agente + histórico de versões/propostas (+ chaves, para agents:manage)."""
+    """Perfil de um agente, versões, propostas e chaves."""
     return await agents.get_agent(await current_principal(ctx), slug)
 
 
@@ -587,8 +606,7 @@ async def list_agents(ctx: Context, include_archived: bool = False) -> list[dict
 async def clone_agent(
     ctx: Context, source_slug: str, new_slug: str, name: str, overrides: dict[str, Any] | None = None
 ) -> dict:
-    """Cria um agente novo copiando outro. overrides pode trocar system_prompt, description, config,
-    allowed_collections ou scopes. A autonomia do clone começa desligada."""
+    """Copia um agente; overrides troca campos do perfil. A autonomia começa desligada."""
     return await agents.clone_agent(await current_principal(ctx), source_slug, new_slug, name, overrides)
 
 
@@ -600,31 +618,31 @@ async def archive_agent(ctx: Context, slug: str, reason: str) -> dict:
 
 @tool
 async def restore_agent_version(ctx: Context, slug: str, version: int, change_note: str | None = None) -> dict:
-    """Volta o perfil do agente para uma versão anterior (gera uma nova versão com aquele conteúdo)."""
+    """Restaura uma versão anterior do perfil (como nova versão)."""
     return await agents.restore_agent_version(await current_principal(ctx), slug, version, change_note)
 
 
 @tool
 async def issue_agent_key(ctx: Context, slug: str, label: str | None = None) -> dict:
-    """Gera uma nova API key para o agente (rotação). A chave é exibida uma única vez."""
+    """Nova API key do agente (exibida uma única vez)."""
     return await agents.issue_agent_key(await current_principal(ctx), slug, label)
 
 
 @tool
 async def revoke_agent_key(ctx: Context, key_prefix: str) -> dict:
-    """Revoga uma chave pelo prefixo (ex.: 'kb_sk_AbCdE'), visto em get_agent."""
+    """Revoga uma chave pelo prefixo (de get_agent)."""
     return await agents.revoke_agent_key(await current_principal(ctx), key_prefix)
 
 
 @tool
 async def list_agent_proposals(ctx: Context, slug: str | None = None) -> list[dict]:
-    """Propostas de mudança feitas pelos agentes aguardando aprovação."""
+    """Propostas dos agentes aguardando aprovação."""
     return await agents.list_proposals(await current_principal(ctx), slug)
 
 
 @tool
 async def review_agent_update(ctx: Context, proposal_id: int, approve: bool, note: str | None = None) -> dict:
-    """Aprova (aplica como nova versão) ou rejeita uma proposta de mudança de um agente."""
+    """Aprova (nova versão) ou rejeita uma proposta."""
     return await agents.review_agent_update(await current_principal(ctx), proposal_id, approve, note)
 
 
@@ -632,7 +650,7 @@ async def review_agent_update(ctx: Context, proposal_id: int, approve: bool, not
 async def add_agent_memory(
     ctx: Context, slug: str, content: str, kind: str = "fact", importance: int = 3, shared: bool = False
 ) -> dict:
-    """Semeia uma memória em um agente (ex.: preferências já conhecidas no cadastro)."""
+    """Grava uma memória num agente."""
     p = await current_principal(ctx)
     p.require("agents:manage")
     return await memory.remember(p, content, kind, importance, shared, agent_slug=slug)

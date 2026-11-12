@@ -1,0 +1,14 @@
+{
+  "name": "concilium",
+  "owner": {
+    "name": "Concilium"
+  },
+  "description": "Concilium integrations for Claude Code",
+  "plugins": [
+    {
+      "name": "concilium",
+      "source": "./integrations/claude-code",
+      "description": "Project brief from Concilium at session start, plus /concilium-init to set a repository up."
+    }
+  ]
+}

@@ -14,7 +14,21 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from pydantic import BaseModel, Field
 
 from .config import get_settings
-from .core import agents, dash_auth, documents, file_import, folders, graph, links, mfa, oauth, obsidian_import, search
+from .core import (
+    agents,
+    brief,
+    dash_auth,
+    documents,
+    file_import,
+    folders,
+    graph,
+    links,
+    mfa,
+    oauth,
+    obsidian_import,
+    search,
+    token_meter,
+)
 from .core.dash_auth import DashUser
 from .core.documents import parse_uuid
 from .db import audit, pool, record, records
@@ -250,7 +264,8 @@ async def notes_tree(user: DashUser = Depends(current_user)) -> dict:
     )
     notes = await pool().fetch(
         """
-        SELECT d.id, d.title, c.name AS collection, d.folder_id, d.tags, d.version, d.updated_at, d.updated_by
+        SELECT d.id, d.title, c.name AS collection, d.folder_id, d.tags, d.version, d.updated_at, d.updated_by,
+               c.brief_document_id IS NOT DISTINCT FROM d.id AS is_brief
         FROM documents d JOIN collections c ON c.id = d.collection_id
         WHERE d.status = 'active'
         ORDER BY c.name, lower(d.title)
@@ -265,7 +280,20 @@ async def notes_tree(user: DashUser = Depends(current_user)) -> dict:
 
 @router.get("/notes/{document_id}")
 async def get_note(document_id: str, user: DashUser = Depends(current_user)) -> dict:
-    return await documents.get_document(_reader(user), document_id)
+    note = await documents.get_document(_reader(user), document_id)
+    briefs = await brief.brief_document_ids([note["collection"]])
+    note["is_brief"] = briefs.get(note["collection"]) == note["id"]
+    return note
+
+
+class BriefIn(BaseModel):
+    document_id: str | None = None  # None desmarca
+
+
+@router.put("/collections/{name}/brief")
+async def set_collection_brief(name: str, body: BriefIn, user: DashUser = Depends(require_editor)) -> dict:
+    """Marca a nota que é o resumo do projeto (plan-web-34) ou desmarca com document_id null."""
+    return await brief.set_brief(_writer(user), name, body.document_id)
 
 
 class NoteIn(BaseModel):
@@ -1242,6 +1270,7 @@ async def get_insights(days: int = Query(default=30, ge=1, le=365)) -> dict:
         "contributors": records(contributors),
         "health": records([health])[0],
         "recent": records(recent),
+        "tokens": await token_meter.summary(days),
     }
 
 

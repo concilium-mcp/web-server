@@ -87,6 +87,9 @@ async def lifespan() -> AsyncIterator[None]:
     try:
         yield
     finally:
+        from .core import token_meter  # import tardio: core importa db
+
+        await token_meter.shutdown()
         await close_pool()
 
 

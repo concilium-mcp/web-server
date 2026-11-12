@@ -53,6 +53,18 @@ class Settings(BaseSettings):
     chunk_words: int = 450
     chunk_overlap_words: int = 60
 
+    # Respostas enxutas para agentes (plan-web-33). snippet: um resultado por documento com trecho
+    # curto; full: os trechos inteiros (formato antigo — rollback sem deploy de código).
+    search_default_detail: Literal["snippet", "full"] = "snippet"
+    search_snippet_words: int = Field(default=120, ge=20, le=1000)
+    # get_document no MCP: acima disso (tokens estimados) e sem section/max_tokens, devolve o
+    # outline e a dica em vez do texto inteiro. 0 desliga.
+    doc_full_max_tokens: int = Field(default=6000, ge=0)
+    # Medidor de economia de tokens no Painel (plan-web-35): só contadores diários, sem conteúdo.
+    token_meter_enabled: bool = True
+    # Resumo do projeto no início da sessão (plan-web-34): teto do texto da nota de resumo.
+    brief_max_tokens: int = Field(default=800, ge=50)
+
     duplicate_threshold: float = 0.92
     memory_duplicate_threshold: float = 0.90
     load_agent_memory_limit: int = 15

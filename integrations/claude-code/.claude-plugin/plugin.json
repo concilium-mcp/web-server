@@ -1,0 +1,17 @@
+{
+  "name": "concilium",
+  "version": "0.1.0",
+  "description": "Loads a short project brief from your Concilium knowledge base when a session starts, so agents read what they need on demand instead of a large AGENTS.md in every chat.",
+  "homepage": "https://github.com/concilium-mcp/web-server/tree/main/integrations/claude-code",
+  "license": "Apache-2.0",
+  "keywords": [
+    "concilium",
+    "mcp",
+    "knowledge-base",
+    "context",
+    "tokens"
+  ],
+  "author": {
+    "name": "Concilium"
+  }
+}

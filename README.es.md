@@ -46,6 +46,7 @@ Los agentes también tienen un hogar: perfil (system prompt), memoria persistent
 
 **🔎 RAG de verdad para agentes**
 - Búsqueda híbrida (**semántica + texto completo**) en PostgreSQL + pgvector
+- **Respuestas que ahorran tokens**: por defecto, un fragmento corto por documento (~65% menos tokens por búsqueda que devolver los fragmentos completos), y los documentos grandes se leen por sección (`outline`, `section`, `max_tokens`) en lugar de enteros
 - División automática en fragmentos, control de versiones y **aviso de duplicados** antes de insertar
 - Upsert por id externo, para sincronizar con un CRM, un sitio de documentación o cualquier otro sistema
 
@@ -59,6 +60,7 @@ Los agentes también tienen un hogar: perfil (system prompt), memoria persistent
 - Filtro por colección, umbral de similitud o nivel de documento/fragmento, y conexión de documentos con clics
 
 **🔐 Hecho para equipos**
+- **Medidor de tokens ahorrados** en el Panel: por proyecto y por agente, cuántos tokens recibieron los agentes frente a los documentos completos de los que salieron las respuestas (estimación, indicada como tal; solo se guardan contadores diarios, nunca consultas ni contenido)
 - Panel con métricas de uso, probador de búsqueda RAG, claves de API con alcances y roles de usuario (lector, editor, admin)
 - Tema claro y oscuro, con la interfaz en **inglés, portugués y español**
 - Registro de auditoría de cada escritura, además de una API REST con documentación OpenAPI interactiva
@@ -166,6 +168,18 @@ Después, solo habla con Claude:
 > ¿Cuál es el plazo de reembolso? Cita la fuente.
 >
 > Registra un agente de soporte que solo use la colección "manual" y nunca prometa reembolsos sin consultar la política.
+
+## Menos contexto en varios proyectos
+
+¿Trabajas en varios proyectos? No cargues un `AGENTS.md` grande en cada chat. Marca una nota por carpeta principal como **resumen del proyecto** (botón de chincheta en la nota), y el [plugin de Claude Code](integrations/claude-code/README.md) inyecta solo ese resumen (como máximo ~800 tokens) al iniciar la sesión, según el repositorio en el que estés:
+
+```text
+/plugin marketplace add concilium-mcp/web-server
+/plugin install concilium@concilium
+/concilium-init
+```
+
+El resto llega bajo demanda: `search_knowledge` devuelve un fragmento corto por documento y `get_document` lee los documentos grandes por sección. Los clientes sin hooks usan la herramienta `get_project_brief`, y `load_agent` ya incluye el resumen del proyecto del agente. El Panel muestra cuántos tokens se ahorraron, por proyecto y por agente.
 
 ## Cómo funciona
 

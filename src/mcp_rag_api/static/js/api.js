@@ -28,6 +28,9 @@ const api = {
   post(path, body) {
     return this.req("POST", path, body ?? {});
   },
+  put(path, body) {
+    return this.req("PUT", path, body ?? {});
+  },
   patch(path, body) {
     return this.req("PATCH", path, body ?? {});
   },

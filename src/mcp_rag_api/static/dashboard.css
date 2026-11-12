@@ -3715,6 +3715,20 @@ button.kpi:focus-visible .kpi-icon {
   stroke-width: 1;
 }
 
+.tokens-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.tokens-summary strong {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 .viz-empty {
   padding: 24px 0;
   text-align: center;
@@ -5754,4 +5768,16 @@ table.dt .num {
   border: 1px solid var(--border);
   text-align: center;
   font-size: 13px;
+}
+
+/* Resumo do projeto (plan-web-34): selo na árvore e botão ativo na nota */
+.tree-brief {
+  display: inline-flex;
+  color: var(--accent);
+  margin-left: 4px;
+  flex: none;
+}
+
+#note-brief.active {
+  color: var(--accent);
 }

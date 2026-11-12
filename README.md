@@ -47,6 +47,7 @@ Agents also get a home: a profile (system prompt), persistent memory, session su
 
 **🔎 Real RAG for agents**
 - Hybrid search (**semantic + full-text**) on PostgreSQL + pgvector
+- **Token-lean answers**: one short snippet per document by default (~65% fewer tokens per search than returning whole chunks), and big documents are read by section (`outline`, `section`, `max_tokens`) instead of all at once
 - Automatic chunking, document versioning and **duplicate warnings** before insert
 - Upsert by external id, so you can sync from a CRM, a docs site or any other system
 
@@ -60,6 +61,7 @@ Agents also get a home: a profile (system prompt), persistent memory, session su
 - Filter by collection, similarity threshold or document/chunk level, and connect documents by clicking
 
 **🔐 Built for teams**
+- **Tokens saved meter** on the overview: per project and per agent, how many tokens agents received versus the whole documents those answers came from (an estimate, labeled as such; only daily counters are stored, never queries or content)
 - Dashboard with usage metrics, a RAG search tester, scoped API keys and user roles (viewer, editor, admin)
 - Light and dark themes, with the interface in **English, Portuguese and Spanish**
 - An audit log of every write, plus a REST API with interactive OpenAPI docs
@@ -167,6 +169,18 @@ Then just talk to Claude:
 > What is our refund window? Cite the source.
 >
 > Register a support agent that only uses the "handbook" collection and never promises refunds without checking the policy.
+
+## Use less context across projects
+
+Working on several projects? Don't load a big `AGENTS.md` into every chat. Mark one note per top-level folder as the **project brief** (pin button on the note), and the [Claude Code plugin](integrations/claude-code/README.md) injects only that brief (~800 tokens at most) when a session starts, based on the repository you are in:
+
+```text
+/plugin marketplace add concilium-mcp/web-server
+/plugin install concilium@concilium
+/concilium-init
+```
+
+Everything else comes on demand: `search_knowledge` returns one short snippet per document, and `get_document` reads big documents by section. Clients without hooks can call the `get_project_brief` tool, and `load_agent` already includes the brief of the agent's project. The overview shows how many tokens this saved, per project and per agent.
 
 ## How it works
 

@@ -2,14 +2,14 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from . import db
 from .config import get_settings
-from .core import agents, documents, file_import, folders, links, memory, search
+from .core import agents, brief, documents, file_import, folders, lean, links, memory, search, token_meter
 from .security import DEV_PRINCIPAL, PermissionDenied, Principal, bearer_token, resolve_bearer
 
 router = APIRouter()
@@ -42,6 +42,9 @@ class SearchIn(BaseModel):
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
     top_k: int = 5
+    # sem detail: lista de trechos inteiros (formato de sempre); com detail: {results, truncated, ...}
+    detail: Literal["snippet", "full"] | None = None
+    max_tokens: int | None = Field(default=None, ge=1)
 
 
 class DocumentIn(BaseModel):
@@ -211,8 +214,22 @@ async def create_folder(body: FolderPathIn, p: Principal = Auth) -> dict:
 
 
 @router.post("/search")
-async def search_knowledge(body: SearchIn, p: Principal = Auth) -> list[dict]:
-    return await search.search_knowledge(p, body.query, body.collections, body.tags, body.metadata, body.top_k)
+async def search_knowledge(body: SearchIn, p: Principal = Auth) -> list[dict] | dict:
+    if body.detail is None and body.max_tokens is None:
+        rows = await search.search_knowledge(p, body.query, body.collections, body.tags, body.metadata, body.top_k)
+        token_meter.record_documents("search_knowledge", p, token_meter.served_by_document(rows))
+        return rows
+    result = await lean.search_lean(
+        p, body.query, body.collections, body.tags, body.metadata, body.top_k, body.detail or "full", body.max_tokens
+    )
+    token_meter.record_documents("search_knowledge", p, token_meter.served_by_document(result["results"]))
+    return result
+
+
+@router.get("/context/brief")
+async def project_brief(collection: str, agent: str | None = None, p: Principal = Auth) -> dict:
+    """Resumo do projeto para o início da sessão (plugin do Claude Code, plan-web-34)."""
+    return await brief.get_brief(p, collection, agent)
 
 
 @router.get("/documents")
@@ -266,8 +283,19 @@ async def upload_document(
 
 
 @router.get("/documents/{document_id}")
-async def get_document(document_id: str, p: Principal = Auth) -> dict:
-    return await folders.get_document_with_folder(p, document_id)
+async def get_document(
+    document_id: str,
+    outline: bool = False,
+    section: str | None = None,
+    offset: int = Query(default=0, ge=0),
+    max_tokens: int | None = Query(default=None, ge=1),
+    p: Principal = Auth,
+) -> dict:
+    doc = await folders.get_document_with_folder(p, document_id)
+    # na REST o documento inteiro continua sendo o padrão (sem auto_outline): scripts contam com isso
+    shaped = lean.shape_document(doc, outline=outline, section=section, offset=offset, max_tokens=max_tokens)
+    token_meter.record_documents("get_document", p, token_meter.served_by_document([shaped]))
+    return shaped
 
 
 @router.post("/documents/{document_id}/move")

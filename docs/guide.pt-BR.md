@@ -152,7 +152,7 @@ A tela inicial é **Notas**: pastas (coleções) à esquerda, editor visual (Toa
 | `create_folder` | `POST /folders` `{collection, path}` | cria o caminho, só os níveis que faltam (idempotente) |
 | `add_document` / `upsert_document` com `folder_path` | `POST /documents`, `PUT /documents/upsert` | cria a nota já na pasta (criando o que faltar) |
 | `move_document` | `POST /documents/{id}/move` `{collection, folder_path}` | move para outra pasta principal e/ou pasta; sem `folder_path`, vai para a raiz |
-| `get_document` | `GET /documents/{id}` | devolve também `folder_path` (`null` = raiz) |
+| `get_document` | `GET /documents/{id}` | devolve também `folder_path` (ausente/`null` = raiz) |
 | `list_documents` com `folder_path` | `GET /documents?collection=X&folder_path=A/B` | só as notas da pasta e das subpastas (`recursive=false` fica só na pasta); exige `collection`, pasta inexistente dá 404. Cada item traz `folder_path` |
 
 O acesso continua sendo por pasta principal: a chave que só enxerga `Clientes` enxerga todas as pastas dentro dela.
@@ -438,6 +438,25 @@ A chave de um agente herda os escopos e as coleções permitidas (`allowed_colle
 | Links entre documentos | `get_related`, `link_documents`, `unlink_documents` (e `[[Título]]` no conteúdo) |
 | Agente (sobre si mesmo) | `load_agent`, `recall`, `remember`, `forget`, `save_session`, `list_sessions`, `list_tasks`, `upsert_task`, `propose_agent_update` |
 | Gestão (`agents:manage`) | `create_agent`, `update_agent`, `set_agent_autonomy`, `get_agent`, `list_agents`, `clone_agent`, `archive_agent`, `restore_agent_version`, `issue_agent_key`, `revoke_agent_key`, `list_agent_proposals`, `review_agent_update`, `add_agent_memory`, `add_agent_task` |
+
+#### Economia de tokens na leitura
+
+O MCP responde em camadas para o agente gastar pouco contexto:
+
+| Tool | Parâmetros | O que faz |
+|---|---|---|
+| `search_knowledge` | `detail` (`snippet` padrão, ou `full`), `max_tokens` | `snippet`: um resultado por documento, com ~120 palavras em volta do termo buscado, `folder_path` e `more_chunks` (quantos outros trechos do documento bateram). `full`: os trechos inteiros. `max_tokens` corta a lista (`truncated: true`). A resposta é `{results, truncated, tokens_estimate}` |
+| `get_document` | `outline`, `section`, `offset`, `max_tokens` | `outline=true`: só os títulos das seções e o tamanho de cada uma. `section="2026-10"`: só a seção cujo título contém o texto (com as subseções; `other_matches` lista as outras). `max_tokens`: lê em partes; continue com `offset=next_offset` |
+
+Documento acima de `DOC_FULL_MAX_TOKENS` (padrão 6000 tokens estimados) pedido sem esses parâmetros volta como outline com uma dica, em vez do texto inteiro. As respostas das tools vêm sem campos nulos (ausente = nulo, ex.: sem `folder_path` = raiz).
+
+Na REST, o padrão continua o de antes: `POST /search` sem `detail`/`max_tokens` devolve a lista de trechos inteiros, e `GET /documents/{id}` devolve o documento inteiro; os mesmos parâmetros são opcionais (`?outline=true`, `?section=…`, `?max_tokens=…&offset=…`).
+
+**Resumo do projeto (início da sessão):** na tela Notas, o botão de alfinete marca a nota como resumo da pasta principal (uma por pasta; a nota precisa ser dela, e arquivá-la desliga o resumo). `GET /context/brief?collection=X[&agent=slug]` e a tool `get_project_brief` devolvem `{text, tokens_estimate, truncated, brief_document_id}`: o resumo (cortado em `BRIEF_MAX_TOKENS`, padrão 800, com aviso), a lista de pastas com a contagem de notas e, com `agent`, a última sessão e as tarefas abertas desse agente (só o próprio agente ou `agents:manage`). Resumo sem edição há mais de 60 dias vem com aviso. O `load_agent` do MCP inclui `project_brief` da primeira coleção permitida do agente que tiver resumo; a REST `/agents/{slug}/context` não muda (é a que o bridge do Hermes usa). Plugin do Claude Code: `integrations/claude-code/` (hook `SessionStart` + `/concilium-init`), instalado com `/plugin marketplace add concilium-mcp/web-server`.
+
+**Medidor "Tokens economizados" (Painel):** cada `search_knowledge` e `get_document` (MCP e REST) conta os tokens estimados que entregou e os tokens dos documentos inteiros de onde a resposta saiu (cada documento uma vez por chamada). A diferença é a economia, mostrada por dia, por pasta principal (projeto) e por agente. Ficam só contadores por dia na tabela `token_stats_daily`, gravados a cada 10 s fora do caminho da resposta; nada de consulta ou conteúdo. É estimativa (caracteres ÷ 4) e comparação com "ler o documento inteiro", então serve de indicador, não de número exato de cobrança. Desligar: `TOKEN_METER_ENABLED=false`.
+
+Rollback sem deploy: `SEARCH_DEFAULT_DETAIL=full` e `DOC_FULL_MAX_TOKENS=0`. Para medir o catálogo de tools por tipo de conexão: `uv run python scripts/measure_tool_catalog.py`.
 
 **Prompts:** `design_agent`, `start_as_agent`, `answer_with_sources`, `save_learning`.
 **Resource:** `agent://{slug}/context`.

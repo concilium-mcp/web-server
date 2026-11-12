@@ -46,6 +46,7 @@ Os agentes também ganham uma casa: perfil (system prompt), memória persistente
 
 **🔎 RAG de verdade para agentes**
 - Busca híbrida (**semântica + full-text**) em PostgreSQL + pgvector
+- **Respostas que economizam tokens**: por padrão, um trecho curto por documento (~65% menos tokens por busca do que devolver os trechos inteiros), e documento grande é lido por seção (`outline`, `section`, `max_tokens`) em vez de inteiro
 - Quebra automática em trechos, versionamento de documentos e **aviso de duplicata** antes de inserir
 - Upsert por id externo, para sincronizar com CRM, site de documentação ou qualquer outro sistema
 
@@ -59,6 +60,7 @@ Os agentes também ganham uma casa: perfil (system prompt), memória persistente
 - Filtro por coleção, limite de similaridade ou nível de documento/trecho, e conexão de documentos com cliques
 
 **🔐 Feito para times**
+- **Medidor de tokens economizados** no Painel: por projeto e por agente, quantos tokens os agentes receberam em comparação com os documentos inteiros de onde as respostas saíram (estimativa, rotulada como tal; só contadores diários são guardados, nunca consultas ou conteúdo)
 - Dashboard com métricas de uso, testador de busca RAG, chaves de API com escopos e papéis de usuário (leitor, editor, admin)
 - Tema claro e escuro, com a interface em **inglês, português e espanhol**
 - Log de auditoria de toda escrita, além de API REST com documentação OpenAPI interativa
@@ -166,6 +168,18 @@ Depois é só conversar com o Claude:
 > Qual é o prazo de reembolso? Cite a fonte.
 >
 > Cadastre um agente de suporte que só usa a coleção "manual" e nunca promete reembolso sem consultar a política.
+
+## Menos contexto em vários projetos
+
+Cuida de vários projetos? Não carregue um `AGENTS.md` grande em todo chat. Marque uma nota por pasta principal como **resumo do projeto** (botão de alfinete na nota), e o [plugin do Claude Code](integrations/claude-code/README.md) injeta só esse resumo (no máximo ~800 tokens) no início da sessão, de acordo com o repositório em que você está:
+
+```text
+/plugin marketplace add concilium-mcp/web-server
+/plugin install concilium@concilium
+/concilium-init
+```
+
+O resto vem sob demanda: `search_knowledge` devolve um trecho curto por documento, e `get_document` lê documento grande por seção. Clientes sem hooks usam a tool `get_project_brief`, e o `load_agent` já traz o resumo do projeto do agente. O Painel mostra quantos tokens isso economizou, por projeto e por agente.
 
 ## Como funciona
 
