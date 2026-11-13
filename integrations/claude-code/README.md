@@ -39,4 +39,6 @@ Mark the brief in the dashboard: open the note and click the pin button (**Use a
 
 - **Real token spend (0.3):** an async hook on `Stop` and `SessionEnd` reads the session transcript incrementally and sends only counters to `POST /usage/sessions`: API calls, input, output, cache write and cache read tokens, the model, and how many Concilium tool calls the session made (plus the estimated size of what they returned). No prompt, code or content leaves the machine. The dashboard overview shows the real spend per project, sessions with and without Concilium, and each board card shows the spend of the sessions that touched it.
 
+- **Leaner tool catalog:** connect the project MCP as `https://<your-concilium>/mcp?tools=dev`. It lists only the 22 tools a coding agent uses every day (search and read the knowledge base, update notes, memory and session, work on board cards) instead of the full catalog, which costs thousands of tokens at the start of every session. Hidden tools still work if called.
+
 Clients without hooks (claude.ai, ChatGPT, Cursor) can call the `get_project_brief` MCP tool instead, and `load_agent` already includes the brief of the agent's first allowed collection.

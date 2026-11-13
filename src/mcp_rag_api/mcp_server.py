@@ -158,6 +158,49 @@ def tool_visible(name: str, p: Principal) -> bool:
     return scope is None or p.has(scope)
 
 
+# Perfis de catálogo (o cliente escolhe pela URL: /mcp?tools=dev). O teste controlado de 2026-11-12 mostrou que
+# o catálogo inteiro (~60 tools) custa ~17 mil tokens fixos por sessão do Claude Code e engole a economia em
+# conversas curtas. "dev" = o dia a dia de um agente de desenvolvimento: buscar e ler a base, atualizar nota,
+# memória/sessão e trabalhar nos cartões. As outras tools continuam chamáveis, só não entram no catálogo.
+TOOL_PROFILES: dict[str, frozenset[str]] = {
+    "dev": frozenset(
+        {
+            "search_knowledge",
+            "get_document",
+            "list_documents",
+            "get_related",
+            "get_project_brief",
+            "load_agent",
+            "remember",
+            "save_session",
+            "add_document",
+            "update_document",
+            "edit_document",
+            "my_work",
+            "get_board",
+            "get_card",
+            "create_card",
+            "start_card",
+            "update_card",
+            "check_item",
+            "log_card",
+            "release_card",
+            "submit_card",
+            "finish_card",
+        }
+    ),
+}
+
+
+def _profile_of(ctx: Any) -> frozenset[str] | None:
+    try:
+        request = ctx.request
+        name = (request.query_params.get("tools") or "").strip().lower() if request is not None else ""
+    except (AttributeError, ValueError):
+        return None
+    return TOOL_PROFILES.get(name)
+
+
 class ConciliumMCPServer(MCPServer):
     async def _handle_list_tools(self, ctx, params):  # type: ignore[no-untyped-def]
         result = await super()._handle_list_tools(ctx, params)
@@ -166,9 +209,10 @@ class ConciliumMCPServer(MCPServer):
             p = await current_principal(context)
         except KBError:
             return result  # sem credencial o portão já barrou; aqui só por garantia
+        profile = _profile_of(ctx)
         tools = []
         for t in result.tools:
-            if not tool_visible(t.name, p):
+            if not tool_visible(t.name, p) or (profile is not None and t.name not in profile):
                 continue
             update: dict[str, Any] = {"input_schema": lean.compact_schema(t.input_schema)}
             if t.name in AGENT_CONTEXT_TOOLS and p.agent_slug is None:

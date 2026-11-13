@@ -72,3 +72,24 @@ async def test_search_knowledge_keeps_list_output_schema():
     # clientes MCP guardam o output schema; mudar de lista para objeto quebra quem já está conectado
     tool = next(t for t in await mcp.list_tools() if t.name == "search_knowledge")
     assert tool.output_schema and tool.output_schema["properties"]["result"]["type"] == "array"
+
+
+async def test_dev_profile_trims_catalog_by_url():
+    """/mcp?tools=dev: só o dia a dia do agente de desenvolvimento (o resto continua chamável)."""
+    import uuid
+    from types import SimpleNamespace
+
+    from mcp_rag_api.mcp_server import TOOL_PROFILES, mcp
+    from mcp_rag_api.security import Principal
+
+    p = Principal(actor="agent:dev", scopes=frozenset({"read", "write"}), agent_id=uuid.uuid4(), agent_slug="dev")
+
+    async def names(tools: str) -> set[str]:
+        req = SimpleNamespace(scope={"kb.principal": p}, headers={}, query_params={"tools": tools})
+        return {t.name for t in (await mcp._handle_list_tools(SimpleNamespace(request=req), None)).tools}
+
+    full, dev, unknown = await names(""), await names("dev"), await names("nao-existe")
+    assert dev == TOOL_PROFILES["dev"] & full
+    assert {"search_knowledge", "get_document", "start_card", "check_item", "my_work"} <= dev
+    assert not {"create_collection", "list_folders", "set_column", "board_log", "recall"} & dev
+    assert unknown == full and len(dev) < len(full) / 2

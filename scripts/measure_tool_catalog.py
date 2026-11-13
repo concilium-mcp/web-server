@@ -26,10 +26,16 @@ PROFILES = {
 async def main() -> None:
     print(f"instruções do servidor: ~{estimate_tokens(INSTRUCTIONS)} tokens (uma vez por conexão)")
     for label, principal in PROFILES.items():
-        ctx = SimpleNamespace(request=SimpleNamespace(scope={"kb.principal": principal}, headers={}))
-        result = await mcp._handle_list_tools(ctx, None)
-        payload = json.dumps([t.model_dump(by_alias=True, exclude_none=True) for t in result.tools], ensure_ascii=False)
-        print(f"{label}: {len(result.tools)} tools, ~{estimate_tokens(payload)} tokens")
+        for profile in ("", "dev"):
+            if profile and label != "agente (read, write)":
+                continue
+            req = SimpleNamespace(scope={"kb.principal": principal}, headers={}, query_params={"tools": profile})
+            result = await mcp._handle_list_tools(SimpleNamespace(request=req), None)
+            payload = json.dumps(
+                [t.model_dump(by_alias=True, exclude_none=True) for t in result.tools], ensure_ascii=False
+            )
+            nome = f"{label} · ?tools={profile}" if profile else label
+            print(f"{nome}: {len(result.tools)} tools, ~{estimate_tokens(payload)} tokens")
 
 
 if __name__ == "__main__":
