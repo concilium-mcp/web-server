@@ -36,6 +36,8 @@ Ferramentas como **Obsidian**, **Notion** e **Logseq** são ótimas para pessoas
 
 Os agentes também ganham uma casa: perfil (system prompt), memória persistente, resumos de sessão e tarefas, tudo guardado no banco. Um chat novo carrega esse contexto e **continua de onde o anterior parou**.
 
+O que o Concilium entrega é **o contexto certo**, não uma conta menor. No nosso próprio teste (cinco perguntas reais sobre este projeto, Claude Code com e sem o Concilium), conectá-lo acrescentou cerca de 1.200 tokens por sessão e ~9% no custo. Em troca, o agente seguiu o procedimento de deploy atual; o agente sem ele leu um `AGENTS.md` desatualizado e errou. Quando a resposta está no código, ler o arquivo resolve igual; o Concilium se paga no que o código não diz: decisões, histórico, procedimentos, o trabalho em andamento.
+
 ## Recursos
 
 **📝 Espaço de notas do time**
@@ -60,7 +62,8 @@ Os agentes também ganham uma casa: perfil (system prompt), memória persistente
 - Filtro por coleção, limite de similaridade ou nível de documento/trecho, e conexão de documentos com cliques
 
 **🔐 Feito para times**
-- **Medidor de tokens economizados** no Painel: por projeto e por agente, quantos tokens os agentes receberam em comparação com os documentos inteiros de onde as respostas saíram (estimativa, rotulada como tal; só contadores diários são guardados, nunca consultas ou conteúdo)
+- **Gasto real das sessões** no Painel: o plugin do Claude Code envia o uso real de tokens de cada sessão (só contadores, nunca prompts ou código), por projeto e por cartão do quadro, com as sessões com e sem o Concilium lado a lado
+- **Medidor de contexto**: por projeto e por agente, quanto texto os agentes receberam em comparação com os documentos inteiros por trás das respostas (estimativa, rotulada como tal; só contadores diários são guardados)
 - Dashboard com métricas de uso, testador de busca RAG, chaves de API com escopos e papéis de usuário (leitor, editor, admin)
 - Tema claro e escuro, com a interface em **inglês, português e espanhol**
 - Log de auditoria de toda escrita, além de API REST com documentação OpenAPI interativa
@@ -179,13 +182,15 @@ Cuida de vários projetos? Não carregue um `AGENTS.md` grande em todo chat. Mar
 /concilium-init
 ```
 
-O resto vem sob demanda: `search_knowledge` devolve um trecho curto por documento, e `get_document` lê documento grande por seção. Clientes sem hooks usam a tool `get_project_brief`, e o `load_agent` já traz o resumo do projeto do agente. O Painel mostra quantos tokens isso economizou, por projeto e por agente.
+O resto vem sob demanda: `search_knowledge` devolve um trecho curto por documento, e `get_document` lê documento grande por seção. Clientes sem hooks usam a tool `get_project_brief`, e o `load_agent` já traz o resumo do projeto do agente. Agentes de desenvolvimento também podem se conectar em `/mcp?tools=dev`, uma lista curta com as 22 tools do dia a dia. O Painel mostra o gasto real de tokens de cada sessão.
 
 ## Quadros para agentes trabalhando em paralelo
 
 Cada pasta pode ter **quadros Kanban** (um por projeto), com as colunas que você digitar. Os agentes quebram o trabalho em cartões com checklist, **pegam** um cartão para a sua sessão (posse de 2 horas renovada a cada atualização, para duas sessões nunca trabalharem no mesmo cartão), anotam worktree, branch, MR e CI, marcam o checklist e movem o cartão para revisão ou feito. A sessão que para no meio solta o cartão com o próximo passo, e a seguinte continua dali. O plugin do Claude Code mostra os seus cartões do repositório no início da sessão.
 
 Toda mudança vai para um **log de auditoria só de acréscimo** (quem, de qual cliente e sessão, quando e o que mudou, antes → depois), consultável pela tool `board_log`. Tools: `list_boards`, `get_board`, `create_board`, `my_work`, `create_card`, `start_card`, `update_card`, `check_item`, `log_card`, `release_card`, `submit_card`, `finish_card`, `search_cards` e outras; REST em `/boards` e `/cards`.
+
+Já usa o Trello? Conecte em **Integrações** para importar um quadro (colunas, etiquetas, prazos e checklists) e espelhar as mudanças dos cartões de volta para o Trello.
 
 ## Como funciona
 
@@ -219,10 +224,13 @@ Prompts: `design_agent`, `start_as_agent`, `answer_with_sources`, `save_learning
 Sim, para times. Você tem pastas, Markdown, `[[wikilinks]]`, backlinks e visão em grafo no navegador. Toda nota também pode ser buscada por agentes de IA via MCP, com busca semântica, versionamento e controle de acesso. Ele não substitui um vault pessoal offline: é uma base de conhecimento compartilhada entre pessoas e agentes.
 
 **Dá para usar no lugar do Notion como wiki do time?**
-Para o conhecimento que os agentes precisam usar, dá: perfis de cliente, playbooks, runbooks, documentação de produto. O foco do Concilium são notas, busca e agentes, e não bancos de dados, quadros kanban ou edição simultânea em tempo real.
+Para o conhecimento que os agentes precisam usar, dá: perfis de cliente, playbooks, runbooks, documentação de produto. O foco do Concilium são notas, busca, agentes e os quadros em que eles trabalham, e não bancos de dados ou edição simultânea em tempo real.
 
 **Consigo importar meu vault do Obsidian ou arquivos Markdown?**
 Envie pela API REST (`PUT /documents/upsert`) ou peça ao Claude para adicionar via MCP, e depois rode `uv run mcp-rag-api relink` para resolver todos os `[[wikilinks]]`. Ainda não existe um importador de um clique.
+
+**O Concilium reduz o gasto de tokens?**
+Sozinho, não, e a gente mede em vez de prometer. Conectar o servidor MCP tem um custo fixo pequeno (cerca de 1.200 tokens por sessão do Claude Code com `?tools=dev`), e as respostas são curtas: um trecho por busca, documento grande por seção, um resumo do projeto de ~800 tokens no lugar de um `AGENTS.md` grande. O ganho é de acerto e continuidade: os agentes usam as decisões e os procedimentos atuais e retomam o trabalho de onde a última sessão parou. O Painel mostra o gasto real para você conferir nos seus projetos.
 
 **Funciona com ChatGPT, Cursor ou outras ferramentas de LLM?**
 Qualquer cliente que fale o **Model Context Protocol** consegue se conectar. O resto pode usar a API REST. Os embeddings não dependem do modelo de chat.
