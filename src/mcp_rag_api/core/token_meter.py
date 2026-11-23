@@ -1,8 +1,13 @@
-"""Medidor de economia de tokens (plan-web-35).
+"""Medidor de contexto (plan-web-35).
 
 Para cada leitura de um agente, compara os tokens entregues (`served`) com os tokens dos documentos
-inteiros de onde a resposta saiu (`baseline`: o que ele leria sem o Concilium). Tudo é estimativa
-(caracteres ÷ 4, ver core/tokens.py) e é dito assim na dash.
+inteiros de onde a resposta saiu (`baseline`). Tudo é estimativa (caracteres ÷ 4, ver core/tokens.py)
+e é dito assim na dash.
+
+O que isto NÃO mede: economia de gasto. O `baseline` supõe que o agente leria por inteiro todo
+documento que apareceu na resposta, o que numa busca (vários documentos, um trecho de cada) não
+aconteceria. Por isso o Painel mostra o contexto entregue e o tamanho dos documentos por trás dele,
+separando busca de leitura (`by_tool`); o gasto de verdade está em core/usage.py.
 
 Fora do caminho da resposta: `record_documents` só agenda o trabalho; os contadores ficam numa fila
 em memória e vão para `token_stats_daily` a cada FLUSH_SECONDS (e no desligamento). Se o processo
@@ -170,7 +175,7 @@ async def summary(days: int, end: date | None = None) -> dict:
                    sum(t.baseline) AS baseline
             FROM token_stats_daily t LEFT JOIN collections c ON c.id = t.collection_id
             WHERE t.day BETWEEN $2::date - ($1 - 1) AND $2::date
-            GROUP BY 1 ORDER BY sum(t.baseline) - sum(t.served) DESC LIMIT 20
+            GROUP BY 1 ORDER BY sum(t.served) DESC LIMIT 20
             """,
             days,
             end,
@@ -180,7 +185,18 @@ async def summary(days: int, end: date | None = None) -> dict:
             SELECT a.slug, a.name, sum(t.calls) AS calls, sum(t.served) AS served, sum(t.baseline) AS baseline
             FROM token_stats_daily t JOIN agents a ON a.id = t.agent_id
             WHERE t.day BETWEEN $2::date - ($1 - 1) AND $2::date
-            GROUP BY a.slug, a.name ORDER BY sum(t.baseline) - sum(t.served) DESC LIMIT 20
+            GROUP BY a.slug, a.name ORDER BY sum(t.served) DESC LIMIT 20
+            """,
+            days,
+            end,
+        )
+        # busca e leitura respondem a perguntas diferentes: na busca o documento inteiro nunca seria
+        # lido; na leitura (get_document por seção ou em partes) ele é o que o agente pediu
+        by_tool = await conn.fetch(
+            """
+            SELECT tool, sum(calls) AS calls, sum(served) AS served, sum(baseline) AS baseline
+            FROM token_stats_daily WHERE day BETWEEN $2::date - ($1 - 1) AND $2::date
+            GROUP BY tool ORDER BY sum(served) DESC
             """,
             days,
             end,
@@ -196,4 +212,5 @@ async def summary(days: int, end: date | None = None) -> dict:
         "daily": ints(records(daily)),
         "by_collection": ints(records(by_collection)),
         "by_agent": ints(records(by_agent)),
+        "by_tool": ints(records(by_tool)),
     }

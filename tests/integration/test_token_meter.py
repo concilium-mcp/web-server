@@ -75,6 +75,9 @@ async def test_summary_for_overview(doc_id):
     project = next(c for c in data["by_collection"] if c["name"] == COLLECTION)
     assert project["baseline"] > project["served"]
     assert data["by_agent"] == []  # DEV_PRINCIPAL não é agente
+    # busca e leitura saem separadas: o Painel não soma as duas como se fossem a mesma coisa
+    reads = next(t for t in data["by_tool"] if t["tool"] == "get_document")
+    assert reads["calls"] >= 1 and reads["baseline"] > reads["served"] > 0
 
 
 def _ctx():

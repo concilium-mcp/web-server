@@ -547,18 +547,22 @@ function columnMenu(colId, anchor) {
   const others = view.board.columns.filter((c) => c.id !== colId);
   const menu = document.createElement("div");
   menu.className = "kb-menu";
+  // linhas de propriedade (rótulo à esquerda, valor sem caixa), como na lateral do cartão
   menu.innerHTML = `
-    <label class="form-label">${t("boards.role.label")} ${helpTip(t("boards.roleHelp"))}</label>
-    <select class="input" data-role>
-      <option value="">${t("boards.role.none")}</option>
-      ${ROLES.map((r) => `<option value="${r}" ${col.role === r ? "selected" : ""} ${used.has(r) ? "disabled" : ""}>${t(`boards.role.${r}`)}${used.has(r) ? ` (${t("boards.role.taken")})` : ""}</option>`).join("")}
-    </select>
-    <label class="form-label">${t("boards.wip")}</label>
-    <input class="input" data-wip type="number" min="0" value="${col.wip_limit || ""}" placeholder="—" />
+    <div class="props">
+      <label class="prop"><span class="prop-k">${t("boards.role.label")} ${helpTip(t("boards.roleHelp"))}</span>
+        <select class="prop-v" data-role>
+          <option value="">${t("boards.role.none")}</option>
+          ${ROLES.map((r) => `<option value="${r}" ${col.role === r ? "selected" : ""} ${used.has(r) ? "disabled" : ""}>${t(`boards.role.${r}`)}${used.has(r) ? ` (${t("boards.role.taken")})` : ""}</option>`).join("")}
+        </select></label>
+      <label class="prop" title="${escHtml(t("boards.wip"))}"><span class="prop-k">${t("boards.wipShort")}</span>
+        <input class="prop-v" data-wip type="number" min="0" value="${col.wip_limit || ""}" placeholder="${escHtml(t("boards.wipNone"))}" /></label>
+    </div>
     ${
       others.length
-        ? `<hr />${col.count ? `<label class="form-label">${t("boards.moveCardsTo")}</label><select class="input" data-move>${others.map((o) => `<option value="${o.id}">${escHtml(o.name)}</option>`).join("")}</select>` : ""}
-           <button class="btn sm danger-text" data-del>${icon("trash-2", 14)}<span>${t("boards.deleteColumn")}</span></button>`
+        ? `<hr />
+           ${col.count ? `<div class="props"><label class="prop" title="${escHtml(t("boards.moveCardsTo"))}"><span class="prop-k">${t("boards.moveShort")}</span><select class="prop-v" data-move>${others.map((o) => `<option value="${o.id}">${escHtml(o.name)}</option>`).join("")}</select></label></div>` : ""}
+           <button class="kb-menu-item danger" type="button" data-del>${icon("trash-2", 14)}<span>${t("boards.deleteColumn")}</span></button>`
         : ""
     }`;
   document.body.appendChild(menu);
@@ -710,7 +714,6 @@ async function openCard(cardId) {
           ${prop("labels", t("boards.labels"), (c.labels || []).join(", "), t("boards.labelsAddPh"))}
           <label class="prop ${c.blocked ? "danger" : "hidden"}" for="cd-blocked" id="cd-blocked-row"><span class="prop-k">${t("boards.blocked")}</span><input class="prop-v" id="cd-blocked" value="${escHtml(c.blocked || "")}" placeholder="${t("boards.blockedPh")}" ${dis} /></label>
         </div>
-        ${ro || c.blocked ? "" : `<button class="btn sm ghost cd-block-btn" type="button" id="cd-block">${icon("ban", 14)}<span>${t("boards.markBlocked")}</span></button>`}
         <details class="cd-code" ${codeFilled ? "open" : ""}>
           <summary>${icon("git-branch", 14)}<span>${t("boards.codeSection")}</span>${codeFilled ? `<span class="muted">${codeFilled}</span>` : ""}</summary>
           <div class="props">
@@ -723,8 +726,12 @@ async function openCard(cardId) {
           ${c.mr_url ? `<a class="btn sm ghost" href="${escHtml(c.mr_url)}" target="_blank" rel="noopener noreferrer">${icon("external-link", 14)}<span>${t("boards.openMr")}</span></a>` : ""}
         </details>
         ${c.usage?.sessions ? `<div class="cd-usage" title="${escHtml(t("usage.costHelp"))}"><span class="prop-k">${t("boards.realCost")}</span><span>${escHtml(t("boards.realCostDetail", { cost: new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(c.usage.cost), count: c.usage.sessions }))}</span></div>` : ""}
-        <div class="cd-foot muted">${creator ? t("boards.createdBy", { who: creator, when: fmtAgo(c.created_at) }) : ""}</div>
-        ${ro ? "" : `<button class="btn sm ghost danger-text" type="button" id="cd-archive">${icon("archive", 14)}<span>${t("boards.archiveCard")}</span></button>`}
+        <div class="cd-foot">
+          ${creator ? `<span class="cd-created muted" title="${escHtml(t("boards.createdBy", { who: creator, when: fmtAgo(c.created_at) }))}">${actorView(c.created_by).ava}<span>${fmtAgo(c.created_at)}</span></span>` : ""}
+          <span class="grow"></span>
+          ${ro || c.blocked ? "" : `<button class="icon-btn sm" type="button" id="cd-block" title="${escHtml(t("boards.markBlocked"))}" aria-label="${escHtml(t("boards.markBlocked"))}">${icon("ban", 15)}</button>`}
+          ${ro ? "" : `<button class="icon-btn sm danger" type="button" id="cd-archive" title="${escHtml(t("boards.archiveCard"))}" aria-label="${escHtml(t("boards.archiveCard"))}">${icon("archive", 15)}</button>`}
+        </div>
       </aside>
     </div>`;
   document.body.insertAdjacentHTML(
@@ -742,10 +749,22 @@ async function openCard(cardId) {
     ta.style.height = "auto";
     ta.style.height = `${ta.scrollHeight}px`;
   };
+  // a altura depende da largura: mede de novo quando ela muda (barra de rolagem, janela, fonte carregada)
+  const widths = new WeakMap();
+  const regrow = new ResizeObserver((entries) => {
+    for (const { target, contentRect } of entries) {
+      if (widths.get(target) === contentRect.width) continue; // só largura: a própria altura não conta
+      widths.set(target, contentRect.width);
+      grow(target);
+    }
+  });
   for (const ta of modal.querySelectorAll(".cd-title, .cd-desc")) {
     grow(ta);
+    ta.scrollTop = 0; // o foco inicial deixa o cursor no fim e o texto rolado
     ta.addEventListener("input", () => grow(ta));
+    regrow.observe(ta);
   }
+  document.fonts?.ready.then(() => modal.isConnected && modal.querySelectorAll(".cd-title, .cd-desc").forEach(grow));
   modal.querySelector(".cd-title").addEventListener("keydown", (e) => e.key === "Enter" && e.preventDefault());
   document.getElementById("cd-block")?.addEventListener("click", (e) => {
     e.currentTarget.remove();

@@ -6,6 +6,7 @@ import { escHtml, fmtAgo, debounce, uiError, helpTip } from "../ui.js";
 import { state, colorFor } from "../state.js";
 import { emit } from "../events.js";
 import { openRangePicker, closeRangePicker } from "../range-picker.js";
+import { loaderHtml } from "../loader.js";
 
 /* ---------------------------------------------------------------- tela: painel (indicadores e gráficos) */
 
@@ -223,7 +224,7 @@ function overviewTemplate() {
         <h1>${icon("layout-dashboard", 18)} ${t("overview.title")}</h1>
         <span class="sub">${t("overview.sub")}</span>
       </header>
-      <div class="overview-col" id="overview">
+      <div class="overview-col first-load" id="overview">
         <div class="overview-filters">
           <span class="filter-label">${icon("calendar", 14)}${t("overview.period")}</span>
           <div class="period-wrap">
@@ -236,6 +237,7 @@ function overviewTemplate() {
           <span class="muted overview-updated" id="overview-updated"></span>
           <button class="btn sm overview-refresh" type="button" id="overview-refresh" title="${t("overview.refresh")}">${icon("refresh-cw", 14)}<span>${t("overview.refreshBtn")}</span></button>
         </div>
+        <div class="overview-loading" id="overview-loading">${loaderHtml(t("overview.loading"))}</div>
         <div class="kpis" id="kpis"></div>
         <div class="viz-grid">
           ${chartCard("viz-tokens", t("overview.tokens"), t("overview.tokensSub", { days }), { wide: true })}
@@ -314,29 +316,43 @@ async function renderOverview(main) {
   await loadInsights();
 }
 
+// Carregando: na primeira vez o logo animado ocupa o lugar dos cartões (nada de cartão vazio); nas
+// recargas o quadro anterior fica esmaecido e o aviso vai para o lugar do "Atualizado às".
 async function loadInsights() {
   const root = document.getElementById("overview");
   if (!root) return;
-  root.classList.add("loading"); // recarga mantém o quadro anterior, só esmaecido
+  const first = root.classList.contains("first-load");
+  const updated = document.getElementById("overview-updated");
+  root.classList.add("loading");
+  root.setAttribute("aria-busy", "true");
+  if (first) document.getElementById("overview-loading").innerHTML = loaderHtml(t("overview.loading"));
+  else updated.innerHTML = loaderHtml(t("common.loading"), "sm");
   const spinStart = performance.now();
   // o ícone completa ao menos a volta em andamento (0,7 s), mesmo com resposta instantânea
   const stopSpin = () =>
     setTimeout(() => document.getElementById("overview-refresh")?.classList.remove("spinning"), 700 - ((performance.now() - spinStart) % 700));
+  const done = () => {
+    root.classList.remove("loading");
+    root.removeAttribute("aria-busy");
+    stopSpin();
+  };
   document.getElementById("overview-refresh")?.classList.add("spinning");
   let data;
   try {
     data = await api.get("/insights", state.insightsRange ? { ...state.insightsRange } : { days: state.insightsDays });
   } catch (err) {
-    root.classList.remove("loading");
-    stopSpin();
+    done();
+    // sem dados para mostrar: o lugar do loader vira o aviso (o botão Atualizar tenta de novo)
+    if (first) document.getElementById("overview-loading").innerHTML = `<div class="viz-empty">${escHtml(t("overview.loadFailed"))}</div>`;
+    else updated.textContent = "";
     await uiError(t("overview.loadFailed"), err);
     return;
   }
   if (!document.getElementById("overview")) return;
   state.insights = data;
-  root.classList.remove("loading");
-  stopSpin();
-  document.getElementById("overview-updated").textContent = t("overview.updatedAt", {
+  done();
+  root.classList.remove("first-load");
+  updated.textContent = t("overview.updatedAt", {
     time: new Date().toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }),
   });
   root.querySelector("#viz-activity .muted").textContent = t("overview.activitySub", { days: data.days });
@@ -439,55 +455,70 @@ function renderOverviewCharts() {
   );
 }
 
-// Medidor de economia de tokens (plan-web-35): estimativa, sempre rotulada como tal
+// Medidor de contexto (plan-web-35): o que as tools entregaram aos agentes e o tamanho dos documentos
+// inteiros por trás dessas respostas. Não é economia de gasto (essa conta é a do renderUsage): numa
+// busca o agente não leria todos os documentos que apareceram. Estimativa, sempre rotulada como tal.
+const TOOL_LABELS = { search_knowledge: "tokens.toolSearch", get_document: "tokens.toolRead" };
+
 function renderTokens(d) {
   const tk = d.tokens;
   const card = (id) => document.querySelector(`#${id}`);
   if (!tk) return;
-  const saved = (r) => Math.max(r.baseline - r.served, 0);
+  const share = (r) => (r.baseline ? Math.round((r.served / r.baseline) * 100) : 0);
   const body = card("viz-tokens").querySelector(".viz-body");
   if (!tk.calls) {
     body.innerHTML = `<div class="viz-empty">${escHtml(t("tokens.empty"))}</div>`;
   } else {
-    const pct = tk.baseline ? Math.round((saved(tk) / tk.baseline) * 100) : 0;
+    const tools = (tk.by_tool || []).filter((r) => r.calls);
     body.innerHTML = `
       <div class="tokens-summary">
         <div class="tokens-hero">
-          <span class="tokens-big">${nfCompact.format(saved(tk))}</span>
-          <span class="tokens-ratio" title="${escHtml(t("tokens.estimate"))}"><i style="width:${pct}%"></i></span>
+          <span class="tokens-big">${nfCompact.format(tk.served)}</span>
+          <span class="tokens-ratio" title="${escHtml(t("tokens.ratioTip", { pct: share(tk) }))}"><i style="width:${Math.max(share(tk), tk.served ? 1 : 0)}%"></i></span>
         </div>
-        <span class="muted">${escHtml(t("tokens.detail", { served: nf.format(tk.served), baseline: nf.format(tk.baseline), pct, calls: nf.format(tk.calls) }))}</span>
+        <span class="muted">${escHtml(t("tokens.detail", { calls: nf.format(tk.calls), baseline: nfCompact.format(tk.baseline), pct: share(tk) }))} ${helpTip(t("tokens.help"))}</span>
       </div>
-      <div class="tokens-chart"></div>`;
+      <div class="tokens-chart"></div>
+      ${
+        tools.length
+          ? `<div class="usage-facts tokens-tools">${tools
+              .map(
+                (r) => `
+        <div><b>${nfCompact.format(r.served)}</b><span>${escHtml(t(TOOL_LABELS[r.tool] || "tokens.toolOther", { tool: r.tool, calls: nf.format(r.calls), baseline: nfCompact.format(r.baseline) }))} ${helpTip(t(`${TOOL_LABELS[r.tool] || "tokens.toolOther"}Help`))}</span></div>`,
+              )
+              .join("")}</div>`
+          : ""
+      }`;
     drawArea(
       body.querySelector(".tokens-chart"),
-      tk.daily.map((p) => ({ label: fmtDay(p.day), value: saved(p), tip: fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" }) })),
+      tk.daily.map((p) => ({ label: fmtDay(p.day), value: p.served, tip: fmtDay(p.day, { weekday: "short", day: "numeric", month: "short" }) })),
       { valueName: (v) => t("unit.token", { count: v }) },
     );
   }
+  const pctCell = (r) => `${share(r)}%`;
   card("viz-tokens").querySelector(".viz-table").innerHTML = dataTable(
-    [t("col.day"), t("col.served"), t("col.baseline"), t("col.saved")],
-    tk.daily.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), nf.format(p.served), nf.format(p.baseline), nf.format(saved(p))]),
+    [t("col.day"), t("col.served"), t("col.baseline"), t("col.share")],
+    tk.daily.map((p) => [fmtDay(p.day, { day: "2-digit", month: "2-digit", year: "numeric" }), nf.format(p.served), nf.format(p.baseline), pctCell(p)]),
   );
 
   drawRows(
     card("viz-tokens-projects").querySelector(".viz-body"),
-    tk.by_collection.map((c) => ({ label: c.name, value: saved(c), dot: colorFor(c.name) })),
+    tk.by_collection.map((c) => ({ label: c.name, value: c.served, dot: colorFor(c.name) })),
     { empty: t("tokens.empty"), format: (v) => nfCompact.format(v) },
   );
   card("viz-tokens-projects").querySelector(".viz-table").innerHTML = dataTable(
-    [t("col.project"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.saved")],
-    tk.by_collection.map((c) => [c.name, nf.format(c.calls), nf.format(c.served), nf.format(c.baseline), nf.format(saved(c))]),
+    [t("col.project"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.share")],
+    tk.by_collection.map((c) => [c.name, nf.format(c.calls), nf.format(c.served), nf.format(c.baseline), pctCell(c)]),
   );
 
   drawRows(
     card("viz-tokens-agents").querySelector(".viz-body"),
-    tk.by_agent.map((a) => ({ label: a.name || a.slug, value: saved(a), tip: a.slug })),
+    tk.by_agent.map((a) => ({ label: a.name || a.slug, value: a.served, tip: a.slug })),
     { empty: t("tokens.noAgents"), format: (v) => nfCompact.format(v) },
   );
   card("viz-tokens-agents").querySelector(".viz-table").innerHTML = dataTable(
-    [t("col.agent"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.saved")],
-    tk.by_agent.map((a) => [a.name || a.slug, nf.format(a.calls), nf.format(a.served), nf.format(a.baseline), nf.format(saved(a))]),
+    [t("col.agent"), t("col.reads"), t("col.served"), t("col.baseline"), t("col.share")],
+    tk.by_agent.map((a) => [a.name || a.slug, nf.format(a.calls), nf.format(a.served), nf.format(a.baseline), pctCell(a)]),
   );
 }
 
@@ -498,7 +529,16 @@ function renderUsage(d) {
   if (!u || !card("viz-usage")) return;
   const body = card("viz-usage").querySelector(".viz-body");
   if (!u.totals.sessions) {
-    body.innerHTML = `<div class="viz-empty">${escHtml(t("usage.empty"))}</div>`;
+    body.innerHTML = `
+      <div class="usage-setup">
+        <p>${escHtml(t("usage.empty"))}</p>
+        <ol>
+          <li>${escHtml(t("usage.step1"))} <code>/plugin marketplace add concilium-mcp/web-server</code> <code>/plugin install concilium@concilium</code></li>
+          <li>${escHtml(t("usage.step2"))} <code>/concilium-init</code></li>
+          <li>${escHtml(t("usage.step3"))} <code>CONCILIUM_API_KEY</code></li>
+        </ol>
+        <p class="muted">${escHtml(t("usage.setupNote"))}</p>
+      </div>`;
   } else {
     const w = u.with_concilium;
     const wo = u.without_concilium;
@@ -526,7 +566,7 @@ function renderUsage(d) {
   drawRows(
     card("viz-usage-projects").querySelector(".viz-body"),
     u.projects.map((p) => ({ label: p.name, value: p.cost, dot: colorFor(p.name) })),
-    { empty: t("usage.empty"), format: (v) => nfCompact.format(v) },
+    { empty: t("usage.emptyShort"), format: (v) => nfCompact.format(v) },
   );
   card("viz-usage-projects").querySelector(".viz-table").innerHTML = dataTable(
     [t("col.project"), t("usage.col.sessions"), t("usage.col.avg")],

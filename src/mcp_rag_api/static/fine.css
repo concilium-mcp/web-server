@@ -2991,6 +2991,17 @@ a.btn:hover {
   padding-top: 4px;
 }
 
+/* O corpo da janela é uma coluna flex com rolagem: sem isto, quando o cartão passa da altura da tela os
+   filhos encolhem antes de rolar, e o título (textarea com overflow oculto, mínimo automático 0) some.
+   A calha fixa evita que a barra de rolagem, ao aparecer, estreite o texto depois de medida a altura. */
+.card-modal .modal-body {
+  scrollbar-gutter: stable;
+}
+
+.card-modal .modal-body > * {
+  flex-shrink: 0;
+}
+
 .cd-title,
 .cd-desc {
   width: 100%;
@@ -3194,10 +3205,81 @@ a.btn:hover {
 }
 
 .cd-foot {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin-top: 16px;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--hair);
   font-size: 12px;
+}
+
+/* rodapé do cartão: quem criou (avatar + quando) e as ações só em ícone, com o nome na dica */
+.cd-created {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.cd-foot .icon-btn:hover {
+  color: var(--text);
+  background: var(--soft);
+}
+
+.cd-foot .icon-btn.danger:hover {
+  color: var(--danger);
+}
+
+/* menu da coluna: linhas de propriedade no lugar de campos em caixa */
+.kb-menu {
+  width: 248px;
+  padding: 8px;
+  gap: 2px;
+}
+
+.kb-menu .prop {
+  grid-template-columns: 84px minmax(0, 1fr);
+  padding: 0 4px 0 8px;
+}
+
+.kb-menu .prop-k {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kb-menu hr {
+  margin: 4px 0;
+}
+
+.kb-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-menu-item:hover,
+.kb-menu-item:focus-visible {
+  outline: none;
+  background: var(--soft);
+  color: var(--text);
+}
+
+.kb-menu-item.danger:hover,
+.kb-menu-item.danger:focus-visible {
+  color: var(--danger);
 }
 
 
@@ -3454,6 +3536,8 @@ a.btn:hover {
 
 .int-chip.pending span:last-child::after {
   content: "…";
+}
+
 /* ================================================================ Gasto real (plan-web-38) */
 .usage-facts {
   display: grid;
@@ -3495,5 +3579,84 @@ a.btn:hover {
 @media (max-width: 760px) {
   .usage-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------- Painel: carregando
+   Primeira carga: o logo animado ocupa o lugar dos cartões (nunca cartão vazio). Recarga: o quadro
+   anterior fica esmaecido (.overview-col.loading) e o aviso pequeno vai no lugar do "Atualizado às". */
+.overview-loading {
+  display: none;
+}
+
+.overview-col.first-load .overview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52vh;
+}
+
+.overview-col.first-load :is(.kpis, .viz-grid) {
+  display: none;
+}
+
+.overview-col.first-load.loading {
+  opacity: 1;
+}
+
+.overview-updated .cl-loader.sm {
+  --cl-size: 18px;
+  gap: 7px;
+}
+
+.overview-updated .cl-label {
+  font-size: 12px;
+}
+
+/* medidor de contexto: busca e leitura lado a lado */
+.usage-facts.tokens-tools {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* gasto real sem sessões: os três passos do plugin */
+.usage-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 0 4px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.usage-setup p {
+  margin: 0;
+}
+
+.usage-setup ol {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text);
+}
+
+.usage-setup code {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--soft);
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .usage-facts.tokens-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .usage-setup code {
+    white-space: normal;
+    word-break: break-word;
   }
 }
