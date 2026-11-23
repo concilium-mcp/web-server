@@ -100,3 +100,70 @@ async def test_rejects_wrong_dimension_and_count():
 def test_requires_api_key():
     with pytest.raises(RuntimeError, match="HF_API_KEY"):
         HuggingFaceProvider("", "")
+
+
+def _counting(status: int, calls: list, name: str) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((name, request.headers["authorization"], str(request.url)))
+        return httpx.Response(status, json=[_vec(1)] if status == 200 else {"error": "down"})
+
+    return httpx.MockTransport(handler)
+
+
+def _with_fallback(primary: httpx.MockTransport, fallback: httpx.MockTransport) -> HuggingFaceProvider:
+    return HuggingFaceProvider(
+        "own_key",
+        "",
+        api_url="http://own:8080/embed",
+        transport=primary,
+        fallback_url="https://hf.test/embed",
+        fallback_key="hf_key",
+        fallback_transport=fallback,
+    )
+
+
+async def test_primary_answers_and_fallback_stays_idle():
+    calls: list = []
+    p = _with_fallback(_counting(200, calls, "own"), _counting(200, calls, "hf"))
+    assert (await p.embed_one("olá")).shape == (EMBEDDING_DIM,)
+    assert calls == [("own", "Bearer own_key", "http://own:8080/embed")]
+
+
+async def test_falls_back_when_primary_is_down_and_rests_it():
+    calls: list = []
+    p = _with_fallback(_counting(500, calls, "own"), _counting(200, calls, "hf"))
+    assert (await p.embed_one("olá")).shape == (EMBEDDING_DIM,)
+    assert [c[0] for c in calls] == ["own", "hf"] and calls[1][1:] == ("Bearer hf_key", "https://hf.test/embed")
+    # Enquanto descansa, a principal nem é chamada: a busca não paga a espera dela de novo.
+    await p.embed_one("outra")
+    assert [c[0] for c in calls] == ["own", "hf", "hf"]
+    # Passado o descanso, a principal volta a ser tentada.
+    assert p._primary_back_at > embeddings.time.monotonic()
+    p._primary_back_at = 0.0  # sem mexer no relógio do processo: o laço assíncrono depende dele
+    await p.embed_one("mais uma")
+    assert [c[0] for c in calls][-2:] == ["own", "hf"]
+
+
+async def test_falls_back_on_timeout_with_few_attempts():
+    attempts: list = []
+    calls: list = []
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        raise httpx.ConnectTimeout("fora", request=request)
+
+    p = _with_fallback(httpx.MockTransport(slow), _counting(200, calls, "hf"))
+    assert (await p.embed_one("olá")).shape == (EMBEDDING_DIM,)
+    assert len(attempts) == p.PRIMARY_ATTEMPTS and len(calls) == 1
+
+
+async def test_both_down_raises():
+    calls: list = []
+    p = _with_fallback(_counting(500, calls, "own"), _counting(503, calls, "hf"))
+    with pytest.raises(httpx.HTTPStatusError):
+        await p.embed_one("olá")
+
+
+def test_fallback_requires_its_key():
+    with pytest.raises(RuntimeError, match="EMBEDDING_FALLBACK_KEY"):
+        HuggingFaceProvider("own_key", "", api_url="http://own/embed", fallback_url="https://hf.test/embed")

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import math
 import re
+import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import lru_cache
@@ -168,11 +169,19 @@ class HuggingFaceProvider(EmbeddingProvider):
     Repete em 429/503 (limite de taxa / modelo "acordando" no plano gratuito) e em timeout ou falha de
     rede. Lote pequeno de propósito: no plano gratuito, 32 trechos de ~450 palavras numa chamada só
     passavam dos 120 s e a edição de um documento grande caía inteira.
+
+    Com reserva (EMBEDDING_FALLBACK_URL): a URL principal é um servidor próprio no mesmo formato
+    (text-embeddings-inference, `POST {"inputs": [...]}`) e a reserva é usada quando ele falha. A
+    principal ganha prazo curto e poucas tentativas, para a busca não esperar minutos por um servidor
+    fora do ar, e fica de lado por PRIMARY_COOLDOWN segundos depois de falhar.
     """
 
     batch_size = 8
     retries = 4
     name = "huggingface"
+    PRIMARY_ATTEMPTS = 2
+    PRIMARY_TIMEOUT = httpx.Timeout(30, connect=5)
+    PRIMARY_COOLDOWN = 60.0
 
     def __init__(
         self,
@@ -181,9 +190,14 @@ class HuggingFaceProvider(EmbeddingProvider):
         api_url: str = "",
         batch_size: int = 0,
         transport: httpx.AsyncBaseTransport | None = None,
+        fallback_url: str = "",
+        fallback_key: str = "",
+        fallback_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
             raise RuntimeError("HF_API_KEY não configurada")
+        if fallback_url and not fallback_key:
+            raise RuntimeError("EMBEDDING_FALLBACK_URL exige EMBEDDING_FALLBACK_KEY")
         self.model = model or "BAAI/bge-m3"
         self.url = api_url or (
             f"https://router.huggingface.co/hf-inference/models/{self.model}/pipeline/feature-extraction"
@@ -192,20 +206,29 @@ class HuggingFaceProvider(EmbeddingProvider):
             self.batch_size = batch_size
         self.client = httpx.AsyncClient(
             headers={"Authorization": f"Bearer {api_key}", "X-Wait-For-Model": "true"},
-            timeout=120,
+            timeout=self.PRIMARY_TIMEOUT if fallback_url else 120,
             transport=transport,
         )
+        self.fallback_url = fallback_url
+        self.fallback: httpx.AsyncClient | None = None
+        if fallback_url:
+            self.fallback = httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {fallback_key}", "X-Wait-For-Model": "true"},
+                timeout=120,
+                transport=fallback_transport,
+            )
+        self._primary_back_at = 0.0
 
-    async def _embed_batch(self, texts: list[str], input_type: InputType) -> list[list[float]]:
-        for attempt in range(self.retries):
+    async def _post(self, client: httpx.AsyncClient, url: str, texts: list[str], retries: int) -> list[list[float]]:
+        for attempt in range(retries):
             try:
-                resp = await self.client.post(self.url, json={"inputs": texts})
+                resp = await client.post(url, json={"inputs": texts})
             except httpx.TransportError:  # inclui timeout
-                if attempt == self.retries - 1:
+                if attempt == retries - 1:
                     raise
                 await asyncio.sleep(2**attempt)
                 continue
-            if resp.status_code in (429, 503) and attempt < self.retries - 1:
+            if resp.status_code in (429, 503) and attempt < retries - 1:
                 await asyncio.sleep(2**attempt)
                 continue
             resp.raise_for_status()
@@ -215,8 +238,26 @@ class HuggingFaceProvider(EmbeddingProvider):
             raise ValueError("Resposta inesperada do Hugging Face: esperado um vetor por texto.")
         return vectors
 
+    async def _embed_batch(self, texts: list[str], input_type: InputType) -> list[list[float]]:
+        if self.fallback is None:
+            return await self._post(self.client, self.url, texts, self.retries)
+        if time.monotonic() >= self._primary_back_at:
+            try:
+                return await self._post(self.client, self.url, texts, self.PRIMARY_ATTEMPTS)
+            except (httpx.HTTPError, ValueError) as exc:
+                self._primary_back_at = time.monotonic() + self.PRIMARY_COOLDOWN
+                # Só o tipo do erro: nunca o conteúdo dos textos nem as chaves.
+                get_logger().warning(
+                    "embedding: servidor principal falhou (%s); usando a reserva por %d s",
+                    type(exc).__name__,
+                    int(self.PRIMARY_COOLDOWN),
+                )
+        return await self._post(self.fallback, self.fallback_url, texts, self.retries)
+
     async def aclose(self) -> None:
         await self.client.aclose()
+        if self.fallback is not None:
+            await self.fallback.aclose()
 
 
 class LocalProvider(EmbeddingProvider):
@@ -277,7 +318,14 @@ def get_embedder() -> EmbeddingProvider:
         case "openai":
             return OpenAIProvider(s.openai_api_key, s.embedding_model)
         case "huggingface":
-            return HuggingFaceProvider(s.hf_api_key, s.embedding_model, s.embedding_api_url, s.embedding_batch_size)
+            return HuggingFaceProvider(
+                s.hf_api_key,
+                s.embedding_model,
+                s.embedding_api_url,
+                s.embedding_batch_size,
+                fallback_url=s.embedding_fallback_url,
+                fallback_key=s.embedding_fallback_key,
+            )
         case "local":
             return LocalProvider(s.embedding_model)
         case "fake":

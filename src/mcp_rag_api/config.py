@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     hf_api_key: str = ""
     # huggingface: URL do endpoint feature-extraction (vazio = derivada do EMBEDDING_MODEL)
     embedding_api_url: str = ""
+    # huggingface: reserva usada quando EMBEDDING_API_URL (um servidor próprio) falha; exige a chave dela
+    embedding_fallback_url: str = ""
+    embedding_fallback_key: str = ""
     # textos por requisição ao provedor (0 = padrão de cada provedor)
     embedding_batch_size: int = 0
 
@@ -186,6 +189,8 @@ def check_config() -> list[str]:
     env_name, key = required_key.get(s.embedding_provider, ("", ""))
     if env_name and not key:
         raise RuntimeError(f"EMBEDDING_PROVIDER={s.embedding_provider} exige {env_name}: defina a variável no .env")
+    if s.embedding_fallback_url and not s.embedding_fallback_key:
+        raise RuntimeError("EMBEDDING_FALLBACK_URL exige EMBEDDING_FALLBACK_KEY: defina a variável no .env")
     if s.ocr_provider == "openai" and not (s.ocr_api_key or s.openai_api_key):
         raise RuntimeError("OCR_PROVIDER=openai exige OCR_API_KEY ou OPENAI_API_KEY: defina a variável no .env")
     public = urlparse(s.public_url).hostname not in LOCAL_HOSTS
