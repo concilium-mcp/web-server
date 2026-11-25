@@ -252,6 +252,16 @@ async def project_brief(
     return await brief.get_brief(p, collection, agent, repo=repo, work_session=session)
 
 
+class BriefIn(BaseModel):
+    document_id: str | None = None  # None desmarca
+
+
+@router.put("/collections/{name}/brief")
+async def set_project_brief(name: str, body: BriefIn, p: Principal = Auth) -> dict:
+    """Marca a nota que é o resumo do projeto (ou desmarca com document_id null). Escopo write."""
+    return await brief.set_brief(p, name, body.document_id)
+
+
 @router.get("/documents")
 async def list_documents(
     collection: str | None = None,

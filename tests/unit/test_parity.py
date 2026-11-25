@@ -14,6 +14,7 @@ TOOL_ROUTES: dict[str, tuple[str, str]] = {
     # base de conhecimento
     "search_knowledge": ("POST", "/search"),
     "get_project_brief": ("GET", "/context/brief"),
+    "set_project_brief": ("PUT", "/collections/{name}/brief"),
     "get_document": ("GET", "/documents/{document_id}"),
     "list_documents": ("GET", "/documents"),
     "list_collections": ("GET", "/collections"),

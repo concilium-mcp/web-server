@@ -174,7 +174,7 @@ Depois é só conversar com o Claude:
 
 ## Menos contexto em vários projetos
 
-Cuida de vários projetos? Não carregue um `AGENTS.md` grande em todo chat. Marque uma nota por pasta principal como **resumo do projeto** (botão de alfinete na nota), e o [plugin do Claude Code](integrations/claude-code/README.md) injeta só esse resumo (no máximo ~800 tokens) no início da sessão, de acordo com o repositório em que você está:
+Cuida de vários projetos? Não carregue um `AGENTS.md` grande em todo chat. Mantenha uma nota curta por pasta principal como **resumo do projeto**, e o [plugin do Claude Code](integrations/claude-code/README.md) injeta só esse resumo (no máximo ~800 tokens) no início da sessão, de acordo com o repositório em que você está:
 
 ```text
 /plugin marketplace add concilium-mcp/web-server
@@ -182,7 +182,14 @@ Cuida de vários projetos? Não carregue um `AGENTS.md` grande em todo chat. Mar
 /concilium-init
 ```
 
-O resto vem sob demanda: `search_knowledge` devolve um trecho curto por documento, e `get_document` lê documento grande por seção. Clientes sem hooks usam a tool `get_project_brief`, e o `load_agent` já traz o resumo do projeto do agente. Agentes de desenvolvimento também podem se conectar em `/mcp?tools=dev`, uma lista curta com as 22 tools do dia a dia. O Painel mostra o gasto real de tokens de cada sessão.
+| Comando | O que faz |
+|---|---|
+| `/concilium-init` | Liga o repositório a um projeto do Concilium: grava o `.concilium.json` (sem segredos) e oferece um `CLAUDE.md` mínimo. Se o projeto ainda não tem resumo, oferece rodar o `/concilium-brief`. |
+| `/concilium-brief` | Rascunha o resumo a partir do repositório (README, `CLAUDE.md`/`AGENTS.md`, pastas, commits recentes) e das notas que já existem, mostra para você e só salva depois da sua aprovação. Rode de novo quando o projeto mudar: ele atualiza a mesma nota. |
+
+Quem escreve o resumo? Você escolhe: deixa o `/concilium-brief` rascunhar para você aprovar, ou escreve a nota e marca com o botão de alfinete (**Usar como resumo do projeto**).
+
+O resto vem sob demanda: `search_knowledge` devolve um trecho curto por documento, e `get_document` lê documento grande por seção. Clientes sem hooks usam a tool `get_project_brief`, e o `load_agent` já traz o resumo do projeto do agente. Agentes de desenvolvimento também podem se conectar em `/mcp?tools=dev`, uma lista curta com as 23 tools do dia a dia. O Painel mostra o gasto real de tokens de cada sessão.
 
 ## Quadros para agentes trabalhando em paralelo
 

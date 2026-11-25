@@ -4,6 +4,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from mcp_rag_api import mcp_server
 from mcp_rag_api.config import get_settings
@@ -30,6 +31,7 @@ async def test_without_brief_lists_folders_and_hint(setup):
     data = await brief.get_brief(ADMIN, COLLECTION)
     assert data["brief_document_id"] is None
     assert "ainda não tem nota de resumo" in data["text"]
+    assert "/concilium-brief" in data["text"] and "set_project_brief" in data["text"]
     assert "- Planos/2026: 1 nota" in data["text"]
     assert 'collections=["brief-w34"]' in data["text"]
 
@@ -98,3 +100,26 @@ async def test_archived_brief_counts_as_none(setup):
     assert data["brief_document_id"] is None
     ids = await brief.brief_document_ids([COLLECTION])
     assert ids.get(COLLECTION) == doc["document_id"]  # a marca fica, mas não é usada (nota arquivada)
+
+
+def _ctx(p: Principal) -> SimpleNamespace:
+    return SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(scope={"kb.principal": p})))
+
+
+async def test_set_project_brief_tool(setup):
+    """A tool MCP marca e desmarca o resumo; chave só de leitura é recusada (o /concilium-init depende disso)."""
+    note_id, foreign_id = setup
+    writer = _ctx(Principal(actor="key:w", scopes=frozenset({"read", "write"}), allowed_collections=(COLLECTION,)))
+    reader = _ctx(Principal(actor="key:r", scopes=frozenset({"read"}), allowed_collections=(COLLECTION,)))
+    try:
+        out = await mcp_server.set_project_brief(writer, COLLECTION, note_id)
+        assert out == {"collection": COLLECTION, "brief_document_id": note_id}
+        assert (await brief.get_brief(ADMIN, COLLECTION))["brief_document_id"] == note_id
+        with pytest.raises(ToolError, match="própria pasta principal"):
+            await mcp_server.set_project_brief(writer, COLLECTION, foreign_id)
+        await mcp_server.set_project_brief(writer, COLLECTION, None)
+        assert (await brief.get_brief(ADMIN, COLLECTION))["brief_document_id"] is None
+        with pytest.raises(ToolError):
+            await mcp_server.set_project_brief(reader, COLLECTION, note_id)
+    finally:
+        await brief.set_brief(ADMIN, COLLECTION, note_id)

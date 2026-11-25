@@ -175,7 +175,7 @@ Then just talk to Claude:
 
 ## Use less context across projects
 
-Working on several projects? Don't load a big `AGENTS.md` into every chat. Mark one note per top-level folder as the **project brief** (pin button on the note), and the [Claude Code plugin](integrations/claude-code/README.md) injects only that brief (~800 tokens at most) when a session starts, based on the repository you are in:
+Working on several projects? Don't load a big `AGENTS.md` into every chat. Keep one short note per top-level folder as the **project brief**, and the [Claude Code plugin](integrations/claude-code/README.md) injects only that brief (~800 tokens at most) when a session starts, based on the repository you are in:
 
 ```text
 /plugin marketplace add concilium-mcp/web-server
@@ -183,7 +183,14 @@ Working on several projects? Don't load a big `AGENTS.md` into every chat. Mark 
 /concilium-init
 ```
 
-Everything else comes on demand: `search_knowledge` returns one short snippet per document, and `get_document` reads big documents by section. Clients without hooks can call the `get_project_brief` tool, and `load_agent` already includes the brief of the agent's project. Coding agents can also connect to `/mcp?tools=dev`, a short list of the 22 tools they use day to day. The overview shows the real token spend of each session.
+| Command | What it does |
+|---|---|
+| `/concilium-init` | Connects the repository to a Concilium project: writes `.concilium.json` (no secrets) and offers a minimal `CLAUDE.md`. If the project has no brief yet, offers to run `/concilium-brief`. |
+| `/concilium-brief` | Drafts the brief from the repository (README, `CLAUDE.md`/`AGENTS.md`, folder layout, recent commits) and the notes you already have, shows it to you and saves it only after you approve. Run it again when the project changes: it refreshes the same note. |
+
+Who writes the brief? You decide: let `/concilium-brief` draft it for your approval, or write the note yourself and mark it with the pin button (**Use as project brief**).
+
+Everything else comes on demand: `search_knowledge` returns one short snippet per document, and `get_document` reads big documents by section. Clients without hooks can call the `get_project_brief` tool, and `load_agent` already includes the brief of the agent's project. Coding agents can also connect to `/mcp?tools=dev`, a short list of the 23 tools they use day to day. The overview shows the real token spend of each session.
 
 ## Boards for agents working in parallel
 

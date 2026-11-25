@@ -8,7 +8,7 @@
     {
       "name": "concilium",
       "source": "./integrations/claude-code",
-      "description": "Project brief from Concilium at session start, plus /concilium-init to set a repository up."
+      "description": "Project brief from Concilium at session start, plus /concilium-init to set a repository up and /concilium-brief to draft or refresh the brief."
     }
   ]
 }

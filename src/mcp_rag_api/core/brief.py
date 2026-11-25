@@ -134,7 +134,8 @@ async def get_brief(
         head = f"# {collection} — resumo do projeto (Concilium, editado em {updated.date().isoformat()})"
         if age > STALE_DAYS:
             head += (
-                f"\n\n> Atenção: este resumo não é editado há {age} dias; confira o que mudou antes de confiar nele."
+                f"\n\n> Atenção: este resumo não é editado há {age} dias; confira o que mudou antes de confiar nele "
+                "e ofereça atualizar com `/concilium-brief` (plugin do Claude Code) ou `update_document`."
             )
         body, truncated = trim_to_tokens(col["content"].strip(), settings.brief_max_tokens)
         parts.append(head)
@@ -143,7 +144,11 @@ async def get_brief(
             parts.append("> Resumo maior que o teto (BRIEF_MAX_TOKENS): o restante foi cortado; encurte a nota.")
     else:
         parts.append(f"# {collection} — contexto do Concilium")
-        parts.append("Esta pasta principal ainda não tem nota de resumo marcada.")
+        parts.append(
+            "Esta pasta principal ainda não tem nota de resumo marcada. Ofereça criar uma: `/concilium-brief` "
+            "(plugin do Claude Code) rascunha a partir do repositório; sem o plugin, rascunhe, mostre ao usuário, "
+            "salve com `add_document` e marque com `set_project_brief`."
+        )
     if folder_lines:
         parts.append("## Onde está o resto\n\n" + "\n".join(folder_lines))
     if session is not None:

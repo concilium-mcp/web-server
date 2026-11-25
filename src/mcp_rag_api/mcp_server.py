@@ -98,6 +98,7 @@ TOOL_SCOPES: dict[str, str] = {
             "forget",
             "save_session",
             "upsert_task",
+            "set_project_brief",
             "propose_agent_update",
             "create_board",
             "update_board",
@@ -170,6 +171,7 @@ TOOL_PROFILES: dict[str, frozenset[str]] = {
             "list_documents",
             "get_related",
             "get_project_brief",
+            "set_project_brief",
             "load_agent",
             "remember",
             "save_session",
@@ -321,6 +323,15 @@ async def get_project_brief(
     andamento e como pedir detalhes. Com agent_slug, inclui a última sessão, as tarefas e os cartões
     desse agente (repo filtra os cartões pelo repositório)."""
     return await brief.get_brief(await current_principal(ctx), collection, agent_slug, repo=repo)
+
+
+@tool
+async def set_project_brief(ctx: Context, collection: str, document_id: str | None = None) -> dict:
+    """Marca a nota que é o resumo do projeto (a que o plugin do Claude Code carrega no início de cada
+    sessão e get_project_brief devolve); document_id vazio desmarca. A nota precisa ser da própria
+    coleção. Para criar um resumo: rascunhe (o que é, stack, onde fica cada coisa, regras; até ~800
+    tokens), mostre ao usuário, salve com add_document e só então marque aqui."""
+    return await brief.set_brief(await current_principal(ctx), collection, document_id)
 
 
 @tool
